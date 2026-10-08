@@ -1,179 +1,108 @@
 <div align="center">
 
-# oc-collections
+# 🧩 oc-collections
 
-**One plugin, many mini-plugins - a module host for OpenCode V2.**
+**One plugin, three live sidekicks for your OpenCode terminal.**
+*Install it and they're already working &mdash; every module is ON by default.*
+
+[![npm version](https://img.shields.io/npm/v/oc-collections)](https://www.npmjs.com/package/oc-collections) [![license: MIT](https://img.shields.io/badge/license-MIT-blue)](./LICENSE) [![node >=22](https://img.shields.io/badge/node-%E2%89%A522-green)](https://nodejs.org) [![opencode v2](https://img.shields.io/badge/opencode-v2-blueviolet)](https://opencode.ai) [![npm weekly downloads](https://img.shields.io/npm/dm/oc-collections)](https://www.npmjs.com/package/oc-collections) [![CI](https://github.com/nathwn12/oc-collections/actions/workflows/check.yml/badge.svg)](https://github.com/nathwn12/oc-collections/actions/workflows/check.yml)
 
 </div>
 
 ---
 
-## What it is
+## &#9889; Quick start
 
-`oc-collections` consolidates three standalone plugins into one extensible
-module host. One package to install, one generated config file, one compact
-rail - and each mini-plugin (module) ships **off** until you enable it.
+```text
+Install the oc-collections OpenCode plugin:
+1. Add "oc-collections" to the "plugins" array in ~/.config/opencode/opencode.jsonc.
+2. Restart OpenCode.
+3. Verify: the rail rows appear beside an open session.
+```
 
-## Quick start
+Add the plugin to your `opencode.jsonc`:
 
 ```jsonc
 // opencode.jsonc
 { "plugins": ["oc-collections"] }
 ```
 
-Restart OpenCode. On first load the plugin writes `oc-collections.jsonc` into your
-opencode config directory (`OPENCODE_CONFIG_DIR`, or `~/.config/opencode`).
-Every module ships **off** - set `"enabled": true` on the ones you want.
+Restart OpenCode. **That's the whole setup** &mdash; no config file, no options. Every module is on from the first load, so the rail lights up immediately.
 
-## Config
+---
 
-The server half owns the file: `~/.config/opencode/oc-collections.jsonc`
-(`OPENCODE_CONFIG_DIR` overrides the directory). It is created from a template
-on first load and never overwritten. EVERY module ships `"enabled": false`;
-only `enabled` is a real key in the template - each module line carries a
-trailing comment listing its option keys. Comments and trailing commas are fine
-(JSONC). Host `options.modules` (plugin config) merges over the file key-by-key
-per module.
+## 🧰 What it does
 
-## Modules
+One package, three mini-plugins &mdash; each draws one compact rail row in `sidebar.content`:
 
-| Module | Summary |
+| Module | What it does |
 |---|---|
-| `***REMOVED***` | Out-of-band ***REMOVED*** watcher: one rail line, chat only on escalation. |
-| `***REMOVED***` | ***REMOVED*** liveness + context daemon: wedge detection, context nudges, status/repair/reset. |
-| `***REMOVED***` | Title-grammar enforcer: keeps top-level sessions as `<status> <seat>: <work>`. |
+| `***REMOVED***` | Live ***REMOVED*** liveness + context daemon: wedge detection, context nudges, a `***REMOVED***` tool, one compact rail row. |
+| `***REMOVED***` | Keeps top-level session titles as `<status> <agent>: <work>` (always lowercase); the agent is the session's live agent. |
+| `***REMOVED***` | Out-of-band ***REMOVED*** watcher &mdash; agent-only (no UI): a live `***REMOVED***` tool plus escalation messages. Set `pulse: true` for a rail row. |
 
-### ***REMOVED*** options
+Every rail row follows one grammar &mdash; `<glyph> <label> <segments>` &mdash; with glyphs `●` ok &middot; `◐` warn &middot; `✕` error &middot; `○` idle &middot; `?` unknown. Every value is live: a resolved error, block, or stall clears and the row returns to idle &mdash; nothing is a lifetime tally.
 
-***REMOVED*** is **agent-only by default** - it renders nothing in any user-facing
-window. The agent sees it through the `***REMOVED***` tool and its escalation steer
-messages. Set `pulse: true` to opt into the one rail row.
+---
 
-| Key | Type | Default | Notes |
-|---|---|---|---|
-| `push` | boolean | `false` | Also steer ordinary (non-escalation) updates to the target. |
-| `target` | string \| null | `null` | Escalation recipient; `null` = escalated session's nearest ancestor. |
-| `watch` | string[] | `[]` | Extra session ids to watch besides auto-watched workers. |
-| `sweepSeconds` | number | `5` | Sweep cadence in seconds. |
-| `stallSeconds` | number | `600` | No-activity window while executing before a stall escalation. |
-| `everyTerminal` | boolean | `true` | Escalate once when every watched session is terminal. |
-| `terminalTokens` | string[] | `["done", "closed"]` | First-word title tokens that mean a session is finished (case-insensitive). |
-| `staleSeconds` | number | `90` | Row staleness window in seconds. |
-| `doneTtlSeconds` | number | `60` | How long a terminal session stays in the live view before ageing out. |
-| `label` | string | `"***REMOVED***"` | Rail label override; only applies when `pulse: true`. |
-| `pulse` | boolean | `false` | `true` = claim one `sidebar.content` slot and draw the rail row. |
-| `escalationPrefix` | string | `"***REMOVED***"` | Leading token of every escalation text line. |
+## &#9881;&#65039; Configure
 
-### ***REMOVED*** options
+**You don't need any.** Installing it is the whole setup.
 
-| Key | Type | Default | Notes |
-|---|---|---|---|
-| `repair` | boolean | `false` | `true` = interrupt with resume on a live wedge; `false` = record only. |
-| `pulse` | boolean | `true` | `false` = the TUI claims no slot and shows nothing. |
-| `pollSeconds` | number | `0.5` | Poll cadence in seconds. |
-| `armSeconds` | number | `2.5` | Freshness window in seconds for the live indicator. |
-| `staleSeconds` | number | `10` | Reader-freshness bound in seconds. |
-| `label` | string | `"***REMOVED***"` | Rail label override. |
-| `caution.exemptTools` | string[] | question, task, subagent, agent, delegate, delegate_many, delegate_task, tools.delegate, tools.delegate_many, tools.subagent, tools.task | Tools never treated as wedges. |
-| `caution.toolCautionSeconds` | number | `420` | Legacy spelling of `fallbackSeconds`; still honoured when `fallbackSeconds` is absent. |
-| `caution.fallbackSeconds` | number | `420` | Fallback per-tool bound in seconds. |
-| `caution.ceilingSeconds` | number | `600` | Hard global ceiling; a non-exempt call older than this is wedged whatever its per-tool bound says. |
-| `caution.perToolSeconds` | object | built-in table | Per-tool watch bounds in seconds, keyed by tool name. |
-| `context.watch` | number | `30` | Percent of the session's own model window. |
-| `context.nudge` | number | `45` | Percent of the session's own model window. |
-| `context.critical` | number | `60` | Percent of the session's own model window. |
-| `context.urgent` | number \| null | `null` | Optional fourth rung; absent = the rung does not exist. |
-| `context.autoCompact` | boolean | `false` | Legacy boolean gate (stays `false`). |
-| `context.autoCompactAt` | string \| null | `null` | Opt-in auto-compact gate band name; `null` = OFF. |
-| `context.projection.turns` | number | `3` | Fire critical early when the window is projected to empty within this many turns; `<= 0` disables. |
-| `context.maxPerSession` | integer | `3` | Hard per-session nudge cap. |
-| `context.nudgeText` | string | `Context is at {pct}% ...` | Nudge template; `{pct}`, `{used}`, `{limit}` and `{band}` are substituted at fire time. |
-| `context.safetyNudgeTokens` | number | `600000` | Token floor that can only raise idle/watch to nudge. |
-| `context.perModel` | object | `{}` | Per-model overrides for `watch`/`nudge`/`critical`/`urgent`/`safetyNudgeTokens`, keyed by model id. |
+On first load the plugin writes `~/.config/opencode/oc-collections.jsonc` (all modules on; set `enabled: false` on any module to turn it off). `OPENCODE_CONFIG_DIR` overrides the directory. The full option list lives in `oc-collections.schema.json` &mdash; the file is optional, comments and trailing commas are fine.
 
-### ***REMOVED*** options
+---
 
-| Key | Type | Default | Notes |
-|---|---|---|---|
-| `statuses` | string[] | `planned, active, done, blocked, inactive, closed` | Status vocabulary; first entry is the staged status, second the running one. |
-| `seats` | string[] | twelve built-in seats | Known seat tokens; unknown agents fall back to `fallbackSeat`. |
-| `fallbackSeat` | string | `"***REMOVED***"` | Seat used when the live agent is unknown, empty, or not a known seat. |
-| `template` | string | `"{status} {seat}: {work}"` | Title template; `{status}`, `{seat}` and `{work}` are substituted. |
-| `lowercase` | boolean | `true` | Titles are always lowercase when `true`. |
-| `maxWork` | number | `0` | Cap on the work-tail length; `0` = uncapped. |
-| `snippetLength` | number | `60` | Cap on the first-prompt snippet used when the title yields no work words. |
-| `armSeconds` | number | `2.5` | Freshness window in seconds for the live renaming indicator. |
-| `label` | string | `"***REMOVED***"` | Rail label override. |
+## 🛡️ Safety
 
-***REMOVED*** renames top-level sessions only (child/subagent sessions are never
-touched) into `<status> <seat>: <work>` - or your `template`. The seat is the
-session's LIVE agent: every prompt event re-reads the session, so an agent
-switch is reflected in the title. Renames are loop-safe (a conforming title is
-a byte-equal no-op, and ***REMOVED*** never reacts to its own renames).
+**It watches. It phones nothing home.**
 
-## Live values
+- **No network.** Nothing is fetched, nothing is sent.
+- **No telemetry.** Nothing is collected or phoned home.
+- **One state location.** Daemon state lives under `~/.local/state/opencode/oc-collections` (honours `XDG_STATE_HOME`) &mdash; nowhere else.
+- **Quiet by design.** The ***REMOVED*** module is invisible unless `pulse: true`.
 
-The 0.2.0 contract: **every rail value is derived from current state.**
+Delete the plugin and the stock sidebar is back, exactly as it was.
 
-- A resolved error, block, or stall clears, and the row returns to `idle`.
-- Nothing is a lifetime tally - counts describe the live view only, and
-  terminal sessions age out of it (`doneTtlSeconds`).
-- History is bounded (sessions unseen within the eviction window drop out of
-  the live maps; retained ledger keys are pruned to the newest entries).
+---
 
-## Agent-facing tools
+## 🧹 Uninstall
 
-- `***REMOVED***` - `status`: live watched-session counts plus one line per watched
-  session (`sid`, title, `executing`/`blocked`/`idle`, age since last
-  activity). Read-only; live values only, no history.
-- `***REMOVED***` - `status` (live-first: freshness, wedge state, context bands),
-  `repair` (interrupt with resume on a live wedge), `reset` (clear live maps).
-  Live values only; a drop lowers the reading - nothing is max-latched.
+Remove `"oc-collections"` from the `plugins` array in `opencode.jsonc` and restart OpenCode. Delete your `~/.config/opencode/oc-collections.jsonc` too if you made one.
 
-## Rail grammar
+---
 
-Every enabled module draws exactly one compact rail line in `sidebar.content`:
-
-```
-<glyph> <label> <segments joined by middle dot `\u00B7`>
-```
-
-| Tone | Glyph | Meaning |
-|---|---|---|
-| `ok` | `●` | healthy |
-| `warn` | `◐` | degraded / needs attention |
-| `error` | `✕` | wedged / failed |
-| `idle` | `○` | quiet, mounted, nothing to report |
-| `unknown` | `?` | unavailable |
-
-- The label gutter is width **8** (padded/truncated to `LABEL_WIDTH`), so values never glue to labels.
-- The unavailable state (no reading yet / host gone / latched / file absent-or-unreadable) always renders tone `unknown` with segments `["-?"]`.
-- Rows are packed by enabled index: the first enabled row uses `marginTop 0`, later enabled rows use `marginTop -1` (the `index` passed to each mount is the position among ENABLED modules, 0-based).
-
-## How to add a new module
-
-1. Add one `MODULES` meta line in `src/core/meta.ts` (`id`, `title`, `summary`, `defaultEnabled: false`).
-2. Add one `src/modules/<id>/` folder with the module halves (`server.ts` default-export setup, `tui.tsx` default-export mount, plus pure drawers).
-3. Add one registry line per half (`src/server-registry.ts` `SETUPS` entry, `src/tui-registry.tsx` `MOUNTS` entry).
-
-The host picks up the rest: config template, schema key, enable gating, and rail slot.
-
-## Development
+## 🛠️ Development
 
 ```sh
 bun install
 bun run check      # typecheck + tests
 ```
 
-## Publishing
+Adding a module is a three-line recipe: one `MODULES` meta line in `src/core/meta.ts`, one `src/modules/<id>/` folder, one registry line per half (`SETUPS` + `MOUNTS`).
 
-```sh
-# one-time, on npmjs.com as the package owner:
-npm trust github oc-collections --file release.yml --repo nathwn12/oc-collections --allow-publish
+---
 
-# then each release:
-npm version patch        # or minor/major - bumps package.json, commits, tags
-git push --follow-tags   # release.yml publishes to npm with provenance
-```
+## 🧭 Compatibility
 
-Local alternative: `npm login` then `npm publish --public`.
+| | |
+|---|---|
+| Built against | `@opencode/plugin` `2.0.19` &mdash; pin a host version you've tested |
+| Host | OpenCode V2 (`opencode2`) |
+| Building from source | Node &ge; 22 or Bun &ge; 1.4 |
+
+---
+
+## &#128196; License
+
+MIT © 2026 nathwn12 &mdash; see [LICENSE](./LICENSE).
+
+---
+
+<div align="center">
+
+Built against `@opencode/plugin` 2.0.19 &middot; Node &ge; 22 / Bun &ge; 1.4 &middot; OpenCode V2
+
+**MIT © 2026 nathwn12** &middot; For OpenCode. Free.
+
+</div>

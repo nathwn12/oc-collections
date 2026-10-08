@@ -2,6 +2,7 @@
 
 ## 0.2.0
 
+- Hands-free defaults: every module now ships ON by default (the generated config writes `"enabled": true`); set `false` to disable one.
 - Live-only rails: every rail value is derived from current state. A resolved
   error, block, or stall clears and the row returns to `idle`; nothing is a
   lifetime tally (terminal sessions age out of the live view).
