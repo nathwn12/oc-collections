@@ -45,6 +45,10 @@ per module.
 
 ### ***REMOVED*** options
 
+***REMOVED*** is **agent-only by default** - it renders nothing in any user-facing
+window. The agent sees it through the `***REMOVED***` tool and its escalation steer
+messages. Set `pulse: true` to opt into the one rail row.
+
 | Key | Type | Default | Notes |
 |---|---|---|---|
 | `push` | boolean | `false` | Also steer ordinary (non-escalation) updates to the target. |
@@ -53,6 +57,12 @@ per module.
 | `sweepSeconds` | number | `5` | Sweep cadence in seconds. |
 | `stallSeconds` | number | `600` | No-activity window while executing before a stall escalation. |
 | `everyTerminal` | boolean | `true` | Escalate once when every watched session is terminal. |
+| `terminalTokens` | string[] | `["done", "closed"]` | First-word title tokens that mean a session is finished (case-insensitive). |
+| `staleSeconds` | number | `90` | Row staleness window in seconds. |
+| `doneTtlSeconds` | number | `60` | How long a terminal session stays in the live view before ageing out. |
+| `label` | string | `"***REMOVED***"` | Rail label override; only applies when `pulse: true`. |
+| `pulse` | boolean | `false` | `true` = claim one `sidebar.content` slot and draw the rail row. |
+| `escalationPrefix` | string | `"***REMOVED***"` | Leading token of every escalation text line. |
 
 ### ***REMOVED*** options
 
@@ -60,8 +70,15 @@ per module.
 |---|---|---|---|
 | `repair` | boolean | `false` | `true` = interrupt with resume on a live wedge; `false` = record only. |
 | `pulse` | boolean | `true` | `false` = the TUI claims no slot and shows nothing. |
+| `pollSeconds` | number | `0.5` | Poll cadence in seconds. |
+| `armSeconds` | number | `2.5` | Freshness window in seconds for the live indicator. |
+| `staleSeconds` | number | `10` | Reader-freshness bound in seconds. |
+| `label` | string | `"***REMOVED***"` | Rail label override. |
 | `caution.exemptTools` | string[] | question, task, subagent, agent, delegate, delegate_many, delegate_task, tools.delegate, tools.delegate_many, tools.subagent, tools.task | Tools never treated as wedges. |
-| `caution.toolCautionSeconds` | number | `420` | Fallback per-tool bound in seconds. |
+| `caution.toolCautionSeconds` | number | `420` | Legacy spelling of `fallbackSeconds`; still honoured when `fallbackSeconds` is absent. |
+| `caution.fallbackSeconds` | number | `420` | Fallback per-tool bound in seconds. |
+| `caution.ceilingSeconds` | number | `600` | Hard global ceiling; a non-exempt call older than this is wedged whatever its per-tool bound says. |
+| `caution.perToolSeconds` | object | built-in table | Per-tool watch bounds in seconds, keyed by tool name. |
 | `context.watch` | number | `30` | Percent of the session's own model window. |
 | `context.nudge` | number | `45` | Percent of the session's own model window. |
 | `context.critical` | number | `60` | Percent of the session's own model window. |
@@ -70,12 +87,48 @@ per module.
 | `context.autoCompactAt` | string \| null | `null` | Opt-in auto-compact gate band name; `null` = OFF. |
 | `context.projection.turns` | number | `3` | Fire critical early when the window is projected to empty within this many turns; `<= 0` disables. |
 | `context.maxPerSession` | integer | `3` | Hard per-session nudge cap. |
+| `context.nudgeText` | string | `Context is at {pct}% ...` | Nudge template; `{pct}`, `{used}`, `{limit}` and `{band}` are substituted at fire time. |
 | `context.safetyNudgeTokens` | number | `600000` | Token floor that can only raise idle/watch to nudge. |
 | `context.perModel` | object | `{}` | Per-model overrides for `watch`/`nudge`/`critical`/`urgent`/`safetyNudgeTokens`, keyed by model id. |
 
 ### ***REMOVED*** options
 
-None. Only `"enabled"` matters.
+| Key | Type | Default | Notes |
+|---|---|---|---|
+| `statuses` | string[] | `planned, active, done, blocked, inactive, closed` | Status vocabulary; first entry is the staged status, second the running one. |
+| `seats` | string[] | twelve built-in seats | Known seat tokens; unknown agents fall back to `fallbackSeat`. |
+| `fallbackSeat` | string | `"***REMOVED***"` | Seat used when the live agent is unknown, empty, or not a known seat. |
+| `template` | string | `"{status} {seat}: {work}"` | Title template; `{status}`, `{seat}` and `{work}` are substituted. |
+| `lowercase` | boolean | `true` | Titles are always lowercase when `true`. |
+| `maxWork` | number | `0` | Cap on the work-tail length; `0` = uncapped. |
+| `snippetLength` | number | `60` | Cap on the first-prompt snippet used when the title yields no work words. |
+| `armSeconds` | number | `2.5` | Freshness window in seconds for the live renaming indicator. |
+| `label` | string | `"***REMOVED***"` | Rail label override. |
+
+***REMOVED*** renames top-level sessions only (child/subagent sessions are never
+touched) into `<status> <seat>: <work>` - or your `template`. The seat is the
+session's LIVE agent: every prompt event re-reads the session, so an agent
+switch is reflected in the title. Renames are loop-safe (a conforming title is
+a byte-equal no-op, and ***REMOVED*** never reacts to its own renames).
+
+## Live values
+
+The 0.2.0 contract: **every rail value is derived from current state.**
+
+- A resolved error, block, or stall clears, and the row returns to `idle`.
+- Nothing is a lifetime tally - counts describe the live view only, and
+  terminal sessions age out of it (`doneTtlSeconds`).
+- History is bounded (sessions unseen within the eviction window drop out of
+  the live maps; retained ledger keys are pruned to the newest entries).
+
+## Agent-facing tools
+
+- `***REMOVED***` - `status`: live watched-session counts plus one line per watched
+  session (`sid`, title, `executing`/`blocked`/`idle`, age since last
+  activity). Read-only; live values only, no history.
+- `***REMOVED***` - `status` (live-first: freshness, wedge state, context bands),
+  `repair` (interrupt with resume on a live wedge), `reset` (clear live maps).
+  Live values only; a drop lowers the reading - nothing is max-latched.
 
 ## Rail grammar
 
