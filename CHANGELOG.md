@@ -1,8 +1,19 @@
 # Changelog
 
+## 0.2.2
+
+- TUI rail rows now render in ONE `prepend`ed `sidebar.content` claim (they sit
+  above the Todos section), one line per enabled module.
+- Natural line spacing (removed the old `-1` gap compensation).
+- Idle vocabulary: unavailable/stale/absent states render `idle` (muted); no
+  `dead`/`-?` text on the TUI.
+- New row-factory contract (`createRow` returns `{ label, spec(), dispose() }`;
+  `undefined` = contributes no row).
+
 ## 0.2.1
 
-- First published release (0.2.0 was never published; its changes ship here).
+- First published release (ships the live-only rails, hands-free defaults, and
+  per-module config work developed through 0.2.0).
 - Hands-free defaults: every module now ships ON by default (the generated config writes `"enabled": true`); set `false` to disable one.
 - Live-only rails: every rail value is derived from current state. A resolved
   error, block, or stall clears and the row returns to `idle`; nothing is a
