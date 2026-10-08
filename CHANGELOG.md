@@ -1,7 +1,8 @@
 # Changelog
 
-## 0.2.0
+## 0.2.1
 
+- First published release (0.2.0 was never published; its changes ship here).
 - Hands-free defaults: every module now ships ON by default (the generated config writes `"enabled": true`); set `false` to disable one.
 - Live-only rails: every rail value is derived from current state. A resolved
   error, block, or stall clears and the row returns to `idle`; nothing is a
