@@ -20,19 +20,19 @@ Install the oc-collections OpenCode plugin:
 3. Verify: the rail rows appear beside an open session.
 ```
 
-Add the plugin to your `opencode.jsonc` - stable (npm) or bleeding edge (github):
+Add the plugin to your `opencode.jsonc` via github or a local directory entry - there is currently no npm release (`npm view oc-collections` -> 404, unpublished):
 
 ```jsonc
-// opencode.jsonc - stable (npm):
-{ "plugins": ["oc-collections@0.2.2"] }
-```
-
-```jsonc
-// opencode.jsonc - bleeding edge (github) instead of stable, not in addition:
+// opencode.jsonc - github (available):
 { "plugins": ["oc-collections@git+https://github.com/nathwn12/oc-collections.git#2a2f5c8b943e1d1c61cd2f1642e5abe0045b4a82"] }
 ```
 
-See [INSTALL.md](./INSTALL.md) for the three routes: pinned npm, the github package spec, and a no-npm local directory entry.
+```jsonc
+// opencode.jsonc - npm (NOT currently published; reserved for a future release):
+{ "plugins": ["oc-collections@0.2.2"] }
+```
+
+See [INSTALL.md](./INSTALL.md) for the github package spec and the no-npm local directory entry.
 
 Restart OpenCode. **That's the whole setup** &mdash; no config file, no options. Every module is on from the first load, so the rail lights up immediately.
 
