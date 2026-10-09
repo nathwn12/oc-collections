@@ -27,6 +27,8 @@ Add the plugin to your `opencode.jsonc`:
 { "plugins": ["oc-collections"] }
 ```
 
+See [INSTALL.md](./INSTALL.md) for the pinned npm and bleeding-edge git routes.
+
 Restart OpenCode. **That's the whole setup** &mdash; no config file, no options. Every module is on from the first load, so the rail lights up immediately.
 
 ---
