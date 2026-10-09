@@ -2,3 +2,6 @@ node_modules/
 *.log
 .DS_Store
 dist/
+
+# Local-only agent guidance; never pushed.
+AGENTS.md
