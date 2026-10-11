@@ -12,7 +12,7 @@
 
 ## What it is
 
-The index of the nathwn12 `oc-*` family: one front door listing every OpenCode plugin, installer, and bridge in the set, with its repo, its npm package and version, and its link. This repo originally shipped a module host — one plugin bundling three mini-plugins (`***REMOVED***`, `***REMOVED***`, `***REMOVED***`) — and that host is SUPERSEDED: its modules now live on as separately published plugins and as local plugins (`./plugins/***REMOVED***`, `./plugins/***REMOVED***`, `./plugins/***REMOVED***`), nothing mounts this repo anymore, and the `oc-collections` npm package was unpublished on 2026-10-08. Install the plugins below, not this repo.
+The index of the nathwn12 `oc-*` family: one front door listing every OpenCode plugin, installer, and bridge in the set, with its repo, its npm package and version, and its link. This repo originally shipped a module host — one plugin bundling three mini-plugins (`***REMOVED***`, `***REMOVED***`, `***REMOVED***`) — and that host is SUPERSEDED: its modules survive only as frozen source in this repo under `src/modules/{***REMOVED***,***REMOVED***,***REMOVED***}`, nothing mounts this repo anymore, and the `oc-collections` npm package was unpublished on 2026-10-08. Install the plugins below, not this repo.
 
 | Repo | One line | npm | Link |
 | --- | --- | --- | --- |
