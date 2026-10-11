@@ -1,115 +1,47 @@
-<div align="center">
+<p align="center">
+  <img src="assets/icon.svg" width="120" height="120" alt="oc-collections icon" />
+</p>
+<h1 align="center">oc-collections</h1>
+<p align="center"><strong>Index the nathwn12 oc-* plugin family for OpenCode users — TypeScript.</strong></p>
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/nathwn12/oc-collections" alt="License" /></a>
+  <img src="https://img.shields.io/github/languages/top/nathwn12/oc-collections" alt="Language" />
+  <img src="https://img.shields.io/badge/platform-windows--linux-2b3137" alt="Platform" />
+  <a href="https://github.com/nathwn12/oc-collections/actions/workflows/ci.yml"><img src="https://github.com/nathwn12/oc-collections/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+</p>
 
-# 🧩 oc-collections
+## What it is
 
-**One plugin, three live sidekicks for your OpenCode terminal.**
-*Install it and they're already working &mdash; every module is ON by default.*
+The index of the nathwn12 `oc-*` family: one front door listing every OpenCode plugin, installer, and bridge in the set, with its repo, its npm package and version, and its link. This repo originally shipped a module host — one plugin bundling three mini-plugins (`***REMOVED***`, `***REMOVED***`, `***REMOVED***`) — and that host is SUPERSEDED: its modules now live on as separately published plugins and as local plugins (`./plugins/***REMOVED***`, `./plugins/***REMOVED***`, `./plugins/***REMOVED***`), nothing mounts this repo anymore, and the `oc-collections` npm package was unpublished on 2026-10-08. Install the plugins below, not this repo.
 
-[![npm version](https://img.shields.io/npm/v/oc-collections)](https://www.npmjs.com/package/oc-collections) [![license: MIT](https://img.shields.io/badge/license-MIT-blue)](./LICENSE) [![node >=22](https://img.shields.io/badge/node-%E2%89%A522-green)](https://nodejs.org) [![opencode v2](https://img.shields.io/badge/opencode-v2-blueviolet)](https://opencode.ai) [![npm weekly downloads](https://img.shields.io/npm/dm/oc-collections)](https://www.npmjs.com/package/oc-collections) [![CI](https://github.com/nathwn12/oc-collections/actions/workflows/check.yml/badge.svg)](https://github.com/nathwn12/oc-collections/actions/workflows/check.yml)
+| Repo | One line | npm | Link |
+| --- | --- | --- | --- |
+| oc-todo | Per-session todo lists for your OpenCode terminal. | `oc-todo@0.4.0` | [repo](https://github.com/nathwn12/oc-todo) · [npm](https://www.npmjs.com/package/oc-todo) |
+| oc-bifrost | Run V1-era OpenCode plugin hooks on the OpenCode V2 runtime. | `@nathwn12/oc-bifrost@1.6.3` | [repo](https://github.com/nathwn12/oc-bifrost) · [npm](https://www.npmjs.com/package/@nathwn12%2Foc-bifrost) |
+| oc-flight-deck | Live session telemetry in your OpenCode sidebar. | `oc-flight-deck@0.12.0` | [repo](https://github.com/nathwn12/oc-flight-deck) · [npm](https://www.npmjs.com/package/oc-flight-deck) |
+| oc-harness-setup | Install and orchestrate the whole OpenCode harness in one command - PowerShell. | `oc-harness-setup@0.3.1` | [repo](https://github.com/nathwn12/oc-harness-setup) · [npm](https://www.npmjs.com/package/oc-harness-setup) |
+| oc-collections | This index. The original module host; not a live plugin. | not published (unpublished 2026-10-08) | [repo](https://github.com/nathwn12/oc-collections) |
 
-</div>
+## Why
 
----
+The family outgrew the bundle. Each module became its own plugin with its own version line, and the bundle itself stopped being installed anywhere — so the honest shape for this repo is a museum catalogue, not a plugin front page. One table stays current; five READMEs stop disagreeing.
 
-## &#9889; Quick start
+## The module host
 
-```text
-Install the oc-collections OpenCode plugin:
-1. Add "oc-collections" to the "plugins" array in ~/.config/opencode/opencode.jsonc.
-2. Restart OpenCode.
-3. Verify: the rail rows appear beside an open session.
-```
+The history is kept, not pretended away. The original source still lives in the tree — `src/modules/***REMOVED***`, `src/modules/***REMOVED***`, `src/modules/***REMOVED***`, plus `index.ts`, `oc-collections.schema.json`, and `oc-collections.example.jsonc` — frozen as it was. Nothing here is presented as installable; for live code, use the plugins in the table above.
 
-Add the plugin to your `opencode.jsonc` via github or a local directory entry - there is currently no npm release (`npm view oc-collections` -> 404, unpublished):
+## Status
 
-```jsonc
-// opencode.jsonc - github (available):
-{ "plugins": ["oc-collections@git+https://github.com/nathwn12/oc-collections.git#2a2f5c8b943e1d1c61cd2f1642e5abe0045b4a82"] }
-```
+**Maintenance** — works, changes only on breakage.
 
-```jsonc
-// opencode.jsonc - npm (NOT currently published; reserved for a future release):
-{ "plugins": ["oc-collections@0.2.2"] }
-```
+## License
 
-See [INSTALL.md](./INSTALL.md) for the github package spec and the no-npm local directory entry.
+MIT — see [LICENSE](LICENSE).
 
-Restart OpenCode. **That's the whole setup** &mdash; no config file, no options. Every module is on from the first load, so the rail lights up immediately.
-
----
-
-## 🧰 What it does
-
-One package, three mini-plugins &mdash; each draws one compact rail row in `sidebar.content`:
-
-| Module | What it does |
-|---|---|
-| `***REMOVED***` | Live ***REMOVED*** liveness + context daemon: wedge detection, context nudges, a `***REMOVED***` tool, one compact rail row. |
-| `***REMOVED***` | Keeps top-level session titles as `<status> <agent>: <work>` (always lowercase); the agent is the session's live agent. |
-| `***REMOVED***` | Out-of-band ***REMOVED*** watcher &mdash; agent-only (no UI): a live `***REMOVED***` tool plus escalation messages. Set `pulse: true` for a rail row. |
-
-Every rail row follows one grammar &mdash; `<glyph> <label> <segments>` &mdash; with glyphs `●` ok &middot; `◐` warn &middot; `✕` error &middot; `○` idle &middot; `?` unknown. Every value is live: a resolved error, block, or stall clears and the row returns to idle &mdash; nothing is a lifetime tally.
-
----
-
-## &#9881;&#65039; Configure
-
-**You don't need any.** Installing it is the whole setup.
-
-On first load the plugin writes `~/.config/opencode/oc-collections.jsonc` (all modules on; set `enabled: false` on any module to turn it off). `OPENCODE_CONFIG_DIR` overrides the directory. The full option list lives in `oc-collections.schema.json` &mdash; the file is optional, comments and trailing commas are fine.
-
----
-
-## 🛡️ Safety
-
-**It watches. It phones nothing home.**
-
-- **No network.** Nothing is fetched, nothing is sent.
-- **No telemetry.** Nothing is collected or phoned home.
-- **One state location.** Daemon state lives under `~/.local/state/opencode/oc-collections` (honours `XDG_STATE_HOME`) &mdash; nowhere else.
-- **Quiet by design.** The ***REMOVED*** module is invisible unless `pulse: true`.
-
-Delete the plugin and the stock sidebar is back, exactly as it was.
-
----
-
-## 🧹 Uninstall
-
-Remove `"oc-collections"` from the `plugins` array in `opencode.jsonc` and restart OpenCode. Delete your `~/.config/opencode/oc-collections.jsonc` too if you made one.
-
----
-
-## 🛠️ Development
-
-```sh
-bun install
-bun run check      # typecheck + tests
-```
-
-Adding a module is a three-line recipe: one `MODULES` meta line in `src/core/meta.ts`, one `src/modules/<id>/` folder, one registry line per half (`SETUPS` + `MOUNTS`).
-
----
-
-## 🧭 Compatibility
-
-| | |
-|---|---|
-| Built against | `@opencode/plugin` `2.0.19` &mdash; pin a host version you've tested |
-| Host | OpenCode V2 (`opencode2`) |
-| Building from source | Node &ge; 22 or Bun &ge; 1.4 |
-
----
-
-## &#128196; License
-
-MIT © 2026 nathwn12 &mdash; see [LICENSE](./LICENSE).
-
----
-
-<div align="center">
-
-Built against `@opencode/plugin` 2.0.19 &middot; Node &ge; 22 / Bun &ge; 1.4 &middot; OpenCode V2
-
-**MIT © 2026 nathwn12** &middot; For OpenCode. Free.
-
-</div>
+<!-- nathwn12 house footer: identical in every repo. Do not edit. -->
+<p align="center">
+  <a href="https://github.com/nathwn12"><img src="assets/signature.svg" width="96" alt="nathwn12" /></a>
+</p>
+<p align="center">
+  <sub>Built by <a href="https://github.com/nathwn12">nathwn12</a> · <a href="https://github.com/nathwn12?tab=repositories">All projects</a></sub>
+</p>
