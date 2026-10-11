@@ -1,40 +1,7 @@
 # Changelog
 
-## 0.2.2
+## Index
 
-- TUI rail rows now render in ONE `prepend`ed `sidebar.content` claim (they sit
-  above the Todos section), one line per enabled module.
-- Natural line spacing (removed the old `-1` gap compensation).
-- Idle vocabulary: unavailable/stale/absent states render `idle` (muted); no
-  `dead`/`-?` text on the TUI.
-- New row-factory contract (`createRow` returns `{ label, spec(), dispose() }`;
-  `undefined` = contributes no row).
-
-## 0.2.1
-
-- First published release (ships the live-only rails, hands-free defaults, and
-  per-module config work developed through 0.2.0).
-- Hands-free defaults: every module now ships ON by default (the generated config writes `"enabled": true`); set `false` to disable one.
-- Live-only rails: every rail value is derived from current state. A resolved
-  error, block, or stall clears and the row returns to `idle`; nothing is a
-  lifetime tally (terminal sessions age out of the live view).
-- Per-module configuration: ***REMOVED*** gains `terminalTokens`, `staleSeconds`,
-  `doneTtlSeconds`, `label`, `escalationPrefix`; ***REMOVED*** gains `pollSeconds`,
-  `armSeconds`, `staleSeconds`, `label` plus the full `caution.*`/`context.*`
-  tuning surface; ***REMOVED*** is fully configurable (`statuses`, `seats`,
-  `fallbackSeat`, `template`, `lowercase`, `maxWork`, `snippetLength`,
-  `armSeconds`, `label`).
-- General-purpose de-harnessing: no hardcoded seats, agents, or model windows;
-  ***REMOVED*** auto-watches workers, ***REMOVED*** bands scale to each session's own model.
-- ***REMOVED*** lowercase + configurable template (default `"{status} {seat}:
-  {work}"`, `lowercase` default true) with the seat as the session's LIVE agent.
-- Agent-facing `***REMOVED***` tool (`status`: live counts plus one line per watched
-  session) and live-first `***REMOVED***` tool (`status`/`repair`/`reset`).
-- Bounded history: unseen sessions are evicted from the live maps and retained
-  ledger keys are pruned to the newest entries.
-
-## 0.1.0
-
-- Consolidation: three plugins (***REMOVED***, ***REMOVED***, ***REMOVED***) become one extensible module host (`oc-collections`).
-- Generated all-off config: first load writes `oc-collections.jsonc` with every module `"enabled": false`.
-- Redesigned compact rail: one line per enabled module under the unified rail grammar (tone + `["-?"]` unavailable idiom).
+- This repo is an index of the nathwn12 oc-* plugin family; the plugin table in `README.md` is the source of truth. Install the listed plugins, not this repo.
+- The bundled plugin implementation, its suite, its config schema and example, and the old install routes are removed from the tracked tree.
+- Earlier entries describing the removed implementation are omitted from this file.

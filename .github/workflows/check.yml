@@ -14,8 +14,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.4.2
-      - run: bun install --frozen-lockfile
-      - run: bun run check
+      - name: Index integrity
+        run: |
+          git ls-files --error-unmatch README.md LICENSE CHANGELOG.md
+          test "$(git ls-files '*.ts' '*.tsx' | wc -l)" -eq 0
+      - name: No internal vocabulary in tracked tree
+        # Bracketed patterns match the retired names without writing them
+        # literally, so this file itself stays clean.
+        run: |
+          if git grep -I -n -i -E 'fl[e]et|l[i]feline|m[a]sthead' -- .; then
+            echo "internal name found in tracked tree" >&2
+            exit 1
+          fi
+          if git grep -I -n -i -E 'mod[u]le host|supers[e]d|unpubl[i]sh|noth[i]ng mounts' -- .; then
+            echo "internal history found in tracked tree" >&2
+            exit 1
+          fi
