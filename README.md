@@ -2,7 +2,7 @@
   <img src="assets/icon.svg" width="120" height="120" alt="oc-collections icon" />
 </p>
 <h1 align="center">oc-collections</h1>
-<p align="center"><strong>Index the nathwn12 oc-* plugin family for OpenCode users — TypeScript.</strong></p>
+<p align="center"><strong>Index the nathwn12 oc-* plugin family for OpenCode users.</strong></p>
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/github/license/nathwn12/oc-collections" alt="License" /></a>
   <img src="https://img.shields.io/github/languages/top/nathwn12/oc-collections" alt="Language" />
