@@ -7,7 +7,6 @@
   <a href="LICENSE"><img src="https://img.shields.io/github/license/nathwn12/oc-collections" alt="License" /></a>
   <img src="https://img.shields.io/github/languages/top/nathwn12/oc-collections" alt="Language" />
   <img src="https://img.shields.io/badge/platform-windows--linux-2b3137" alt="Platform" />
-  <a href="https://github.com/nathwn12/oc-collections/actions/workflows/ci.yml"><img src="https://github.com/nathwn12/oc-collections/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
 </p>
 
 ## What it is
@@ -29,6 +28,26 @@ Each plugin ships on its own version line, so one index keeps the set discoverab
 ## Status
 
 **Maintenance** — works, changes only on breakage.
+
+Every repo and npm link in the table above is checked against the live GitHub repo and the npm registry by `scripts/check-index.ps1`, which also confirms each pinned version is actually published:
+
+```
+$ pwsh -NoProfile -File scripts/check-index.ps1
+PASS oc-todo          repo HTTP 200  https://github.com/nathwn12/oc-todo
+PASS oc-todo          npm  registry OK - 0.4.0 published  oc-todo
+PASS oc-bifrost       repo HTTP 200  https://github.com/nathwn12/oc-bifrost
+PASS oc-bifrost       npm  registry OK - 1.6.4 published  @nathwn12/oc-bifrost
+PASS oc-flight-deck   repo HTTP 200  https://github.com/nathwn12/oc-flight-deck
+PASS oc-flight-deck   npm  registry OK - 0.12.0 published  oc-flight-deck
+PASS oc-harness-setup repo HTTP 200  https://github.com/nathwn12/oc-harness-setup
+PASS oc-harness-setup npm  registry OK - 0.3.1 published  oc-harness-setup
+PASS oc-collections   repo HTTP 200  https://github.com/nathwn12/oc-collections
+checked=9 failed=0
+$ echo $LASTEXITCODE
+0
+```
+
+npm versions are read from `registry.npmjs.org` because npmjs.com returns HTTP 403 to non-browser clients.
 
 ## License
 
