@@ -22,7 +22,6 @@ It exits `0` only when every link resolves and every pinned version is published
 - `scripts/check-index.ps1` — the one executable check; verifies every index link.
 - `.github/workflows/check.yml` — verifies required files exist, the tree holds no implementation files, and no internal vocabulary leaks into the tracked tree.
 - `.github/workflows/ci.yml` — verifies the index files are present.
-- `assets/icon.svg` — repo icon.
 - `assets/signature.svg` — shared footer signature.
 - `.gitattributes` — line-ending and export settings.
 - `.gitignore` — local ignore rules.

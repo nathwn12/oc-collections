@@ -9,4 +9,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Index files present
-        run: git ls-files --error-unmatch README.md LICENSE CHANGELOG.md assets/icon.svg assets/signature.svg
+        run: git ls-files --error-unmatch README.md LICENSE CHANGELOG.md assets/signature.svg
