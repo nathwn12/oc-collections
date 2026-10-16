@@ -15,10 +15,10 @@ The index of the nathwn12 `oc-*` family: one front door listing every OpenCode p
 
 | Repo | One line | npm | Link |
 | --- | --- | --- | --- |
-| oc-todo | Per-session todo lists for your OpenCode terminal. | `oc-todo@0.4.0` | [repo](https://github.com/nathwn12/oc-todo) · [npm](https://www.npmjs.com/package/oc-todo) |
-| oc-bifrost | Run V1-era OpenCode plugin hooks on the OpenCode V2 runtime. | `@nathwn12/oc-bifrost@1.6.4` | [repo](https://github.com/nathwn12/oc-bifrost) · [npm](https://www.npmjs.com/package/@nathwn12%2Foc-bifrost) |
-| oc-flight-deck | Live session telemetry in your OpenCode sidebar. | `oc-flight-deck@0.12.0` | [repo](https://github.com/nathwn12/oc-flight-deck) · [npm](https://www.npmjs.com/package/oc-flight-deck) |
-| oc-harness-setup | Install and orchestrate the whole OpenCode harness in one command - PowerShell. | `oc-harness-setup@0.3.1` | [repo](https://github.com/nathwn12/oc-harness-setup) · [npm](https://www.npmjs.com/package/oc-harness-setup) |
+| oc-todo | Per-session todo lists for your OpenCode terminal. | `oc-todo@0.5.0` | [repo](https://github.com/nathwn12/oc-todo) · [npm](https://www.npmjs.com/package/oc-todo) |
+| oc-bifrost | Run V1-era OpenCode plugin hooks on the OpenCode V2 runtime. | `@nathwn12/oc-bifrost@1.6.5` | [repo](https://github.com/nathwn12/oc-bifrost) · [npm](https://www.npmjs.com/package/@nathwn12%2Foc-bifrost) |
+| oc-flight-deck | Live session telemetry in your OpenCode sidebar. | `oc-flight-deck@0.19.2` | [repo](https://github.com/nathwn12/oc-flight-deck) · [npm](https://www.npmjs.com/package/oc-flight-deck) |
+| oc-harness-setup | Install and orchestrate the whole OpenCode harness in one command - PowerShell. | `oc-harness-setup@0.3.3` | [repo](https://github.com/nathwn12/oc-harness-setup) · [npm](https://www.npmjs.com/package/oc-harness-setup) |
 | oc-collections | This index. | not on npm | [repo](https://github.com/nathwn12/oc-collections) |
 
 ## Why
@@ -34,13 +34,13 @@ Every repo and npm link in the table above is checked against the live GitHub re
 ```
 $ pwsh -NoProfile -File scripts/check-index.ps1
 PASS oc-todo          repo HTTP 200  https://github.com/nathwn12/oc-todo
-PASS oc-todo          npm  registry OK - 0.4.0 published  oc-todo
+PASS oc-todo          npm  registry OK - 0.5.0 published  oc-todo
 PASS oc-bifrost       repo HTTP 200  https://github.com/nathwn12/oc-bifrost
-PASS oc-bifrost       npm  registry OK - 1.6.4 published  @nathwn12/oc-bifrost
+PASS oc-bifrost       npm  registry OK - 1.6.5 published  @nathwn12/oc-bifrost
 PASS oc-flight-deck   repo HTTP 200  https://github.com/nathwn12/oc-flight-deck
-PASS oc-flight-deck   npm  registry OK - 0.12.0 published  oc-flight-deck
+PASS oc-flight-deck   npm  registry OK - 0.19.2 published  oc-flight-deck
 PASS oc-harness-setup repo HTTP 200  https://github.com/nathwn12/oc-harness-setup
-PASS oc-harness-setup npm  registry OK - 0.3.1 published  oc-harness-setup
+PASS oc-harness-setup npm  registry OK - 0.3.3 published  oc-harness-setup
 PASS oc-collections   repo HTTP 200  https://github.com/nathwn12/oc-collections
 checked=9 failed=0
 $ echo $LASTEXITCODE
