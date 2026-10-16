@@ -1,6 +1,3 @@
-<p align="center">
-  <img src="assets/icon.svg" width="120" height="120" alt="oc-collections icon" />
-</p>
 <h1 align="center">oc-collections</h1>
 <p align="center"><strong>Index the nathwn12 oc-* plugin family for OpenCode users.</strong></p>
 <p align="center">
