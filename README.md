@@ -55,7 +55,7 @@ It exits `0` only when every link resolves and every pinned version is published
 - `AGENTS.md` — contributor guide (commits, branches, PRs, guardrails).
 - `CHANGELOG.md` — index history.
 - `LICENSE` — license text.
-- `assets/icon.svg` — repo icon. `assets/signature.svg` — shared footer signature.
+- `assets/signature.svg` — shared footer signature.
 - `.gitattributes` — line-ending and export settings. `.gitignore` — local ignore rules.
 
 ## Key features
