@@ -9,9 +9,9 @@
   <img src="https://img.shields.io/badge/platform-windows--linux-2b3137" alt="Platform" />
 </p>
 
-## What it is
+## Project name and description
 
-The index of the nathwn12 `oc-*` family: one front door listing every OpenCode plugin, installer, and bridge in the set, with its repo, its npm package and version, and its link. Install the plugins below, not this repo.
+**oc-collections** is the index of the nathwn12 `oc-*` family: one front door listing every OpenCode plugin, installer, and bridge in the set, with its repo, its npm package and version, and its link. It is for OpenCode users discovering what to install, and for contributors keeping that list honest. Install the listed plugins, not this repo.
 
 | Repo | One line | npm | Link |
 | --- | --- | --- | --- |
@@ -21,15 +21,70 @@ The index of the nathwn12 `oc-*` family: one front door listing every OpenCode p
 | oc-harness-setup | Install and orchestrate the whole OpenCode harness in one command - PowerShell. | `oc-harness-setup@0.3.3` | [repo](https://github.com/nathwn12/oc-harness-setup) · [npm](https://www.npmjs.com/package/oc-harness-setup) |
 | oc-collections | This index. | not on npm | [repo](https://github.com/nathwn12/oc-collections) |
 
-## Why
-
 Each plugin ships on its own version line, so one index keeps the set discoverable.
 
-## Status
+## Technology stack
 
-**Maintenance** — works, changes only on breakage.
+- Markdown index (`README.md` table) as the source of truth — no package, no build.
+- PowerShell (`scripts/check-index.ps1`) as the one executable check.
+- GitHub Actions (`check.yml`, `ci.yml`) for index integrity on push and PR.
+- npm registry API (`registry.npmjs.org`) as the canonical version source, since the npmjs.com storefront returns HTTP 403 to non-browser clients.
 
-Every repo and npm link in the table above is checked against the live GitHub repo and the npm registry by `scripts/check-index.ps1`, which also confirms each pinned version is actually published:
+## Architecture
+
+The repo is a pointer, not a program: the `README.md` table promises that every repo link reaches a live repository, every npm link names a package present on the registry, and every pinned version is actually published. `scripts/check-index.ps1` proves it — it reads each table row from `README.md`, checks the repo URL over HTTP, resolves the npm package through the registry API, and confirms the pinned version appears in the published version list.
+
+> [!NOTE]
+> This repo publishes nothing. A release is an annotated tag `v<version>` recording a state of the index, not a version of installable code.
+
+## Getting started
+
+Use it: read the plugin table above and follow a repo or npm link to the plugin you want.
+
+Check it: run the repo's one check from the repo root:
+
+```powershell
+pwsh -NoProfile -File scripts/check-index.ps1
+```
+
+It exits `0` only when every link resolves and every pinned version is published.
+
+## Project structure
+
+- `README.md` — the index table and the captured check-output block; the table is the source of truth.
+- `scripts/check-index.ps1` — the one executable check; verifies every index link.
+- `.github/workflows/check.yml` — verifies required files exist, the tree holds no implementation files, and no internal vocabulary leaks into the tracked tree.
+- `.github/workflows/ci.yml` — verifies the index files are present.
+- `AGENTS.md` — contributor guide (commits, branches, PRs, guardrails).
+- `CHANGELOG.md` — index history.
+- `LICENSE` — license text.
+- `assets/icon.svg` — repo icon. `assets/signature.svg` — shared footer signature.
+- `.gitattributes` — line-ending and export settings. `.gitignore` — local ignore rules.
+
+## Key features
+
+- One table for the whole `oc-*` family: repo, one-line description, npm package and version, links.
+- Every pin is installable: the check confirms each pinned version is actually published.
+- No implementation to rot: no package manifest, no lifecycle scripts, no build.
+
+## Development workflow
+
+- Branch as `<type>/<slug>` (for example `docs/repo-guide`).
+- Land only through a pull request, squash-merge it, then delete the branch.
+- Keep `CHANGELOG.md` and the docs current with every index change.
+- A new index row keeps the existing column order: repo, one-line description, npm package and version, links.
+
+## Coding standards
+
+- Write conventional commit subjects (for example `docs: ...`, `chore: ...`).
+- The captured check-output block is the script's real output — regenerate it by running the script and pasting its output, never by hand-editing numbers.
+
+> [!CAUTION]
+> Never hand-edit the captured check-output block — anything else silently falsifies the guarantee. Never leave an index row pointing at a version that is not published.
+
+## Testing
+
+The index check is the test suite. Every repo and npm link in the table above is checked against the live GitHub repo and the npm registry by `scripts/check-index.ps1`, which also confirms each pinned version is actually published:
 
 ```
 $ pwsh -NoProfile -File scripts/check-index.ps1
@@ -49,9 +104,13 @@ $ echo $LASTEXITCODE
 
 npm versions are read from `registry.npmjs.org` because npmjs.com returns HTTP 403 to non-browser clients.
 
+## Contributing
+
+See [AGENTS.md](AGENTS.md) for the contributor guide — branches, pull requests, and the index guardrails (no hand-edited output block, no unpublished pins, no package manifest, no install/build lifecycle scripts).
+
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE). History lives in [CHANGELOG.md](CHANGELOG.md).
 
 <!-- nathwn12 house footer: identical in every repo. Do not edit. -->
 <p align="center">
