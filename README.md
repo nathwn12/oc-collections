@@ -14,12 +14,6 @@ git clone https://github.com/nathwn12/oc-collections.git
 
 Cloning tracks `main`, so you always read the latest table. You need Git before you paste it.
 
-### Or let your AI install it
-
-```text
-Clone https://github.com/nathwn12/oc-collections.git, read the plugin table in README.md, and run pwsh -NoProfile -File scripts/check-index.ps1 to confirm every pin resolves. Report checked= and failed=.
-```
-
 ### Offline or pinned
 
 To freeze the index at the `v0.2.2` tag instead of tracking `main`, paste:
