@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.5] - 2026-10-21
+
+- Re-pinned oc-bifrost to 1.6.9.
+- Replaced the prose check count with the script's captured output block.
+- No other pin changes.
+
 ## [0.2.4] - 2026-10-21
 
 - Fix the oc-todo row so its EOL is a clickable link; no pin changes.
