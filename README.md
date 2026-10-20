@@ -1,6 +1,5 @@
-# oc-collections
-
-**Find every nathwn12 oc-* plugin in one index.**
+<h1 align="center">oc-collections</h1>
+<p align="center"><strong>Find every nathwn12 oc-* plugin in one index.</strong></p>
 
 You want an OpenCode plugin from the nathwn12 family. You read this index, you pick a row, you follow its link.
 
@@ -61,6 +60,8 @@ You need OpenCode to run the listed plugins.
 - Source: [nathwn12/oc-collections](https://github.com/nathwn12/oc-collections)
 - Index history: [CHANGELOG.md](CHANGELOG.md)
 - npm: [oc-todo](https://www.npmjs.com/package/oc-todo) · [@nathwn12/oc-bifrost](https://www.npmjs.com/package/@nathwn12%2Foc-bifrost) · [oc-flight-deck](https://www.npmjs.com/package/oc-flight-deck) · [oc-harness-setup](https://www.npmjs.com/package/oc-harness-setup)
+- Releases: https://github.com/nathwn12/oc-collections/releases
+- Issues: https://github.com/nathwn12/oc-collections/issues
 - License: [LICENSE](LICENSE)
 
 <!-- nathwn12 house footer: identical in every repo. Do not edit. -->
