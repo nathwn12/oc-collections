@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.2.4] - 2026-10-21
+
+- Fix the oc-todo row so its EOL is a clickable link; no pin changes.
+
 ## [0.2.3] - 2026-10-21
 
 - Re-pinned the index table to the live releases: oc-todo 0.5.1 (deprecated), oc-bifrost 1.6.8, oc-flight-deck 0.20.1, oc-harness-setup 0.4.3.
