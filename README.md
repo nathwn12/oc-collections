@@ -15,10 +15,10 @@ Cloning tracks `main`, so you always read the latest table. You need Git before 
 
 ### Offline or pinned
 
-To freeze the index at the `v0.2.2` tag instead of tracking `main`, paste:
+To freeze the index at the `v0.2.3` tag instead of tracking `main`, paste:
 
 ```sh
-git clone --branch v0.2.2 https://github.com/nathwn12/oc-collections.git
+git clone --branch v0.2.3 https://github.com/nathwn12/oc-collections.git
 ```
 
 ## Use it
@@ -39,10 +39,10 @@ One table for the whole family. You read the row, you install that plugin:
 
 | Repo | What it does for you | Pin | Links |
 | --- | --- | --- | --- |
-| oc-todo | You track per-session todo lists in your OpenCode terminal. | `oc-todo@0.5.0` | [repo](https://github.com/nathwn12/oc-todo) · [npm](https://www.npmjs.com/package/oc-todo) |
-| oc-bifrost | You run V1-era plugin hooks on the OpenCode V2 runtime. | `@nathwn12/oc-bifrost@1.6.5` | [repo](https://github.com/nathwn12/oc-bifrost) · [npm](https://www.npmjs.com/package/@nathwn12%2Foc-bifrost) |
-| oc-flight-deck | You see live session telemetry in your OpenCode sidebar. | `oc-flight-deck@0.19.2` | [repo](https://github.com/nathwn12/oc-flight-deck) · [npm](https://www.npmjs.com/package/oc-flight-deck) |
-| oc-harness-setup | You install and orchestrate the whole harness in one PowerShell command. | `oc-harness-setup@0.3.3` | [repo](https://github.com/nathwn12/oc-harness-setup) · [npm](https://www.npmjs.com/package/oc-harness-setup) |
+| oc-todo | Deprecated — OpenCode 2.1 restored the built-in `todowrite`; see EOL.md. | `oc-todo@0.5.1` | [repo](https://github.com/nathwn12/oc-todo) · [npm](https://www.npmjs.com/package/oc-todo) |
+| oc-bifrost | You run V1-era plugin hooks on the OpenCode V2 runtime. | `@nathwn12/oc-bifrost@1.6.8` | [repo](https://github.com/nathwn12/oc-bifrost) · [npm](https://www.npmjs.com/package/@nathwn12%2Foc-bifrost) |
+| oc-flight-deck | You see live session telemetry in your OpenCode sidebar. | `oc-flight-deck@0.20.1` | [repo](https://github.com/nathwn12/oc-flight-deck) · [npm](https://www.npmjs.com/package/oc-flight-deck) |
+| oc-harness-setup | You install and orchestrate the whole harness in one PowerShell command. | `oc-harness-setup@0.4.3` | [repo](https://github.com/nathwn12/oc-harness-setup) · [npm](https://www.npmjs.com/package/oc-harness-setup) |
 | oc-collections | You read this index. | not on npm | [repo](https://github.com/nathwn12/oc-collections) |
 
 This repo publishes nothing to npm. A release tag records the state of the index, not installable code.
