@@ -59,9 +59,9 @@ You need OpenCode to run the listed plugins.
 ## Links
 
 - Source: [nathwn12/oc-collections](https://github.com/nathwn12/oc-collections)
-- License: [LICENSE](LICENSE)
 - Index history: [CHANGELOG.md](CHANGELOG.md)
 - npm: [oc-todo](https://www.npmjs.com/package/oc-todo) · [@nathwn12/oc-bifrost](https://www.npmjs.com/package/@nathwn12%2Foc-bifrost) · [oc-flight-deck](https://www.npmjs.com/package/oc-flight-deck) · [oc-harness-setup](https://www.npmjs.com/package/oc-harness-setup)
+- License: [LICENSE](LICENSE)
 
 <!-- nathwn12 house footer: identical in every repo. Do not edit. -->
 <p align="center">
