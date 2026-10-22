@@ -1,6 +1,6 @@
 # Migrations
 
-This repo is an npm-workspaces monorepo: the index stays at the root, and each family package moves into `packages/<name>`, keeping its own npm name, version line, and release cadence. This file records every move. Archiving the source repos is the owner's call, recorded in Retired repositories at the end of this file; no source repo was changed by the migration.
+This repo is an npm-workspaces monorepo: the index stays at the root, and each family package moves into `packages/<name>`, keeping its own npm name, version line, and release cadence. This file records every move. Archiving the source repos was the owner's call, recorded in Retired repositories at the end of this file; no source repo was changed by the migration.
 
 ## 2026-10-22 — `@nathwn12/oc-bifrost@1.6.9`
 
@@ -17,7 +17,7 @@ What moved: the source repo's tracked tree, except the repo-level files listed b
 
 Not carried over (repo-level in the source repo, not package-level here):
 
-- `.github/workflows/ci.yml` and `.github/workflows/release.yml` — GitHub only runs workflows from the root `.github/workflows/`. The release workflow assumed the package sat at the repo root (`npm ci`, `require('./package.json')`, `npm pack` at the root), and its npm trusted-publisher setup names the old repo and workflow filename. Publishing from this monorepo needs a new root release workflow plus an npm trusted-publisher update; until that exists, do not cut a package release from this repo.
+- `.github/workflows/ci.yml` and `.github/workflows/release.yml` — GitHub only runs workflows from the root `.github/workflows/`. The release workflow assumed the package sat at the repo root (`npm ci`, `require('./package.json')`, `npm pack` at the root), and its npm trusted-publisher setup names the old repo and workflow filename. Publishing from this monorepo needed a new root release workflow plus an npm trusted-publisher update; until that existed, no package release could be cut from here. Both now exist, so this package releases from this repo — `@nathwn12/oc-bifrost@1.6.10` is tagged and published through OIDC with provenance from this repo.
 - `.github/ISSUE_TEMPLATE/*` — repo-level issue forms.
 - `.vscode/settings.json` — repo-level editor settings.
 - `package-lock.json` — the monorepo root is the only place a lockfile lives; the root `npm install` generated the root lockfile.
@@ -31,7 +31,7 @@ Adaptations inside the package:
 Gate changes made for this import (`.github/workflows/check.yml`):
 
 - The "no implementation files" assertion now allows `.ts`/`.tsx` under `packages/` and still fails on a loose one at the root.
-- The narrative-word half of the vocabulary guard excludes `packages/`: imported package docs use the words as ordinary English (`PROOF.md`, `VERIFIED-PLUGINS.md`) and `vendor/rtk-LICENSE` is third-party text kept byte-identical to upstream. The retired-name half still runs over the whole tree.
+- The narrative-word half of the vocabulary guard excludes `packages/`: imported package docs use the words as ordinary English (`PROOF.md`, `VERIFIED-PLUGINS.md`) and `vendor/rtk-LICENSE` is third-party text kept byte-identical to upstream. The retired-name half still ran over the whole tree at that point; the gate change later in this file narrows both halves to the index's own files.
 
 ## 2026-10-22 — `oc-flight-deck@0.20.1`
 
@@ -44,7 +44,7 @@ Gate changes made for this import (`.github/workflows/check.yml`):
 | Moved to | `packages/oc-flight-deck/` |
 | Imported | 2026-10-22 |
 
-What moved: the source repo's tracked tree, except `.github/**` (repo-level workflows) and `bun.lock` (the root lockfile is the only lockfile; dependencies now install from the monorepo root). `dist/` is imported and is **tracked by policy, not yet committed**: the package's guardrail requires a committed build for its git-install route and its `check:dist` gate, and its own `.gitignore` re-includes `dist/` (`!dist/`), which defeats the monorepo root's `dist/` ignore for this package only. In this working tree the files are untracked — `git ls-files --others --exclude-standard` lists them — and will enter the index when the courier commits. A fresh `npm run compile` reproduces the source repo's committed build bytes exactly (sha256 verified).
+What moved: the source repo's tracked tree, except `.github/**` (repo-level workflows) and `bun.lock` (the root lockfile is the only lockfile; dependencies now install from the monorepo root). `dist/` is imported and is **tracked by policy and committed**: the package's guardrail requires a committed build for its git-install route and its `check:dist` gate, and its own `.gitignore` re-includes `dist/` (`!dist/`), which defeats the monorepo root's `dist/` ignore for this package only. In the import working tree the files were still untracked — `git ls-files --others --exclude-standard` listed them — and the courier's commit then put them in the index; they are tracked now, and nothing in the tree is untracked. A fresh `npm run compile` reproduces the source repo's committed build bytes exactly (sha256 verified).
 
 Changed during the move:
 - `AGENTS.md` — the quick start now names `packages/oc-flight-deck` (and `-w oc-flight-deck`) with dependencies from the root `npm install`; the old `bun install` line would have created a second lockfile.
@@ -83,7 +83,7 @@ Not carried over: `.github/workflows/{ci,release}.yml` — repo-level; GitHub on
 What moved: the source repo's tracked tree, except `.github/**` (repo-level workflow) and `bun.lock` (the root lockfile is the only lockfile). The source's ignored runtime session artifacts are not in the tracked tree and were not imported. There is no build step: the package ships TypeScript sources and its entry is `index.ts`, so there is no dist-less pack trap.
 
 Changed during the move:
-- `package.json` — `private` set from `false` to `true`. The package is not on the npm registry (404), so publishing it by accident is now impossible. **Owner call still open:** whether `oc-unified` should ever be published; the version is unchanged.
+- `package.json` — `private` set from `false` to `true`. The package is not on the npm registry (404), so publishing it by accident is now impossible. **Owner call, since ruled:** the 2026-10-22 ruling excludes it as private and keeps it source-only (see the release lane); the version is unchanged.
 
 Not carried over: `.github/workflows/ci.yml` — repo-level; GitHub only runs workflows from the monorepo root.
 
@@ -110,7 +110,7 @@ The package declares no scripts; its own check is the two commands its CI runs (
 
 ## 2026-10-22 — `oc-todo@0.5.1` (archived, not migrated)
 
-`oc-todo` is end-of-life because OpenCode now ships an official todo feature (2.1 restored the built-in `todowrite`): the official feature replaces the package, so it is not merely unfinished, and its npm entry is deprecated. It is **not** a workspace member and is not in `packages/`: the tracked tree is copied to `archive/oc-todo/` so the history lives in one place without resurrecting a dead package. Its README says "This repository is archived", which is not true of the source repo; that line is intentionally left uncorrected because the package is EOL, npm-deprecated, and will not be republished.
+`oc-todo` is end-of-life because OpenCode now ships an official todo feature (2.1 restored the built-in `todowrite`): the official feature replaces the package, so it is not merely unfinished, and its npm entry is deprecated. It is **not** a workspace member and is not in `packages/`: the tracked tree is copied to `archive/oc-todo/` so the history lives in one place without resurrecting a dead package. Its README says "This repository is archived", which is true of the source repo now: `nathwn12/oc-todo` is archived and private, so that line is left exactly as the source wrote it. The archived repo stays readable to its owner, and the `oc-todo@0.5.1` npm entry is end-of-life and immutable — historical metadata, not something this monorepo republishes.
 
 | Field | Value |
 | --- | --- |
@@ -172,7 +172,7 @@ Not carried over: `.github/workflows/*` — repo-level; GitHub only runs the mon
 - `nathwn12/oc-bifrost` — its package lives at `packages/oc-bifrost/`.
 - `nathwn12/oc-flight-deck` — its package lives at `packages/oc-flight-deck/`.
 - `nathwn12/oc-harness-setup` — its package lives at `packages/oc-harness-setup/`.
-- `nathwn12/oc-unified` — its package lives at `packages/oc-unified/` (set `private`; publishing is an open owner call).
+- `nathwn12/oc-unified` — its package lives at `packages/oc-unified/` (set `private`; source-only per the owner's ruling).
 - `nathwn12/rea-shim` — its package lives at `packages/rea-shim/`.
 - `nathwn12/oc-todo` — EOL; archived at `archive/oc-todo/` only.
 - `nathwn12/gladius` — its crate lives at `crates/gladius/`, its launcher at `packages/gladius-mcp/`.
@@ -189,11 +189,11 @@ The mappings above are the import record; what became of each repository is reco
 
 ## Post-import version bumps (2026-10-22)
 
-The first release from the monorepo bumps four packages by one patch: `@nathwn12/oc-bifrost` 1.6.10, `oc-flight-deck` 0.20.2, `oc-harness-setup` 0.4.4, and `rea-shim` 0.1.2. The provenance entries above keep the versions that were imported (history); these are the versions the tree now carries. `oc-unified`, `oc-todo`, `gladius-mcp`, `puppet-mcp`, and the root stay at their recorded versions.
+The first release from the monorepo bumped four packages by one patch: `@nathwn12/oc-bifrost` 1.6.10, `oc-flight-deck` 0.20.2, `oc-harness-setup` 0.4.4, and `rea-shim` 0.1.2. The provenance entries above keep the versions that were imported (history); these are the versions the tree now carries. `oc-unified`, `oc-todo`, `gladius-mcp`, `puppet-mcp`, and the root stay at their recorded versions.
 
 Git and local-clone install routes were removed from every package README and `INSTALL.md`; npm is the only supported install route.
 
-## Release lane (built, statically validated, never executed)
+## Release lane (exercised: four releases; the registry verify is still unproven)
 
 `.github/workflows/release.yml` releases the four releasable packages — `@nathwn12/oc-bifrost`, `oc-flight-deck`, `oc-harness-setup`, `rea-shim` — from a tag `<package>@<version>` or a manual dispatch (package plus `dry_run`, default true). No Changesets: npm 12 breaks Changesets 2's registry parsing, and these packages version independently.
 
@@ -203,7 +203,7 @@ Git and local-clone install routes were removed from every package README and `I
 
 Publishing is OIDC trusted publishing only (`id-token: write`, `--provenance`, no token). `publishConfig` audit of the four releasable packages: `@nathwn12/oc-bifrost` is scoped and declares `access: public`; `oc-flight-deck` and `oc-harness-setup` are unscoped and declare it too; `rea-shim` is unscoped and relies on the default public access. No manifest was changed.
 
-Never executed: the workflow and its parser are statically validated and the parser is unit-tested, but no tag has been pushed, no dispatch has run, and OIDC trust is unproven.
+Exercised: the lane has released four packages — `@nathwn12/oc-bifrost@1.6.10`, `oc-flight-deck@0.20.2`, `oc-harness-setup@0.4.4` and `rea-shim@0.1.2` — each tagged `<package>@<version>`, each published by OIDC trusted publishing with provenance and carrying two attestations, with `latest` correct on all four; `npm audit signatures` verifies them and reports none invalid. One step is still unproven: `Verify the released package on the registry` ran seconds after publish and lost npm's propagation race, so all four runs concluded `failure` even though every publish step succeeded. The workflow now retries only the not-published shape (17 attempts, waiting 10/15/20 s then 30 s, capped near 7m15s); that retry has not yet been exercised by a real release.
 
 ## Gate changes after the phase-1 imports
 
@@ -218,9 +218,9 @@ Never executed: the workflow and its parser are statically validated and the par
 
 ## Retired repositories
 
-The four published packages — `@nathwn12/oc-bifrost`, `oc-flight-deck`, `oc-harness-setup`, `rea-shim` — now build, tag and publish from `oc-collections` only. Their former repositories — `nathwn12/oc-bifrost`, `nathwn12/oc-flight-deck`, `nathwn12/oc-harness-setup`, `nathwn12/rea-shim` — are being archived and made private. An archived repository stays readable, its npm metadata stays immutable, and nothing resolves it at install time.
+The four published packages — `@nathwn12/oc-bifrost`, `oc-flight-deck`, `oc-harness-setup`, `rea-shim` — now build, tag and publish from `oc-collections` only. Their former repositories — `nathwn12/oc-bifrost`, `nathwn12/oc-flight-deck`, `nathwn12/oc-harness-setup`, `nathwn12/rea-shim` — are archived and private. An archived repository stays readable, its npm metadata stays immutable, and nothing resolves it at install time.
 
-`nathwn12/oc-unified` (private, never published) and `nathwn12/oc-todo` (end-of-life, archived) are retained as history.
+`nathwn12/oc-unified` (archived, private, never published) and `nathwn12/oc-todo` (end-of-life, archived) are retained as history.
 
 `nathwn12/gladius` and `nathwn12/puppet` stay public and unarchived: they are the release-asset source for the MCP engine binaries, and archiving either would disable the Actions lane that builds the next engine.
 
