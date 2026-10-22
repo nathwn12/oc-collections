@@ -220,7 +220,7 @@ Exercised: the lane has released four packages — `@nathwn12/oc-bifrost@1.6.10`
 
 The four published packages — `@nathwn12/oc-bifrost`, `oc-flight-deck`, `oc-harness-setup`, `rea-shim` — now build, tag and publish from `oc-collections` only. Their former repositories — `nathwn12/oc-bifrost`, `nathwn12/oc-flight-deck`, `nathwn12/oc-harness-setup`, `nathwn12/rea-shim` — are archived and private. An archived repository stays readable, its npm metadata stays immutable, and nothing resolves it at install time.
 
-`nathwn12/oc-unified` (archived, private, never published) and `nathwn12/oc-todo` (end-of-life, archived) are retained as history.
+`nathwn12/oc-unified` (archived, private, never published) and `nathwn12/oc-todo` (end-of-life, archived, private) are retained as history.
 
 `nathwn12/gladius` and `nathwn12/puppet` stay public and unarchived: they are the release-asset source for the MCP engine binaries, and archiving either would disable the Actions lane that builds the next engine.
 

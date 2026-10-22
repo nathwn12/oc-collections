@@ -55,7 +55,7 @@ npm test
 npm run pack:check
 ```
 
-`npm run check` runs the workspace checks and the documentation/index checks; `pack:check` builds and verifies every tarball.
+`npm run check` runs the documentation checker, its self-test, and the workspace checks — not the index checks, which are separate steps in `.github/workflows/check.yml` and can be run by hand with `pwsh -NoProfile -File scripts/check-index.ps1 --structural`. `pack:check` runs check and build, then verifies every tarball.
 
 Package releases use tags `<package>@<version>`. The `release` workflow is OIDC-only; `dry_run` defaults to true. The lane has run: all four packages are published through OIDC with provenance, and the post-publish verification retries npm propagation lag.
 
