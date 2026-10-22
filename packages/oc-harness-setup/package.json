@@ -21,7 +21,8 @@
     "opencode.jsonc",
     "README.md",
     "LICENSE",
-    "assets"
+    "assets",
+    "docs/GUIDE.md"
   ],
   "engines": {
     "node": ">=22"

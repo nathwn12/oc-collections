@@ -12,10 +12,19 @@
 // repo root. Backticked tokens inside fenced code blocks are examples, not
 // prose claims, and are skipped.
 //
+// Four package READMEs are also npm's front door: npm renders
+// packages/<pkg>/README.md and GitHub shows that same file, so those four must
+// stay slim and self-contained. They fail on a version literal beside their own
+// package name (the stale pin that shipped twice) and on a relative link or
+// <img src> (npm has no repo tree to resolve one against). The full document
+// lives beside them in docs/GUIDE.md. Prerequisites such as a Node floor are
+// not pins and do not trip the version rule.
+//
 // Usage:
 //   node scripts/check-docs.mjs            # in-scope docs
 //   node scripts/check-docs.mjs --all      # include report-only imports
 //   node scripts/check-docs.mjs --file X   # one file (used by the self-test)
+//   node scripts/check-docs.mjs --file X --pkg NAME  # front-door rule as NAME
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -49,9 +58,22 @@ const SKIPS = [
 const args = process.argv.slice(2);
 const all = args.includes("--all");
 const files = [];
+let forcedPkg = null;
 for (let i = 0; i < args.length; i++) {
   if (args[i] === "--file" && args[i + 1]) { files.push(path.resolve(args[i + 1])); i++; }
+  if (args[i] === "--pkg" && args[i + 1]) { forcedPkg = args[i + 1]; i++; }
 }
+
+// The four npm front doors, keyed by package directory, valued by the exact
+// name npm and the README use for that package.
+const FRONT_DOOR = new Map([
+  ["packages/oc-bifrost", "@nathwn12/oc-bifrost"],
+  ["packages/oc-flight-deck", "oc-flight-deck"],
+  ["packages/oc-harness-setup", "oc-harness-setup"],
+  ["packages/rea-shim", "rea-shim"],
+]);
+// Absolute targets: a scheme (https:, mailto:, ...), a root path, or an anchor.
+const ABSOLUTE = /^(?:[a-z][a-z0-9+.-]*:|\/|#)/i;
 
 function walk(target, out = []) {
   if (!fs.existsSync(target)) return out;
@@ -126,13 +148,58 @@ function isGitIgnored(absPath) {
   return false;
 }
 
+// The front-door identity of a file: one of the four package READMEs (or a
+// fixture told which package it stands for). Null for everything else.
+function frontDoorName(file, forced) {
+  if (forced) return forced;
+  const rel = path.relative(ROOT, file).split(path.sep).join("/");
+  const parts = rel.split("/");
+  if (parts.length !== 3 || parts[2] !== "README.md") return null;
+  return FRONT_DOOR.get(`${parts[0]}/${parts[1]}`) ?? null;
+}
+
+// A version literal beside the package's own name breaks npm consumers two
+// ways: it ships a pin that goes stale on the next release, and it reads as the
+// current version after the manifest has moved. Prerequisites (`Node 22.14.0`,
+// `OpenCode 2.1.1`) name no package and pass.
+function frontDoorProblems(text, name) {
+  const problems = [];
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const versionRe = new RegExp(`${escaped}["'\`\\s:@]+\\d+\\.\\d+\\.\\d+`, "i");
+  let fenced = false;
+  let lineNo = 0;
+  for (const line of text.split(/\r?\n/)) {
+    lineNo++;
+    if (/^\s*(```+|~~~+)/.test(line)) { fenced = !fenced; continue; }
+    const pin = versionRe.exec(line);
+    if (pin) problems.push({ line: lineNo, what: `version literal beside the package name: ${pin[0]}` });
+    if (fenced) continue;
+    for (const m of line.matchAll(/\[[^\]]*\]\(\s*<?([^)\s>]+)/g)) {
+      if (!ABSOLUTE.test(m[1])) problems.push({ line: lineNo, what: `relative markdown link: ${m[1]}` });
+    }
+    for (const m of line.matchAll(/<img\b[^>]*?\bsrc\s*=\s*["']([^"']+)["']/gi)) {
+      if (!ABSOLUTE.test(m[1])) problems.push({ line: lineNo, what: `relative image source: ${m[1]}` });
+    }
+  }
+  return problems;
+}
+
 let checked = 0;
 let failed = 0;
+let frontDoors = 0;
 const seen = new Set();
 for (const file of targets) {
   if (seen.has(file)) continue;
   seen.add(file);
   const rel = path.relative(ROOT, file).split(path.sep).join("/") || path.basename(file);
+  const door = frontDoorName(file, forcedPkg);
+  if (door) {
+    frontDoors++;
+    for (const { line, what } of frontDoorProblems(fs.readFileSync(file, "utf8"), door)) {
+      failed++;
+      console.log(`FAIL ${rel}:${line}: ${what}`);
+    }
+  }
   for (const { token, line } of tokensIn(file)) {
     const clean = token.split("#")[0].split("?")[0].replace(/^["']|["']$/g, "");
     if (!isPathClaim(clean)) continue;
@@ -150,5 +217,5 @@ for (const file of targets) {
   }
 }
 
-console.log(`docs: files=${seen.size} path-claims=${checked} failed=${failed}`);
+console.log(`docs: files=${seen.size} path-claims=${checked} front-doors=${frontDoors} failed=${failed}`);
 if (failed > 0) process.exitCode = 1;
