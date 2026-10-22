@@ -109,8 +109,35 @@ jobs:
         # Post-publish only: the registry half cannot pass before the version
         # exists. It is scoped to this run's package; the full table is checked
         # by the same command without --package. A dry run publishes nothing,
-        # so there is no registry state to verify.
+        # so there is no registry state to verify. npm can take several minutes
+        # to propagate a new version, so retry only the not-published shape;
+        # every other failure is a real failure and exits immediately.
         if: github.event_name != 'workflow_dispatch' || !inputs.dry_run
         shell: pwsh
         run: |
-          pwsh -NoProfile -File scripts/check-index.ps1 --registry --package "${{ steps.target.outputs.name }}"
+          $attempts = 17
+          # Observed propagation was 4-7 minutes. Ten attempts (~4 minutes)
+          # would still fail at the upper bound, so 17 attempts with 30s waits
+          # after the first three cap the wait at about 7m15s.
+          $waits = @(10, 15, 20) + @(30) * ($attempts - 4)
+          $name = "${{ steps.target.outputs.name }}"
+          for ($attempt = 1; $attempt -le $attempts; $attempt++) {
+            $output = & pwsh -NoProfile -File scripts/check-index.ps1 --registry --package $name 2>&1
+            $code = $LASTEXITCODE
+            $output | ForEach-Object { Write-Output $_ }
+            $summary = ($output | Where-Object { $_ -match '^registry:' } | Select-Object -Last 1)
+            Write-Output "attempt $attempt/$attempts (exit $code): $summary"
+            if ($code -eq 0) { exit 0 }
+            $fails = @($output | Where-Object { $_ -match '^FAIL' })
+            $notPublished = @($fails | Where-Object { $_ -match 'npm\s+version\s+\S+\s+not published' })
+            if ($fails.Count -eq 0 -or $notPublished.Count -ne $fails.Count) {
+              Write-Output "not a propagation failure; not retrying"
+              exit $code
+            }
+            if ($attempt -eq $attempts) { break }
+            $wait = $waits[$attempt - 1]
+            Write-Output "version not visible yet; waiting $wait seconds before attempt $($attempt + 1)"
+            Start-Sleep -Seconds $wait
+          }
+          Write-Output "version still not visible after $attempts attempts"
+          exit 1
