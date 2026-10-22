@@ -1,6 +1,6 @@
 # Install - oc-flight-deck
 
-Compatible with opencode 2.1.1.
+Compatible with opencode 2.1.1 or newer (2.x).
 
 One route: the npm registry. Plugin entries are bare strings in the `plugins` array of `opencode.jsonc`.
 

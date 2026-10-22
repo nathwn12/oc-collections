@@ -84,7 +84,7 @@ type GoUpdate = (mutation: (draft: GoStoreState) => void) => void;
  * Minimal on purpose, like `storage` above: the bridge needs one capability, so
  * it names one capability and stays trivially stubbable. It is no longer a
  * stand-in for a declaration the pin lacked - the pinned `@opencode/plugin`
- * client (`@opencode/client` 2.0.26) declares `credential.list()`, so the call
+ * client (`@opencode/client` 2.1.3) declares `credential.list()`, so the call
  * below is direct and type-checked. The runtime `typeof list === "function"`
  * check stays because the host binary is what actually answers: a host whose
  * client predates the method yields no key instead of throwing.

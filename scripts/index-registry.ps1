@@ -2,13 +2,17 @@
 # repository-metadata assertion that follows from it.
 #
 # The index table includes packages this repository does not publish:
-#   * oc-todo is EOL/deprecated and will not be republished;
 #   * gladius-mcp and puppet-mcp stay on their original release lanes, where
 #     their engine provisioning lives.
 # Their published metadata names those original repositories by design, so a
 # repository assertion on them can never pass. They are checked for existence
 # and claimed version only. Every package must be classified here; an unknown
 # package fails the registry check instead of being guessed.
+#
+# oc-todo is the third such package but is omitted from the table altogether
+# (EOL/deprecated; never republished from this monorepo), so the registry loop
+# never reaches its entry below. It stays classified so the entry is already
+# right if the table ever shows it again.
 $script:RegistryScope = [ordered]@{
     '@nathwn12/oc-bifrost' = [pscustomobject]@{
         Scope  = 'released'
@@ -26,6 +30,8 @@ $script:RegistryScope = [ordered]@{
         Scope  = 'released'
         Reason = 'packages/rea-shim; published by this repo''s release workflow.'
     }
+    # Not in the table, so never queried today; retained rather than deleted so
+    # the external-package classification holds the moment it is shown again.
     'oc-todo' = [pscustomobject]@{
         Scope  = 'external'
         Reason = 'EOL/deprecated; never republished from this monorepo.'
