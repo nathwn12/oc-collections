@@ -7,6 +7,8 @@
 #   * a fixture with no index rows exits 1 and says why,
 #   * a fixture table naming a package that is not in the repo exits 1 and
 #     names the phantom,
+#   * a fixture with header `Package` passes like one with header `Repo`, and a
+#     fixture with any other header label still fails as a phantom package,
 #   * the real README exits 0 with a non-empty structural summary,
 #   * a released-from-here package with stale repository metadata fails,
 #   * the same package with monorepo metadata passes,
@@ -70,6 +72,36 @@ try {
     if ($summary -notmatch '^structural: rows=(\d+) .* failed=0$' -or [int]$Matches[1] -lt 1) {
         Write-Output 'FAIL: the structural run recognised no rows'
         $fail++
+    }
+
+    # 3b. The header row is skipped by label, in either spelling this index has
+    # used; any other label still becomes a phantom package. Same nine rows.
+    $tableLines = @($realReadme -split "`r?`n" | Where-Object { $_ -match '^\|' })
+    $headerCases = @(
+        [pscustomobject]@{ Label = 'Package'; Exit = 0; Summary = '^structural: rows=9 packages=9 missing=0 extra=0 failed=0$' }
+        [pscustomobject]@{ Label = 'Bogus'; Exit = 1; Summary = '^structural: rows=10 packages=9 missing=0 extra=1 failed=1$' }
+    )
+    foreach ($case in $headerCases) {
+        $fixture = Join-Path $temp ('header-' + $case.Label + '.md')
+        $table = @(($tableLines[0] -replace '^\|[^|]*\|', ('| ' + $case.Label + ' |'))) + @($tableLines | Select-Object -Skip 1)
+        Set-Content -LiteralPath $fixture -Encoding utf8 -Value $table
+        $headerOut = @(& pwsh -NoProfile -File $check --structural -Path $fixture 2>&1)
+        $headerExit = $LASTEXITCODE
+        $headerSummary = ($headerOut | Where-Object { $_ -match '^structural:' } | Select-Object -Last 1)
+        Write-Output ('header token ({0}): exit={1}; {2}' -f $case.Label, $headerExit, $headerSummary)
+        $headerOut | Where-Object { $_ -match 'no such package' } | ForEach-Object { Write-Output ('  ' + $_) }
+        if ($headerExit -ne $case.Exit) {
+            Write-Output ('FAIL: header {0} exited {1}, expected {2}' -f $case.Label, $headerExit, $case.Exit)
+            $fail++
+        }
+        if ($headerSummary -notmatch $case.Summary) {
+            Write-Output ('FAIL: header {0} did not produce the expected summary' -f $case.Label)
+            $fail++
+        }
+        if ($case.Exit -ne 0 -and -not ($headerOut -match ('FAIL ' + $case.Label) -and $headerOut -match 'no such package')) {
+            Write-Output ('FAIL: header {0} did not fail as a phantom package' -f $case.Label)
+            $fail++
+        }
     }
 
     # 4. Registry scope: the repository assertion in both directions, offline.
