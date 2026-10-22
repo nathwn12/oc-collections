@@ -41,7 +41,8 @@
     "LICENSE",
     "CHANGELOG.md",
     "INSTALL.md",
-    "assets"
+    "assets",
+    "docs/GUIDE.md"
   ],
   "engines": {
     "node": ">=22",

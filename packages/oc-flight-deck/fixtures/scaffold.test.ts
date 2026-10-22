@@ -208,17 +208,23 @@ describe("flight deck plugin", () => {
       expect(existsSync(join(root, ...gone.split("/")))).toBe(false);
     }
 
-    // The public README installs and configures the plugin and never leaks a
-    // specific development machine. Headings are the README's own business, so
-    // these assert the substance a reader acts on: the plugin entry, the
-    // restart, the one config file's real path (including the XDG variant),
-    // and the official API link. The example file carries the longer header.
+    // The public README installs the plugin and never leaks a specific
+    // development machine. Headings are the README's own business, so these
+    // assert the substance a reader acts on: the plugin entry, the restart, and
+    // the absolute link to the full document. The config reference itself moved
+    // to docs/GUIDE.md when the README became npm's front door, so it is read
+    // there as its own file: the one config file's real path (including the XDG
+    // variant) and the official API link. The example file carries the longer
+    // header.
     const readme = await readFile(join(root, "README.md"), "utf8");
+    const guide = await readFile(join(root, "docs", "GUIDE.md"), "utf8");
     expect(readme).toMatch(/"plugins"\s*:\s*\[\s*"oc-flight-deck(@[^"]*)?"\s*\]/);
     expect(readme).toMatch(/\brestart\b/i);
-    expect(readme).toContain("flight-deck.jsonc");
-    expect(readme).toContain("~/.config/opencode/flight-deck.jsonc");
-    expect(readme).toContain("https://opencode.ai/v2/docs/build/plugins/cli");
+    // A front door that stops pointing at the guide strands the reference.
+    expect(readme).toContain("https://github.com/nathwn12/oc-collections/blob/main/packages/oc-flight-deck/docs/GUIDE.md");
+    expect(guide).toContain("flight-deck.jsonc");
+    expect(guide).toContain("~/.config/opencode/flight-deck.jsonc");
+    expect(guide).toContain("https://opencode.ai/v2/docs/build/plugins/cli");
     // npm is the only install route: INSTALL.md documents the registry entry
     // and no longer offers git or local-clone routes. The README keeps only
     // the front door — per-tool tours and local routes stay out of READMEs by
@@ -229,14 +235,17 @@ describe("flight deck plugin", () => {
     expect(install).not.toContain("git+");
     expect(readme).not.toContain("Q:\\");
     expect(readme).not.toContain("Q:/");
-    // The README is the only guide to the config: a row or a section that vanishes
-    // from it is reader-visible loss, not a doc nit. Pin the guide itself.
-    const guide = readme.slice(readme.indexOf("## Configure it"));
+    // The guide is the only guide to the config now: a row or a section that
+    // vanishes from it is reader-visible loss, not a doc nit. Pin the section
+    // itself, in the file that now carries it: a key that drifts out of
+    // `## Configure it` still fails, exactly as it did when the slice came from
+    // the README.
+    const guideConfig = guide.slice(guide.indexOf("## Configure it"));
     // Every row is documented in the guide, as a table row or a definition bullet.
     for (const field of STAT_FIELDS) {
-      expect(guide).toMatch(new RegExp("^(\\| `" + field + "` \\||- \\*\\*`" + field + "`\\*\\*)", "m"));
+      expect(guideConfig).toMatch(new RegExp("^(\\| `" + field + "` \\||- \\*\\*`" + field + "`\\*\\*)", "m"));
     }
-    expect(guide).toContain("| `session` |");
+    expect(guideConfig).toContain("| `session` |");
     // Every top-level setting is named with its backticked key and default.
     for (const key of [
       "refresh", "sidebar.enabled", "sidebar.rows", "sidebar.lines",
@@ -249,7 +258,7 @@ describe("flight deck plugin", () => {
       "layout.sparkWidth", "layout.labels", "format.duration", "glyphs.watch", "glyphs.caution",
       "glyphs.clear", "style.lines", "style.rows",
     ]) {
-      expect(guide).toContain("**`" + key + "`**");
+      expect(guideConfig).toContain("**`" + key + "`**");
     }
 
     // The shipped example config must parse and still describe the real
