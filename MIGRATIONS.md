@@ -49,7 +49,7 @@ What moved: the source repo's tracked tree, except `.github/**` (repo-level work
 Changed during the move:
 - `AGENTS.md` — the quick start now names `packages/oc-flight-deck` (and `-w oc-flight-deck`) with dependencies from the root `npm install`; the old `bun install` line would have created a second lockfile.
 
-Not carried over: `.github/workflows/{check,ci,release}.yml` — repo-level; GitHub only runs workflows from the monorepo root. The release workflow's npm trusted-publisher setup names the old repo and workflow filename, so publishing from the monorepo was not wired at import time (superseded by the release lane below).
+Not carried over: `.github/workflows/{check,ci,release}.yml` — repo-level; GitHub only runs workflows from the monorepo root. The release workflow's npm trusted-publisher setup names the old repo and workflow filename, so publishing from the monorepo was not wired at import time (now covered by the release lane below).
 
 ## 2026-10-22 — `oc-harness-setup@0.4.3`
 
@@ -67,7 +67,7 @@ What moved: the source repo's tracked tree, except `.github/**` (repo-level work
 Changed during the move:
 - `CONTRIBUTING.md` — the quick start now names the monorepo commands (`npm test -w oc-harness-setup`, `npm run check -w oc-harness-setup`) instead of cloning and installing the package repo.
 
-Not carried over: `.github/workflows/{ci,release}.yml` — repo-level; GitHub only runs workflows from the monorepo root. The release workflow's npm trusted-publisher setup names the old repo and workflow filename, so publishing from the monorepo was not wired at import time (superseded by the release lane below).
+Not carried over: `.github/workflows/{ci,release}.yml` — repo-level; GitHub only runs workflows from the monorepo root. The release workflow's npm trusted-publisher setup names the old repo and workflow filename, so publishing from the monorepo was not wired at import time (now covered by the release lane below).
 
 ## 2026-10-22 — `oc-unified@0.5.0`
 
@@ -104,7 +104,7 @@ What moved: the source repo's tracked tree, except `.github/**` (repo-level work
 
 Changed during the move: `docs/PUBLISHING.md` — retargeted from the original repo's `v<version>`/manual-first-publish flow to the monorepo `rea-shim@<version>` release lane. Every other imported file is byte-identical to the source.
 
-Not carried over: `.github/workflows/{ci,release}.yml` — repo-level; GitHub only runs workflows from the monorepo root. The release workflow's npm trusted-publisher setup names the old repo and workflow filename, so publishing from the monorepo was not wired at import time (superseded by the release lane below).
+Not carried over: `.github/workflows/{ci,release}.yml` — repo-level; GitHub only runs workflows from the monorepo root. The release workflow's npm trusted-publisher setup names the old repo and workflow filename, so publishing from the monorepo was not wired at import time (now covered by the release lane below).
 
 The package declares no scripts; its own check is the two commands its CI runs (`node --check bin/rea-shim.js`, `npm pack --dry-run`), and the root fan-out plan runs exactly those.
 
