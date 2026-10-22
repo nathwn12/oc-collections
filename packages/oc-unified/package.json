@@ -1,0 +1,49 @@
+{
+  "name": "oc-unified",
+  "version": "0.5.0",
+  "private": true,
+  "description": "One OpenCode v2 plugin carrying session watching, tool liveness, and title renaming as internal features.",
+  "type": "module",
+  "scripts": {
+    "test": "bun run fixtures/run.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nathwn12/oc-collections.git",
+    "directory": "packages/oc-unified"
+  },
+  "exports": {
+    ".": {
+      "types": "./index.ts",
+      "import": "./index.ts"
+    }
+  },
+  "files": [
+    "config.ts",
+    "fleet.ts",
+    "index.ts",
+    "lifeline.ts",
+    "masthead.ts",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "assets"
+  ],
+  "engines": {
+    "node": ">=22",
+    "bun": ">=1.4.0"
+  },
+  "dependencies": {
+    "@opencode/plugin": "2.0.26"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.2",
+    "typescript": "^5.9.3"
+  },
+  "peerDependencies": {},
+  "bugs": "https://github.com/nathwn12/oc-collections/issues",
+  "homepage": "https://github.com/nathwn12/oc-collections/tree/main/packages/oc-unified",
+  "author": "nathwn12",
+  "license": "MIT"
+}

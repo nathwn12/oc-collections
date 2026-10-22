@@ -11,22 +11,70 @@ permissions:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - name: Index integrity
+        shell: bash
         run: |
-          git ls-files --error-unmatch README.md LICENSE CHANGELOG.md
-          test "$(git ls-files '*.ts' '*.tsx' | wc -l)" -eq 0
-      - name: No internal vocabulary in tracked tree
+          git ls-files --error-unmatch README.md LICENSE CHANGELOG.md MIGRATIONS.md
+          git ls-files --error-unmatch packages/oc-bifrost/package.json
+          git ls-files --error-unmatch archive/oc-todo/package.json
+          # Implementation files live in packages/ (and the archive/ copy);
+          # the root stays an index.
+          test "$(git ls-files '*.ts' '*.tsx' | grep -v -E '^(packages|archive)/' | wc -l)" -eq 0
+      - name: Index structure (offline)
+        # The structural half needs no registry: it checks the table names
+        # against the repo's package inventory. The self-test proves it can go
+        # red without network.
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File scripts/check-index.ps1 --structural
+          pwsh -NoProfile -File scripts/check-index.selftest.ps1
+      - name: No internal vocabulary in the index's own files
         # Bracketed patterns match the retired names without writing them
         # literally, so this file itself stays clean.
+        shell: bash
         run: |
-          if git grep -I -n -i -E 'fl[e]et|l[i]feline|m[a]sthead' -- .; then
-            echo "internal name found in tracked tree" >&2
+          # Imported trees are their own published documents: oc-unified ships
+          # those names as product vocabulary, oc-harness-setup's shipped
+          # contract uses one, vendor/rtk-LICENSE is third-party text kept
+          # byte-identical to upstream, and the imported Rust sources and
+          # design docs use the words as ordinary English. Both guards cover
+          # the index's own files (root docs, workflows, scripts), not
+          # packages/, crates/, or the archived EOL copy.
+          if git grep -I -n -i -E 'fl[e]et|l[i]feline|m[a]sthead' -- . ':(exclude)packages' ':(exclude)crates' ':(exclude)archive'; then
+            echo "internal name found in this repo's own files" >&2
             exit 1
           fi
-          if git grep -I -n -i -E 'mod[u]le host|supers[e]d|unpubl[i]sh|noth[i]ng mounts' -- .; then
-            echo "internal history found in tracked tree" >&2
+          if git grep -I -n -i -E 'mod[u]le host|supers[e]d|unpubl[i]sh|noth[i]ng mounts' -- . ':(exclude)packages' ':(exclude)crates' ':(exclude)archive'; then
+            echo "internal history found in this repo's own files" >&2
             exit 1
           fi
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+      - name: Documentation truth (offline)
+        # Path claims in maintainer docs, plus the checker's own red/green proof.
+        shell: pwsh
+        run: |
+          node scripts/check-docs.mjs
+          node scripts/check-docs.selftest.mjs
+      - name: Install workspace dependencies
+        shell: pwsh
+        run: npm ci
+      - name: Workspace check
+        shell: pwsh
+        run: npm run check
+      - name: Release tooling checks
+        shell: pwsh
+        run: node --test scripts/release-target.test.mjs
+      - name: Workspace pack verification
+        # The sanctioned path: check + build run first, then every workspace
+        # tarball is inspected (forbidden entries, byte-equal manifest, entry
+        # points, files entries). A dist-less pack cannot pass this step.
+        shell: pwsh
+        run: npm run pack:check

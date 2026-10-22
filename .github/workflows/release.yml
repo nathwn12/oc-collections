@@ -1,0 +1,116 @@
+# Tag-driven release for the four releasable npm packages.
+#
+# Tag convention: <package-name>@<version>
+#   oc-flight-deck@0.20.2
+#   @nathwn12/oc-bifrost@1.6.10        (scoped: two @ characters; split on the last)
+#
+# No Changesets: npm 12 breaks Changesets 2's `npm info --json` parsing, and
+# these packages version independently.
+#
+# NOT published here:
+#   gladius-mcp, puppet-mcp - their engine-manifest.json carries
+#     RELEASE_WORKFLOW_FILLS_THIS placeholders that only their own release
+#     pipeline fills after building the Rust engine and uploading the archive.
+#     Publishing from this workflow would ship a launcher that fails closed at
+#     runtime. They remain on their original repos' release lanes.
+#   oc-unified, oc-todo - deprecated/private per the owner's 2026-10-22 ruling
+#     (oc-unified is private: true; oc-todo is EOL because OpenCode ships an
+#     official todo feature). They stay in the repo as source only and are not
+#     releasable until the owner revisits the ruling.
+#
+# OIDC trusted publishing only: id-token: write, --provenance; no auth-token
+# variable, no secrets, no OTP.
+name: release
+
+on:
+  push:
+    tags:
+      - '**@*'
+  workflow_dispatch:
+    inputs:
+      package:
+        description: Workspace package to release
+        required: true
+        type: choice
+        options:
+          - '@nathwn12/oc-bifrost'
+          - oc-flight-deck
+          - oc-harness-setup
+          - rea-shim
+      dry_run:
+        description: Validate and pack without publishing
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      - name: Resolve release target
+        id: target
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            node scripts/release-target.mjs --tag "$GITHUB_REF_NAME"
+          else
+            node scripts/release-target.mjs --package "${{ inputs.package }}"
+          fi
+
+      - name: Guard registry state (never republish, never retag)
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm view "${{ steps.target.outputs.name }}" versions --json > "$RUNNER_TEMP/versions.json"
+          node scripts/release-target.mjs --registry-guard "$RUNNER_TEMP/versions.json" "${{ steps.target.outputs.version }}"
+
+      - name: Install dependencies
+        shell: pwsh
+        run: npm ci
+
+      - name: Workspace check
+        shell: pwsh
+        run: npm run check
+
+      - name: Workspace pack verification
+        shell: pwsh
+        run: npm run pack:check
+
+      - name: Publish (dry run)
+        if: github.event_name == 'workflow_dispatch' && inputs.dry_run
+        shell: pwsh
+        run: npm publish --workspace "${{ steps.target.outputs.name }}" --access public --dry-run
+
+      - name: Publish (OIDC trusted publishing)
+        if: github.event_name != 'workflow_dispatch' || !inputs.dry_run
+        shell: pwsh
+        run: npm publish --workspace "${{ steps.target.outputs.name }}" --access public --provenance
+
+      - name: Verify the released package on the registry
+        # Post-publish only: the registry half cannot pass before the version
+        # exists. It is scoped to this run's package; the full table is checked
+        # by the same command without --package. A dry run publishes nothing,
+        # so there is no registry state to verify.
+        if: github.event_name != 'workflow_dispatch' || !inputs.dry_run
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File scripts/check-index.ps1 --registry --package "${{ steps.target.outputs.name }}"

@@ -1,0 +1,488 @@
+/** @jsxImportSource @opentui/solid */
+import { Plugin } from "@opencode/plugin/tui";
+import {
+  cautionDetail,
+  cautionMark,
+  detectCautions,
+  worstCaution,
+  type Caution,
+  type CautionMark,
+} from "./caution.js";
+import { copyFeedback, copyToClipboard } from "./clipboard.js";
+import { cautionThresholds, mergeOptions, resolveConfig } from "./config.js";
+import { shouldNotify } from "./notify.js";
+import { loadConfigFile } from "./file-config.js";
+import { createGoLookReader } from "./go-look.js";
+import { footerLine, railLineSpans, railLines, railLineStyle, type RailLine } from "./presentation.js";
+import { goPanelLines } from "./go-panel.js";
+import { ANIMATED_FIELDS, type StatSource } from "./stats.js";
+import { attributeMask, themeColor } from "./style.js";
+import { startGuardBridge } from "./guard.js";
+import { startGoBridge } from "./go.js";
+import { startTicker } from "./ticker.js";
+import { asCount, asRecord, type SessionLike } from "./coerce.js";
+import { createProjectTotals } from "./project-totals.js";
+import { createRealtimeTps } from "./realtime-tps.js";
+import { createSessionReads, locationOf } from "./session-reads.js";
+import { createTpsReader } from "./session-tps.js";
+
+// Flight Deck is a read-only instrument panel for the OpenCode V2 CLI/TUI. It
+// shows the open session's agent, model, branch, cost, tokens, and cache hit
+// rate in the sidebar. It uses only the official CLI plugin boundary —
+// `@opencode/plugin/tui`, `context.ui.slot`, and theme tokens.
+//
+// Read-only but for one thing: the animation tick writes a single counter into
+// the host's ephemeral plugin-memory store. It has to, because a timer owned by
+// this plugin cannot wake the host's renderer — see ./ticker.ts for why. That
+// counter is in-process, scoped to this plugin, and gone when the TUI exits.
+// Everything the rail displays is state the host already holds in memory.
+//
+// Appearance comes from, in order of precedence:
+//   1. `context.options` — the host's plugin options, when the host forwards them
+//   2. the one global config file, `flight-deck.jsonc` in the opencode
+//      configuration directory
+//   3. the sane defaults in ./config.ts
+// See flight-deck.example.jsonc for the commented template.
+
+export default Plugin.define({
+  id: "flight-deck-tui",
+  setup(context) {
+    const file = loadConfigFile();
+    const { config, issues } = resolveConfig(mergeOptions(file.options, context.options));
+
+    // Only the rows actually on the rail are worth deriving: the rail re-runs on
+    // every tick, and a figure nobody asked to see should not cost a walk of the
+    // session database or the model catalog.
+    const rows = config.sidebar.enabled ? new Set(config.sidebar.rows) : new Set<string>();
+    const wants = (name: string): boolean => rows.has(name);
+
+    if (file.issue !== undefined && file.source !== undefined) {
+      console.warn(`[flight-deck] ${file.issue}`);
+    }
+    const problems = file.issue !== undefined ? [file.issue, ...issues] : issues;
+    if (problems.length > 0 && shouldNotify(config.notifications, "config")) {
+      const extra = problems.length > 1 ? ` (+${problems.length - 1} more)` : "";
+      context.ui.toast.show({
+        title: "Flight Deck",
+        message: `Ignoring invalid config: ${problems[0]}${extra}`,
+        variant: "warning",
+      });
+    }
+
+    const footer = footerLine(config);
+    const releases: Array<() => void> = [];
+
+    // The plugin's first host subscription: the realtime TPS tracker listens
+    // to the host's streaming delta events from here on, so the `tps` row can
+    // watch a turn stream instead of only seeing its tokens after it settles.
+    // A host with no subscription surface degrades the tracker to a zero
+    // reader rather than failing setup, and disposal below drops the
+    // subscriptions so nothing leaks on unload.
+    const realtime = createRealtimeTps(context);
+
+    // One themed line, in the exact form the sidebar draws: the line resolves
+    // its own look from `config.style` (fixed lines use `style.lines`, every
+    // live row its own entry or the wildcard), and `themeColor`/`attributeMask`
+    // are the only things that know how a role or an attribute name becomes
+    // renderer state — they hand back plain props here, never escapes.
+    //
+    // `?? 0` keeps a line with no attributes on the renderer's own default
+    // instead of assigning `undefined` over it, so the shipped config draws
+    // exactly what it always drew. Shared with the sidebar footer slot so both
+    // rails stay one styling path.
+    const themedLine = (line: RailLine, copyId?: string) => {
+      const style = railLineStyle(config.style, line);
+      const lineFg = themeColor(style.color, context.theme) as string | undefined;
+      // The span mapping — which run inherits the line's colour and which
+      // takes its own tone — lives in a pure helper, so the "only the flagged
+      // window is red" decision is tested directly. All this renderer does is
+      // resolve each role to a theme colour and pass `fg`, never ANSI.
+      const text = (
+        <text
+          fg={lineFg}
+          attributes={attributeMask(style.attributes) ?? 0}
+          // Only the `ses` row breaks on character boundaries. Its value is one
+          // unbroken 30-character id with no word boundary; pinning `char`
+          // guarantees that token breaks deterministically at a character
+          // boundary, rather than depending on how the renderer's word-break
+          // handles a token it cannot break. Every other line keeps the
+          // renderer's own `word` default.
+          wrapMode={line.field === "ses" ? "char" : undefined}
+        >
+          {railLineSpans(line, style).map((span) => (
+            <span style={{ fg: themeColor(span.color, context.theme) as string | undefined }}>
+              {span.text}
+            </span>
+          ))}
+        </text>
+      );
+      // The `ses` row is the one live row with a second gesture: a click copies
+      // the full session id. The handler wraps the line in a box so it fires
+      // wherever the row is clicked (mouse events bubble up, never down), and
+      // it closes over the id from THIS render - see `snapshot` for why the id
+      // is never cached. A verified copy is silent: the owner objects to the
+      // noise of a toast confirming a gesture that plainly worked, so the only
+      // host-reactive surface (`./ticker.ts`) is reserved for a genuine failure,
+      // where the honesty rail requires that a no-op can never pass as a
+      // success. The call is wrapped so a failure in it can never throw out of
+      // the mouse handler.
+      if (copyId === undefined) return text;
+      return (
+        <box
+          onMouseUp={() => {
+            void (async () => {
+              // Everything, the copy included, sits inside the try: a backend
+              // that throws or rejects must degrade to a failure result, never
+              // an exception out of the mouse handler.
+              try {
+                const result = await copyToClipboard(context.renderer, copyId);
+                const fb = copyFeedback(result, copyId);
+                if (fb.ok) return;
+                if (!shouldNotify(config.notifications, "copy")) return;
+                context.ui.toast.show({
+                  title: "Flight Deck",
+                  message: fb.message,
+                  variant: fb.variant,
+                  duration: 1500,
+                });
+              } catch {
+                // A confirmation must never be able to break the click that
+                // produced it, nor the panel it confirms.
+              }
+            })();
+          }}
+        >
+          {text}
+        </box>
+      );
+    };
+
+    const reads = createSessionReads(context);
+    const {
+      messagesOf,
+      treeTotals,
+      contextUsage,
+      sessionElapsed,
+      statusOf,
+      recentParts,
+      shellsOf,
+      lastActivity,
+      permsOf,
+      busy,
+    } = reads;
+
+    const { projectTotals } = createProjectTotals(context);
+
+    const cautionThreshold = cautionThresholds(config.caution);
+
+    const cautionsOf = (sessionID: string, now: number): Caution[] =>
+      detectCautions({
+        parts: recentParts(sessionID),
+        shells: shellsOf(sessionID),
+        now,
+        sessionRunning: statusOf(sessionID) === "running",
+        lastMessageAt: lastActivity(sessionID),
+        thresholds: cautionThreshold,
+      });
+
+    const { sessionTps } = createTpsReader(
+      context,
+      {
+        elapsedMsOf: (id, now) => sessionElapsed(id, now),
+      },
+      config.sidebar.tps.scope,
+      realtime,
+    );
+
+    // Recent turn sizes, oldest first. Drawn from messages the host already
+    // holds, so the sparkline needs no history of our own to accumulate.
+    const sparkValues = (sessionID: string): readonly number[] => {
+      const sizes: number[] = [];
+      for (const entry of messagesOf(sessionID)) {
+        const message = asRecord(entry);
+        if (message?.type !== "assistant") continue;
+        const output = asCount(asRecord(message.tokens)?.output);
+        if (output === undefined) continue;
+        sizes.push(output);
+      }
+      // Windowed by the configured width, not a hardcoded one: `sparkWidth` is
+      // capped here first, so a wider setting used to be silently impossible.
+      return sizes.slice(-config.layout.sparkWidth);
+    };
+
+    // A ticker exists only for clock-derived rows; everything else updates from
+    // the host's own events. It is skipped entirely when nothing on the rail
+    // animates, and `refresh: 0` opts out regardless. The tick has to live in the
+    // host's reactive graph rather than ours, or it re-renders nothing at all.
+    // The footer's Go panel draws a clock-derived countdown, so its being
+    // enabled is reason enough for a ticker on its own (its sweep rides this
+    // frame only when the look opts in; by default the bar is static).
+    const goOption = config.sidebar.footer.go;
+    const goPanelEnabled = goOption === true || (typeof goOption === "object" && goOption !== null);
+    const animated =
+      config.sidebar.enabled &&
+      (goPanelEnabled ||
+        config.sidebar.rows.some((name) => ANIMATED_FIELDS.some((field) => field === name)));
+    let spinnerNeeded = false;
+    const ticker = startTicker(context, animated ? config.refresh : 0, () => spinnerNeeded);
+
+    // The guard row is opt-in and polls its own RPC: starting the bridge only
+    // when the row is on the rail means no timer and no request for a row
+    // nobody renders. The bridge resolves `status` from `context.client` on
+    // every poll, so installing guard later appears within its interval.
+    const wantGuard = config.sidebar.enabled && config.sidebar.rows.includes("guard");
+    const bridge = wantGuard ? startGuardBridge(context) : undefined;
+
+    // The go row is opt-in the same way: a row nobody drew should cost no timer
+    // and no request. The bridge is account-wide (one key, one quota), so it
+    // starts here and has no session to follow — unlike guard.
+    // The footer's Go panel (0.13.0) draws the same account-wide usage as three
+    // wider lines, so it wants the same bridge: either surface is reason enough
+    // to start the one poll, and neither starts it alone.
+    const wantGo =
+      config.sidebar.enabled && (config.sidebar.rows.includes("go") || goPanelEnabled);
+    const goBridge = wantGo ? startGoBridge(context) : undefined;
+
+    // The footer panel's look, re-resolved live from the config file: the
+    // reader cheap-stats the file each render (mtime + size) and re-reads +
+    // re-parses only when it moved, so `sidebar.footer.go` edits take effect
+    // on the next tick with no restart. `true` passes nothing (the panel's own
+    // defaults); an object passes its look straight through for the panel to
+    // re-read defensively. Host options keep setup precedence on every
+    // re-read; a missing, unreadable, or malformed file keeps the last good
+    // look and never throws out of the render below.
+    // `true` passes nothing (the panel's own defaults); an object passes its
+    // look straight through for the panel to re-read defensively.
+    const goPanelLayout = goOption === true ? undefined : (typeof goOption === "object" && goOption !== null ? goOption : undefined);
+    const goLook = createGoLookReader({ hostOptions: context.options, initial: goPanelLayout });
+
+    // Read session state inside the render so the rail stays live: cost and
+    // tokens climb as the session runs, and the branch appears once VCS
+    // resolves. Nothing here writes, requests, or leaves the process.
+    // Only the worst is ever drawn: the rail has one line for this, and two
+    // simultaneous observations is one problem with two symptoms.
+    //
+    // Returns the mark itself, not just its text: severity survives to the
+    // renderer as the mark's own tone, so the glyph takes the rail's error or
+    // warning colour while the rest of the row keeps its own.
+    const announce = (sessionID: string): CautionMark | undefined => {
+      if (!config.caution.enabled) return undefined;
+      const top = worstCaution(cautionsOf(sessionID, Date.now()));
+      return top === undefined ? undefined : cautionMark(top, config.glyphs);
+    };
+
+    // A VCS call on a directory with no repository must not throw and take the
+    // whole rail down with it, so it degrades to "no branch row", the same way
+    // every other missing value does. `locationOf` (from ./session-reads.js) is
+    // shared so both sides resolve the host location the same way.
+    const branchOf = (location: ReturnType<typeof locationOf>): string | undefined => {
+      try {
+        return context.data.location.vcs.info(location)?.branch?.current;
+      } catch {
+        return undefined;
+      }
+    };
+
+    const snapshot = (sessionID: string): StatSource => {
+      const location = locationOf(context);
+      const session = context.data.session.get(sessionID) as SessionLike | undefined;
+      const isBusy = busy(sessionID);
+      // The fast tick exists for the spinner, and the spinner is only drawn while
+      // something is moving. Everything else on the rail reads in seconds.
+      spinnerNeeded = wants("status") && isBusy === true;
+
+      // A "turn" is one prompt and the work it caused. The host's message list
+      // also carries system, shell and switch records, so counting records
+      // reports several times the turns actually taken.
+      const turns = wants("turns")
+        ? messagesOf(sessionID).filter((entry) => asRecord(entry)?.["type"] === "user").length
+        : undefined;
+
+      // The money row already shows the family, so the token rows beside it
+      // share its scope: when the tree is on record its rolled-up tokens
+      // replace the session's own, and the cost/total rows read `tree` itself.
+      // The tree is derived only when a row that needs it is on the rail.
+      const tree =
+        wants("cost") || wants("total") || wants("tokens") || wants("cache") || wants("reasoning")
+          ? treeTotals(sessionID, session?.cost)
+          : undefined;
+
+      return {
+        ...session,
+        tokens: tree?.tokens ?? session?.tokens,
+        caution: wants("caution") ? announce(sessionID) : undefined,
+        branch: wants("branch") ? branchOf(location) : undefined,
+        tree,
+        context: wants("context") ? contextUsage(sessionID, session?.model) : undefined,
+        project: wants("project") ? projectTotals(sessionID) : undefined,
+        status: wants("status") ? statusOf(sessionID) : undefined,
+        busy: isBusy,
+        perms: wants("perms") ? permsOf(sessionID) : undefined,
+        tps: wants("tps") ? sessionTps(sessionID, session) : undefined,
+        spark: wants("spark") ? sparkValues(sessionID) : undefined,
+        elapsedMs: wants("elapsed") ? sessionElapsed(sessionID) : undefined,
+        turns,
+        guard: bridge?.status,
+        // Read the go store inside the render too, so a poll re-runs the rail
+        // exactly as the guard read does.
+        go: goBridge?.usage,
+        // The id comes from the slot render props, read fresh on every render
+        // rather than cached: the sidebar is not remounted on a session switch,
+        // so a signal or module variable here would copy a stale session.
+        sessionId: wants("ses") ? sessionID : undefined,
+        // Read the tick inside the render so the host registers a dependency on
+        // it; that read is what makes the rail re-run on the ticker's schedule.
+        frame: ticker?.frame ?? 0,
+      };
+    };
+
+    // The toast is opt-in and deliberately not the signal — the rail is. It
+    // fires on the transition into a caution, once per distinct problem, and
+    // re-arms when the session goes quiet, so a persistent hang cannot nag.
+    // Reading state on a timer rather than inside the render keeps the render a
+    // pure function of what it was given.
+    let watchedSession: string | undefined;
+    let toastedKey: string | undefined;
+    let watchTimer: ReturnType<typeof setInterval> | undefined;
+
+    // Floored at one second: cautions display whole seconds, so polling faster
+    // than that only multiplies host reads (message lists, shells, statuses)
+    // for a display that cannot change any faster. `refresh` still drives the
+    // rail's own ticker; the toast keeps its own slower cadence.
+    //
+    // Gated on the sidebar too: `watchedSession` is assigned only inside the
+    // `sidebar.content` render, which exists only when the sidebar is enabled,
+    // so without it this timer could never fire and would leak a live interval.
+    const toastMs = Math.max(1_000, config.refresh > 0 ? config.refresh : 1_000);
+    if (
+      config.sidebar.enabled &&
+      config.caution.enabled &&
+      config.caution.toast &&
+      shouldNotify(config.notifications, "caution")
+    ) {
+      watchTimer = setInterval(() => {
+        const sessionID = watchedSession;
+        if (sessionID === undefined) return;
+        try {
+          const top = worstCaution(cautionsOf(sessionID, Date.now()));
+          if (top === undefined || top.severity !== "caution") {
+            toastedKey = undefined;
+            return;
+          }
+          if (top.key === toastedKey) return;
+          toastedKey = top.key;
+          context.ui.toast.show({
+            title: "Flight Deck",
+            message: cautionDetail(top),
+            variant: "warning",
+          });
+        } catch {
+          // A warning must never be able to break the panel it warns about.
+        }
+      }, toastMs);
+    }
+
+    if (config.sidebar.enabled) {
+      releases.push(
+        context.ui.slot({
+          append: "sidebar.content",
+          render: ({ sessionID }) => {
+            // The annunciator is drawn from a timer, so the toast watcher needs
+            // to know which session is on screen. Reading the frame is what
+            // subscribes this render to the host's tick — without it nothing
+            // re-runs between host events, and a stall is precisely the failure
+            // that produces no host events at all.
+            watchedSession = sessionID;
+            // Keep the guard bridge on the rendered session: the follow fetches
+            // immediately on change, and the status read below subscribes this
+            // render to the bridge's host store, so polls re-run the rail.
+            bridge?.follow(sessionID);
+            void ticker?.frame;
+            void bridge?.status;
+            void goBridge?.usage;
+
+            const source = snapshot(sessionID);
+            const lines = railLines(config, source);
+            if (lines.length === 0) return null;
+
+            return (
+              // No padding here: the host already lays out and pads the sidebar,
+              // so adding our own would push the rows out of alignment with it.
+              <box flexDirection="column">
+                {lines.map((line) => themedLine(line, line.field === "ses" ? sessionID : undefined))}
+              </box>
+            );
+          },
+        }),
+      );
+    }
+
+    if (config.sidebar.enabled && (config.sidebar.footer.lines.length > 0 || goPanelEnabled)) {
+      releases.push(
+        context.ui.slot({
+          // The sidebar footer: a separate host slot below the rows. The
+          // lines are empty by default since 0.8.1, so this registration is
+          // purely opt-in - set `sidebar.footer.lines` (the documented
+          // `▸ FLIGHT DECK` pair, or your own) to claim the slot. It draws
+          // outside the `maxLines` budget and stays when `sidebar.lines` is
+          // customized. The fixed lines are static; the Go panel below is live,
+          // so this render subscribes to the tick and to the go store.
+          //
+          // `prepend` puts our claim FIRST inside the footer's boundary, so
+          // the panel sits directly ABOVE the host's own location row (the
+          // `~` path line): the host's row stays the absolute last line.
+          // Per the slot docs, `prepend`/`append` are first/last inside the
+          // target's boundary, and several claims at one anchor coexist in
+          // plugin enable order.
+          prepend: "sidebar.footer",
+          render: () => {
+            // Read the tick and the go store INSIDE the render, the same way
+            // the rail subscribes to the session snapshot: the countdown is
+            // clock-derived, and the read is what registers the dependency so
+            // a poll re-runs this slot. `goBridge` is absent when neither
+            // surface asked for it, so both reads are safe to skip.
+            void ticker?.frame;
+            const goUsage = goBridge?.usage;
+            // A blank panel must name its cause. `goBridge` absent means
+            // `startGoBridge` found no usable host store - distinct from a
+            // bridge that ran but had nothing to report, which carries its own
+            // reason. A bridge with neither a value nor a reason yet (its first
+            // poll still in flight) is `"pending"`, so the panel is never silent.
+            const goReason =
+              goBridge === undefined
+                ? "no-bridge"
+                : (goBridge.reason ?? (goUsage === undefined ? "pending" : undefined));
+            const panel = goPanelEnabled
+              ? goPanelLines(goUsage, Date.now(), goLook.current(), ticker?.frame ?? 0, goReason)
+              : [];
+            return (
+              <box flexDirection="column">
+                {config.sidebar.footer.lines.map((text) => themedLine({ text }))}
+                {panel.map((line) => themedLine(line))}
+              </box>
+            );
+          },
+        }),
+      );
+    }
+
+    if (footer !== undefined) {
+      releases.push(
+        context.ui.slot({
+          append: "prompt.footer.status",
+          render: () => <text fg={themeColor("subdued", context.theme) as string | undefined}>{footer}</text>,
+        }),
+      );
+    }
+
+    return () => {
+      if (watchTimer !== undefined) clearInterval(watchTimer);
+      watchTimer = undefined;
+      realtime.dispose();
+      ticker?.dispose();
+      bridge?.dispose();
+      goBridge?.dispose();
+      for (const release of releases) release();
+    };
+  },
+});

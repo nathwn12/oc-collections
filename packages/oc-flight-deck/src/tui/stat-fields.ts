@@ -1,0 +1,272 @@
+// The rail's stat vocabulary.
+//
+// `StatSource` is the subset of a session snapshot the rail reads; `STAT_FIELDS`
+// is the set a user may name in `sidebar.rows`; `ANIMATED_FIELDS` drives the
+// ticker; `LayoutHint` carries per-call row geometry. Untrusted values are read
+// through ./coerce.js rather than re-checked here.
+
+import { DEFAULT_BAR_WIDTH, formatCost, formatCount, formatDuration, fuelBar } from "./format.js";
+import type { DurationStyle } from "./format.js";
+
+/** The subset of a session snapshot the rail reads. All fields are untrusted. */
+export interface StatSource {
+  /**
+   * The annunciator line, precomputed by the caller.
+   *
+   * Either a plain string (legacy, drawn in the row's own colour) or the mark
+   * returned by `caution.ts`'s `cautionMark`: its `glyph` and `tone` ride to
+   * the renderer so severity is carried by a coloured run. The rules that
+   * decide whether something is wrong live in ./caution.ts and need the clock
+   * and the session snapshot, not a formatting function.
+   */
+  readonly caution?: unknown;
+  readonly agent?: unknown;
+  readonly model?: unknown;
+  readonly cost?: unknown;
+  readonly tokens?: unknown;
+  readonly branch?: unknown;
+  /**
+   * The open session id, straight from the slot render props. Untrusted like
+   * every other field: the `ses` row draws the FULL id (the rail wraps it), and
+   * that same full value is what the row's copy gesture writes.
+   */
+  readonly sessionId?: unknown;
+  readonly tree?: unknown;
+  readonly context?: unknown;
+  readonly project?: unknown;
+  readonly status?: unknown;
+  /** True when anything is working: this session, a subagent, or a shell. */
+  readonly busy?: unknown;
+  readonly perms?: unknown;
+  /**
+   * Session generation speed: the figures the reader hands over.
+   *
+   * `rt` is the realtime estimate from the host's streaming delta events
+   * (zero while nothing streams), `avg` the settled-turn average over the
+   * same scope (`undefined` when no settled turn exists), `ttft` the mean
+   * time to first token in seconds (`undefined` while no step with a first
+   * delta is on record). All are unknown at this boundary, so the row
+   * re-coerces them like every other field. Which one draws is
+   * `LayoutHint.tpsDisplay` (default `"avg"`).
+   */
+  readonly tps?: unknown;
+  readonly elapsedMs?: unknown;
+  readonly turns?: unknown;
+  /** Recent per-turn output sizes, oldest first, for the sparkline. */
+  readonly spark?: unknown;
+  /** Animation frame counter, advanced by the ticker. */
+  readonly frame?: unknown;
+  /** Harness status from oc-harness-guard's RPC, via the guard bridge. Untrusted. */
+  readonly guard?: unknown;
+  /**
+   * Zen Go account usage, read from the go bridge's host store. Untrusted on
+   * principle: the row re-validates the window shape rather than trusting the
+   * type across the module boundary.
+   */
+  readonly go?: unknown;
+}
+
+/** Fields a user may name in `sidebar.rows`, in the order they are documented. */
+export const STAT_FIELDS = [
+  "caution",
+  "status",
+  "agent",
+  "model",
+  "branch",
+  "cost",
+  "total",
+  "project",
+  "tokens",
+  "cache",
+  "context",
+  "perms",
+  "elapsed",
+  "tps",
+  "spark",
+  "reasoning",
+  "turns",
+  "guard",
+  "go",
+  "ses",
+] as const;
+
+type StatField = (typeof STAT_FIELDS)[number];
+
+/**
+ * Fields whose value only ever changes on a clock tick.
+ *
+ * The ticker exists to animate these. When none of them is on screen there is
+ * nothing to animate, so the plugin does not start a timer at all.
+ *
+ * `caution` belongs here for a stronger reason than the others: its whole job is
+ * noticing that time has passed without anything happening, so without a tick
+ * its thresholds could never be crossed on screen.
+ *
+ * `tps` belongs here because it is a per-poll rate: without a tick it would
+ * only recompute on host events and sit static between them, which is what
+ * made the old figure feel frozen.
+ */
+export const ANIMATED_FIELDS = ["caution", "status", "elapsed", "tps"] as const;
+
+export function isStatField(value: string): value is StatField {
+  // `session` is the display alias for `ses`: accepted here and folded back by
+  // `canonicalField`, but kept out of `STAT_FIELDS` on purpose — that array is
+  // the config vocabulary echoed in config error messages, and the key stays
+  // `ses`.
+  return value === "session" || STAT_FIELDS.some((field) => field === value);
+}
+
+/**
+ * The canonical config key for a field name.
+ *
+ * `session` is accepted as an alias for `ses` and folds back to it; every
+ * other name is returned unchanged. The renderers canonicalize their field
+ * argument at entry, so `statLine("session", …)` renders byte-identically to
+ * `statLine("ses", …)`.
+ */
+export function canonicalField(name: string): string {
+  return name === "session" ? "ses" : name;
+}
+
+/**
+ * The label a field draws in the label column.
+ *
+ * `ses` draws as `session`, which is what the row's value previews; every
+ * other field draws its own name. Both renderers resolve through here, so the
+ * plain-string view and the segmented view can never disagree on a label.
+ *
+ * `labels` is `layout.labels` — the per-row rename, keyed by the SAME canonical
+ * name `sidebar.rows` uses (`session` folded to `ses`), so one override lands
+ * on whichever spelling the row list carried. An absent map or an absent key
+ * draws the built-in label untouched.
+ */
+export function fieldLabel(field: string, labels?: Readonly<Record<string, string>>): string {
+  const override = labels?.[canonicalField(field)];
+  if (override !== undefined) return override;
+  return field === "ses" ? "session" : field;
+}
+
+/**
+ * Row geometry, overridable per call.
+ *
+ * A structural type rather than an import of `FlightDeckConfig`: ./config.ts
+ * imports this module, so reaching back into it would create a cycle. The
+ * shapes are compatible, so the config passes straight through.
+ */
+export interface LayoutHint {
+  readonly labelWidth?: number;
+  readonly barWidth?: number;
+  readonly sparkWidth?: number;
+  /**
+   * How the `elapsed` row joins its duration segments. The rail supplies this
+   * from `format.duration` (default `"spaced"`); when the hint is absent the
+   * formatter's own default, `"compact"`, applies.
+   */
+  readonly durationStyle?: DurationStyle;
+  /**
+   * True when the rail already draws a `total` row.
+   *
+   * The `cost` row merges the subagent total into itself only when nothing else
+   * on the rail already shows it — which makes "do I want one money row or two"
+   * a property of `sidebar.rows`, not a separate setting to find.
+   */
+  readonly hasTotalRow?: boolean;
+  /**
+   * Per-row label overrides, keyed by the canonical row name (`ses`, not
+   * `session`). Carried here rather than read from config directly so both
+   * renderers resolve a row's label from the same place they already resolve
+   * its geometry.
+   */
+  readonly labels?: Readonly<Record<string, string>>;
+  /**
+   * Which figure the `tps` row draws: the settled-turn average (`"avg"`, the
+   * default), the realtime estimate from the host's streaming delta events
+   * (`"rt"`), or both on one line (`"both"`). Carried here rather than read
+   * from config directly so the row stays a pure function of its inputs,
+   * exactly like `labels` above.
+   *
+   * Structurally typed — a string union, never the config's own type: like
+   * every other hint here this must not import the config module, which
+   * imports this one.
+   */
+  readonly tpsDisplay?: "avg" | "rt" | "both";
+  /**
+   * When true, `statRows` renders one row per named field even when the host
+   * has no data for it, using `skeletonValue` (a live-shaped zero) and falling
+   * back to `placeholder` for the fields that have no skeleton. Default off
+   * when calling `statRows` directly; `sidebarLines` turns it on from
+   * `config.sidebar.persist`.
+   */
+  readonly persist?: boolean;
+  /** Fallback value for a data-less row with no skeleton when `persist` is on. Default `"—"`. */
+  readonly placeholder?: string;
+  /**
+   * The clock the `go` row reads its relative reset hint against.
+   *
+   * An explicit instant rather than a hidden `Date.now()` inside the renderer,
+   * so a flagged window's "resets in 41m" is a pure function of its inputs and
+   * the row stays testable without freezing time. Absent means `Date.now()`.
+   */
+  readonly nowMs?: number;
+}
+
+/** Fallback placeholder for a persistent row with no data and no skeleton. */
+export const DEFAULT_PLACEHOLDER = "—";
+
+export const DEFAULT_LABEL_WIDTH = 10;
+export const DEFAULT_SPARK_WIDTH = 12;
+
+/**
+ * The value a data-less row draws when `sidebar.persist` is on.
+ *
+ * Zero skeletons, not dashes: each is built from the same formatter a live
+ * zero would use, so it is byte-identical to a real zero and the rail keeps
+ * its shape while reading alive rather than reading broken. `caution` has no
+ * skeleton — returning `undefined` keeps the annunciator silent when there is
+ * nothing to say, and its silence is the design. An unknown name also yields
+ * `undefined`, so a typo stays skipped rather than drawn.
+ */
+export function skeletonValue(field: string, layout: LayoutHint): string | undefined {
+  switch (canonicalField(field)) {
+    case "cost":
+    case "total":
+    case "project":
+      return formatCost(0);
+    case "tokens":
+      return "0 in · 0 out";
+    case "cache":
+      return "0 read";
+    case "context":
+      return `${fuelBar(0, layout.barWidth ?? DEFAULT_BAR_WIDTH)} ~0%`;
+    case "perms":
+      return "0 waiting";
+    case "elapsed":
+      return formatDuration(0, layout.durationStyle);
+    case "tps":
+      // The skeleton follows the display mode: `both` draws both figures on
+      // one line, the single-figure modes draw the one shape either would
+      // read as a zero.
+      return layout.tpsDisplay === "both" ? "0 rt · 0 avg" : "0 tok/s";
+    case "spark":
+      return "▁".repeat(Math.max(0, Math.floor(layout.sparkWidth ?? DEFAULT_SPARK_WIDTH)));
+    case "reasoning":
+      return formatCount(0);
+    case "turns":
+      return "0";
+    case "go":
+      return "○ 0 ○ 0 ○ 0";
+    case "status":
+      return "○ idle";
+    case "agent":
+    case "model":
+    case "ses":
+      return "none";
+    case "branch":
+      return "no branch";
+    case "guard":
+      return "unknown";
+    default:
+      return undefined;
+  }
+}
+

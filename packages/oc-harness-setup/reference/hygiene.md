@@ -1,0 +1,13 @@
+# Hygiene — leave no trail
+- Send every scratch output to `%TEMP%\opencode\<session-id>\`; write nothing scratch into a repo.
+- On Windows treat as trash: agent-created untracked files, `test-results/`, `playwright-report/`, `.vite/`, traces, scratch screenshots, probe scripts, `.dev*.log`, and temp notes past their use.
+- Treat as not trash: tracked files, owner-installed `node_modules`, shipped `dist/`, another session's state, and the owner's own files.
+- Delete each trash file in the same turn it stops being needed; a scratch file outliving its turn is a defect.
+- Stop the process writing a log before deleting that log.
+- Name every deletion in the return, with paths.
+- Delete only what this session created. Older scratch belongs to the session that made it: name it in the return, never sweep it.
+- Name another agent's or session's artifacts before deleting any of them; never delete unnamed.
+- Prove the pass clean: `git status --short` empty for every repo touched.
+- Prove scratch clean: the temp session dir empty or holding only named evidence for a pass still open.
+- Report a duplicate clone, a retired prototype, or a stray branch; never delete one unasked.
+- Treat cleanup as a delivery step, never as a courtesy.

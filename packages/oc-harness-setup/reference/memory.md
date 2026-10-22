@@ -1,0 +1,13 @@
+# Memory — historian writes, orchestrator hands over
+- Only `historian` writes memory; `orchestrator` hands it the deltas in the same turn, never later.
+- Session files live at explicit dynamic paths: `%USERPROFILE%\state\<session-id>\state.md`, `plan.md`, `handoff.md`; harness assets in `state/`; no literal user or home path.
+- Harness memory: `state/` in the config dir holds `lessons.md` and `template.md`.
+- Archive: `state/archive/<yyyy-mm>.md` holds superseded lines.
+- Write `state.md` in the fixed key order: `id`, `title`, `status`, `goal`, `next`, `artifacts`, `decisions`, `open`.
+- Let the user decide what a lesson says; `historian` records, dedupes, and archives it.
+- Let `maintainer` own harness definition and `historian` own harness memory; neither writes the other's files.
+- Stamp every recorded fact with `verified: YYYY-MM-DD`; after 30 days it is `STALE`, then re-verify or archive it.
+- Keep behavioural lessons non-expiring; let facts expire. Local knowledge is not permanently right.
+- Archive, never delete: move superseded lines to the monthly archive, then report each move.
+- Write a repo-local handoff only when the brief names the exact path.
+- Never invent an id; take it from the `session_rename` return.

@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "jsx": "preserve",
+    "jsxImportSource": "@opentui/solid",
+    "types": ["bun"]
+  },
+  "include": ["*.ts", "*.tsx"],
+  // live.ts is unfinished untracked scratch (the orchestrator decides its
+  // fate); it targets the removed panel surface, so it is outside the gate.
+  "exclude": ["node_modules", "dist", "live.ts"]
+}

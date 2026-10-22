@@ -1,0 +1,30 @@
+{
+  "name": "puppet-mcp",
+  "version": "4.5.3",
+  "description": "Windows desktop-control MCP server (npx launcher): provisions the pinned server binary from the GitHub Release on first run, then serves MCP over stdio",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nathwn12/oc-collections.git",
+    "directory": "packages/puppet-mcp"
+  },
+  "homepage": "https://github.com/nathwn12/oc-collections/tree/main/packages/puppet-mcp",
+  "engines": {
+    "node": ">=22.14.0"
+  },
+  "bin": {
+    "puppet-mcp": "./bin/puppet-mcp.js"
+  },
+  "scripts": {
+    "preinstall": "node -e \"if(process.env.npm_config_global==='true'){console.error('puppet-mcp: global install refused — use npx puppet-mcp@4.5.3');process.exit(1)}\"",
+    "postinstall": "node -e \"if(process.env.npm_config_global==='true'){console.error('puppet-mcp: global install refused — use npx puppet-mcp@4.5.3');process.exit(1)}\""
+  },
+  "files": [
+    "bin/",
+    "engine-manifest.json",
+    "LICENSE",
+    "README.md"
+  ],
+  "bugs": "https://github.com/nathwn12/oc-collections/issues",
+  "author": "nathwn12"
+}

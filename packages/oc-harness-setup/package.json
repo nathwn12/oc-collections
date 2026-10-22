@@ -1,0 +1,59 @@
+{
+  "name": "oc-harness-setup",
+  "version": "0.4.4",
+  "type": "module",
+  "bin": {
+    "oc-harness-setup": "bin/cli.js"
+  },
+  "files": [
+    "bin",
+    "agents",
+    "commands",
+    "skills",
+    "reference",
+    "scripts",
+    ".docs",
+    "state-seed",
+    "AGENTS.md",
+    "GLOSSARY.md",
+    "CHANGELOG.md",
+    "gitignore.template",
+    "opencode.jsonc",
+    "README.md",
+    "LICENSE",
+    "assets"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "check": "npm pack --dry-run",
+    "test": "node --check bin/cli.js && node --test",
+    "prepublishOnly": "npm run check"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "MIT",
+  "author": "nathwn12",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nathwn12/oc-collections.git",
+    "directory": "packages/oc-harness-setup"
+  },
+  "description": "A general OpenCode starter for Windows: 9 agents on a dispatch loop, 6 skills, fresh-verdict research, state memory, cleanup crew, and self-extension tooling - installed by one explicit command.",
+  "keywords": [
+    "opencode",
+    "agents",
+    "skills",
+    "loop",
+    "research",
+    "memory",
+    "cleanup",
+    "self-extension",
+    "starter",
+    "oc-harness-setup"
+  ],
+  "bugs": "https://github.com/nathwn12/oc-collections/issues",
+  "homepage": "https://github.com/nathwn12/oc-collections/tree/main/packages/oc-harness-setup"
+}
