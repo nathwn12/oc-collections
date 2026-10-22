@@ -11,10 +11,11 @@ permissions:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - name: Index integrity
+        shell: bash
         run: |
           git ls-files --error-unmatch README.md LICENSE CHANGELOG.md MIGRATIONS.md
           git ls-files --error-unmatch packages/oc-bifrost/package.json
@@ -26,12 +27,14 @@ jobs:
         # The structural half needs no registry: it checks the table names
         # against the repo's package inventory. The self-test proves it can go
         # red without network.
+        shell: pwsh
         run: |
           pwsh -NoProfile -File scripts/check-index.ps1 --structural
           pwsh -NoProfile -File scripts/check-index.selftest.ps1
       - name: No internal vocabulary in the index's own files
         # Bracketed patterns match the retired names without writing them
         # literally, so this file itself stays clean.
+        shell: bash
         run: |
           # Imported trees are their own published documents: oc-unified ships
           # those names as product vocabulary, oc-harness-setup's shipped
@@ -56,17 +59,22 @@ jobs:
           node-version: lts/*
       - name: Documentation truth (offline)
         # Path claims in maintainer docs, plus the checker's own red/green proof.
+        shell: pwsh
         run: |
           node scripts/check-docs.mjs
           node scripts/check-docs.selftest.mjs
       - name: Install workspace dependencies
+        shell: pwsh
         run: npm ci
       - name: Workspace check
+        shell: pwsh
         run: npm run check
       - name: Release tooling checks
+        shell: pwsh
         run: node --test scripts/release-target.test.mjs
       - name: Workspace pack verification
         # The sanctioned path: check + build run first, then every workspace
         # tarball is inspected (forbidden entries, byte-equal manifest, entry
         # points, files entries). A dist-less pack cannot pass this step.
+        shell: pwsh
         run: npm run pack:check
