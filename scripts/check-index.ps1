@@ -2,16 +2,19 @@
 #
 #   --structural (default, offline)
 #     Every table name is well-formed, and the set of names matches the repo's
-#     package inventory exactly: workspace packages, archived packages, and the
-#     root manifest. A package added, renamed, or removed without the table
-#     fails here. No network, so it runs on every pull request.
+#     package inventory exactly, less the reasoned omissions declared in
+#     $Omitted below: workspace packages, archived packages, and the root
+#     manifest. A package added, renamed, or removed without the table fails
+#     here, as does an omitted package that disappears from the tree or appears
+#     in the table anyway. No network, so it runs on every pull request.
 #
 #   --registry (network, post-publish)
 #     Every listed package resolves on the npm registry and every claimed
-#     version is published. Packages released from this monorepo (the table in
+#     version is published; a package declared omitted is never queried.
+#     Packages released from this monorepo (the table in
 #     scripts/index-registry.ps1) must also name `nathwn12/oc-collections` in
 #     their registry `repository` metadata; packages on other release lanes
-#     (oc-todo, gladius-mcp, puppet-mcp) are existence/version-only, because
+#     (gladius-mcp, puppet-mcp) are existence/version-only, because
 #     their published metadata names their original repos by design.
 #     This is the post-publish check: it cannot pass in the
 #     window between a version bump and its publish, so it must not gate a PR.
@@ -62,6 +65,15 @@ if ($packageFilter -and $mode -ne 'registry') {
 $readme = if ($Path) { $Path } else { Join-Path $PSScriptRoot '..' 'README.md' }
 $ua = @{ 'User-Agent' = 'oc-collections-index-check/1.0' }
 
+# Deliberately not shown in the public table: a stranger cannot install either.
+# This is a reasoned omission, not an allowlist of names to skip: each one must
+# still exist in the tree (a vanish is a failure), and a table row for one is a
+# failure too, so the table and this list can never both claim the same package.
+$Omitted = @{
+    'oc-unified' = 'private; never published'
+    'oc-todo'    = 'end-of-life; archived'
+}
+
 # The released/external scope table and the repository-metadata assertion.
 . (Join-Path $PSScriptRoot 'index-registry.ps1')
 
@@ -106,9 +118,9 @@ if ($mode -eq 'structural') {
     }
 
     $rootDir = Join-Path $PSScriptRoot '..'
-    $expected = New-Object System.Collections.Generic.List[string]
+    $inventory = New-Object System.Collections.Generic.List[string]
     $rootPkg = Get-Content (Join-Path $rootDir 'package.json') -Raw | ConvertFrom-Json
-    $expected.Add((Get-PackageLabel $rootPkg.name))
+    $inventory.Add((Get-PackageLabel $rootPkg.name))
     foreach ($base in @('packages', 'archive')) {
         $dir = Join-Path $rootDir $base
         if (-not (Test-Path $dir)) { continue }
@@ -116,14 +128,35 @@ if ($mode -eq 'structural') {
             $manifest = Join-Path $child.FullName 'package.json'
             if (-not (Test-Path $manifest)) { continue }
             $pkg = Get-Content $manifest -Raw | ConvertFrom-Json
-            $expected.Add((Get-PackageLabel $pkg.name))
+            $inventory.Add((Get-PackageLabel $pkg.name))
         }
     }
-    $expected = @($expected | Sort-Object -Unique)
+    $inventory = @($inventory | Sort-Object -Unique)
 
+    # An omission list that outlives its package would hide a deletion instead of
+    # recording one, so every omitted name must still be in the tree.
+    foreach ($name in @($Omitted.Keys | Sort-Object)) {
+        if ($name -notin $inventory) {
+            Write-Output ("FAIL {0,-20} declared omitted but missing from the tree" -f $name)
+            $fail++
+        }
+    }
+
+    $expected = @($inventory | Where-Object { -not $Omitted.ContainsKey($_) })
     $actual = @($names | Sort-Object -Unique)
-    $missing = @($expected | Where-Object { $_ -notin $actual })
-    $extra = @($actual | Where-Object { $_ -notin $expected })
+
+    # A row for an omitted package claims two contradictory things at once. It is
+    # reported as its own failure, never silently tolerated and never miscounted
+    # as a phantom package.
+    $doubleClaim = @($actual | Where-Object { $Omitted.ContainsKey($_) })
+    foreach ($name in $doubleClaim) {
+        Write-Output ("FAIL {0,-20} table row for an omitted package ({1})" -f $name, $Omitted[$name])
+        $fail++
+    }
+
+    $shown = @($actual | Where-Object { -not $Omitted.ContainsKey($_) })
+    $missing = @($expected | Where-Object { $_ -notin $shown })
+    $extra = @($shown | Where-Object { $_ -notin $expected })
     $duplicates = @($names | Group-Object | Where-Object { $_.Count -gt 1 } | ForEach-Object { $_.Name })
 
     foreach ($name in $missing) {
@@ -139,7 +172,7 @@ if ($mode -eq 'structural') {
         $fail++
     }
 
-    Write-Output ("structural: rows={0} packages={1} missing={2} extra={3} failed={4}" -f $rows.Count, $expected.Count, $missing.Count, $extra.Count, $fail)
+    Write-Output ("structural: rows={0} packages={1} omitted={2} missing={3} extra={4} failed={5}" -f $rows.Count, $expected.Count, $Omitted.Count, $missing.Count, $extra.Count, $fail)
     exit $(if ($fail -eq 0) { 0 } else { 1 })
 }
 

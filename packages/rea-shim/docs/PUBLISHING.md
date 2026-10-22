@@ -10,9 +10,12 @@ human act.
 
 rea-shim is released from the `nathwn12/oc-collections` monorepo, not from
 its original repo. The root `release` workflow triggers on `**@*` and
-publishes over OIDC with provenance; the workflow is statically validated
-but has never executed, so OIDC trust is unproven (see the monorepo root
-`MIGRATIONS.md`).
+publishes over OIDC with provenance. The lane has executed: four runs, one
+package per run, all four publishing successfully over OIDC with
+provenance, so the trust is proven rather than assumed (see the monorepo
+root `MIGRATIONS.md`). One step is still unproven: the post-publish
+registry verify lost npm's propagation race in all four runs, and its
+retry has not yet been exercised by a real release.
 
 1. Push `rea-shim@<version>` (e.g. `rea-shim@0.1.2`). The tag version must
    equal `packages/rea-shim/package.json` and be strictly newer than every

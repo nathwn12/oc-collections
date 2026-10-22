@@ -33,16 +33,14 @@ The gladius and puppet launchers download their engine binaries from the `gladiu
 | Package | What it does | Version | Links |
 | --- | --- | --- | --- |
 | oc-bifrost | Runs V1-era OpenCode plugins on the V2 runtime. | `1.6.10` | [repo](https://github.com/nathwn12/oc-collections) · [npm](https://www.npmjs.com/package/@nathwn12%2Foc-bifrost) |
-| oc-flight-deck | Live session telemetry in the OpenCode sidebar. | `0.20.2` | [repo](https://github.com/nathwn12/oc-collections) · [npm](https://www.npmjs.com/package/oc-flight-deck) |
+| oc-flight-deck | Live session telemetry in the OpenCode sidebar. | `0.20.3` | [repo](https://github.com/nathwn12/oc-collections) · [npm](https://www.npmjs.com/package/oc-flight-deck) |
 | oc-harness-setup | Installs and orchestrates the Windows harness. | `0.4.4` | [repo](https://github.com/nathwn12/oc-collections) · [npm](https://www.npmjs.com/package/oc-harness-setup) |
-| rea-shim | One-line MCP launcher for rea. | `0.1.2` | [repo](https://github.com/nathwn12/oc-collections) · [npm](https://www.npmjs.com/package/rea-shim) |
+| rea-shim | One-line MCP launcher for rea. | `0.1.3` | [repo](https://github.com/nathwn12/oc-collections) · [npm](https://www.npmjs.com/package/rea-shim) |
 | gladius-mcp | Browser-use MCP server; the engine binaries come from the `gladius` repo's release assets. | `0.4.2` | [repo](https://github.com/nathwn12/oc-collections) · [npm](https://www.npmjs.com/package/gladius-mcp) |
 | puppet-mcp | Windows desktop-control MCP server; the engine binaries come from the `puppet` repo's release assets. | `4.5.3` | [repo](https://github.com/nathwn12/oc-collections) · [npm](https://www.npmjs.com/package/puppet-mcp) |
-| oc-unified | Session watching, tool liveness, and title renaming in one plugin. | `private` | [repo](https://github.com/nathwn12/oc-collections) |
-| oc-todo | Archived todo plugin; end-of-life, because OpenCode ships the built-in feature. | `0.5.1` | [repo](https://github.com/nathwn12/oc-collections) · [npm](https://www.npmjs.com/package/oc-todo) |
 | oc-collections | This index and npm-workspaces monorepo. | `this index` | [repo](https://github.com/nathwn12/oc-collections) |
 
-`oc-unified` is private and never published; `oc-todo` is end-of-life. `gladius-mcp` and `puppet-mcp` publish from their own release lanes.
+`gladius-mcp` and `puppet-mcp` publish from their own release lanes.
 
 ## Development
 

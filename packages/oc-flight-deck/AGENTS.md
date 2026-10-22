@@ -43,7 +43,7 @@ bun run compile
 
 - Targets the OpenCode host (compatible with opencode 2.1.1) through the official CLI plugin API.
 - The host provides the renderer: `@opentui/core`, `@opentui/solid` and `solid-js` are peer dependencies, supplied by the host and never bundled.
-- The repo ships `@opencode/plugin` as its only runtime dependency, plus the compiled entries in `dist/` that the host actually loads — never raw source.
+- The host supplies `@opencode/plugin` from its own tree at load time: it is an optional peer range (`>=2.1.1 <3`) with a dev pin for types and build, never a bundled runtime dependency. The repo ships the compiled entries in `dist/` that the host actually loads — never raw source.
 
 ## Release
 

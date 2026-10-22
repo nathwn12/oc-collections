@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.20.3] - 2026-10-23
+
+- `@opencode/plugin` is no longer a runtime dependency. It moves to an optional peer range (`>=2.1.1 <3`), with 2.1.3 as a dev dependency for types, so an install no longer carries its own copy of the host module.
+- Rationale: the host serves `@opencode/plugin` and its subpaths from its own package tree at load time and refuses a copy loaded from a plugin's `node_modules`, so the bundled copy was never used - it only added a duplicate install tree (a clean `npm install @opencode/plugin@2.1.3` measures 127 MB across 167 packages) beside every plugin.
+- No behaviour change; hosts on 2.1.1 and 2.1.3 are both supported.
+
 ## [0.20.2] - 2026-10-22
 
 - Version bump for the monorepo release; no runtime change.

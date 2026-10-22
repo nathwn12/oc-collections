@@ -13,6 +13,47 @@ const root = join(import.meta.dir, "..");
 const created: string[] = [];
 let savedXdg: string | undefined;
 
+/**
+ * The one semver question this test asks: does a concrete host version fall
+ * inside the declared peer window? Only the comparison forms a peer range here
+ * may use are understood - `^` and `~` are read as the floors they lower to,
+ * which is all this guard needs - and an unrecognised clause throws instead of
+ * quietly passing.
+ */
+function inPeerWindow(version: string, range: string): boolean {
+  type Triple = [number, number, number];
+  const parse = (value: string): Triple | null => {
+    const m = /^(\d+)(?:\.(\d+))?(?:\.(\d+))?$/.exec(value);
+    return m ? [Number(m[1]), Number(m[2] ?? 0), Number(m[3] ?? 0)] : null;
+  };
+  const target = parse(version);
+  if (!target) throw new Error(`not a concrete version: ${version}`);
+  const order = (a: Triple, b: Triple) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+  return range
+    .trim()
+    .split(/\s+/)
+    .every((clause) => {
+      const m = /^(>=|>|<=|<|=|\^|~)?(.+)$/.exec(clause);
+      const bound = m ? parse(m[2] ?? "") : null;
+      if (!m || !bound) throw new Error(`unsupported peer range clause: ${clause}`);
+      const d = order(target, bound);
+      switch (m[1]) {
+        case ">=":
+        case "^":
+        case "~":
+          return d >= 0;
+        case ">":
+          return d > 0;
+        case "<=":
+          return d <= 0;
+        case "<":
+          return d < 0;
+        default:
+          return d === 0;
+      }
+    });
+}
+
 beforeEach(() => {
   // `setup()` reads one global config file, so every test points the lookup at
   // an empty throwaway directory: the real machine config can never leak in.
@@ -90,12 +131,14 @@ describe("flight deck plugin", () => {
   test("ships a live readout with no orchestration surface", async () => {
     const packageJson = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as {
       exports: Record<string, unknown>;
-      dependencies: Record<string, string>;
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
       peerDependencies: Record<string, string>;
-      peerDependenciesMeta?: Record<string, unknown>;
+      peerDependenciesMeta?: Record<string, { optional?: boolean }>;
       scripts: Record<string, string>;
       files: string[];
     };
+    const dependencies = packageJson.dependencies ?? {};
     expect(Object.keys(packageJson.exports)).toEqual([".", "./tui"]);
     // The shipped entries are plain compiled JS: raw TSX under `node_modules`
     // falls back to Bun's native JSX transform on opencode v2.1.1, whose
@@ -105,14 +148,34 @@ describe("flight deck plugin", () => {
     expect(packageJson.exports["./tui"]).toMatchObject({ import: "./dist/tui/index.js" });
     expect(packageJson.files).toContain("dist");
     expect(packageJson.scripts.compile).toContain("scripts/build");
-    expect(packageJson.dependencies).toMatchObject({ "@opencode/plugin": "2.1.1" });
-    // Deliberate exact pin: a supply-chain guard on the host version built against.
-    expect(packageJson.dependencies["jsonc-parser"]).toBeUndefined();
+    // @opencode/plugin is supplied by the HOST, never bundled: the host's
+    // `ensurePluginRuntime()` serves it, and every exported subpath, from its
+    // own package directory, so a copy installed here is never evaluated - it
+    // only adds a duplicate tree beside every plugin. Hence no runtime
+    // dependency, an optional peer range, and a dev pin for types and build.
+    expect(dependencies["@opencode/plugin"]).toBeUndefined();
+    // `jsonc-parser` stays out of the runtime: config parsing ships in `src/`.
+    expect(dependencies["jsonc-parser"]).toBeUndefined();
+    const hostPeer = packageJson.peerDependencies["@opencode/plugin"] ?? "";
+    // A range, never an exact version: compatibility is decided by the host at
+    // run time, so an exact pin here gates nothing and goes stale on every bump.
+    expect(hostPeer).toMatch(/^(?:\^|>=)/);
+    expect(hostPeer).not.toMatch(/^\d+\.\d+\.\d+$/);
+    // The floor is what was actually exercised - 2.1.1 and 2.1.3. 2.1.0 is
+    // contract-identical but untested, and 3.x has not been built against.
+    expect(inPeerWindow("2.1.1", hostPeer)).toBe(true);
+    expect(inPeerWindow("2.1.3", hostPeer)).toBe(true);
+    expect(inPeerWindow("3.0.0", hostPeer)).toBe(false);
+    // Optional matters: npm >=7 auto-installs a non-optional peer, which would
+    // recreate the duplicate tree this shape exists to avoid.
+    expect(packageJson.peerDependenciesMeta?.["@opencode/plugin"]).toEqual({ optional: true });
+    // The dev pin stays concrete: types and the build read exactly one SDK.
+    expect(packageJson.devDependencies?.["@opencode/plugin"]).toMatch(/^\d+\.\d+\.\d+$/);
     // Peers-only @opentui surface: the plugin consumes the host's renderer
     // through the plugin context and must not ship its own copy, which the host
     // refuses to load (opencode v2.1.1).
-    expect(packageJson.dependencies["@opentui/core"]).toBeUndefined();
-    expect(packageJson.dependencies["@opentui/solid"]).toBeUndefined();
+    expect(dependencies["@opentui/core"]).toBeUndefined();
+    expect(dependencies["@opentui/solid"]).toBeUndefined();
     expect(packageJson.peerDependencies).toMatchObject({
       "@opentui/core": ">=0.6.6",
       "@opentui/solid": ">=0.6.6",
@@ -123,7 +186,9 @@ describe("flight deck plugin", () => {
     // marking them optional ships a package that cannot resolve its own
     // imports after install. It worked locally only because the checkout's
     // node_modules happened to satisfy them. That mistake shipped once.
-    expect(packageJson.peerDependenciesMeta).toBeUndefined();
+    for (const required of ["@opentui/core", "@opentui/solid", "solid-js"]) {
+      expect(packageJson.peerDependenciesMeta?.[required]).toBeUndefined();
+    }
     expect(packageJson.scripts.check).toContain("typecheck");
     expect(packageJson.scripts.check).toContain("test");
 
