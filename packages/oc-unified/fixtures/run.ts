@@ -1196,6 +1196,7 @@ const tick = () => new Promise((r) => setTimeout(r, 25));
 // writes to the real %USERPROFILE%\.local\state\opencode. Part 7 recomputes the
 // same path for its session-map fixtures, and the run restores the real value.
 const realHome = process.env.USERPROFILE;
+const realHomePosix = process.env.HOME;
 process.env.USERPROFILE = await (async () => {
   const { join } = await import('node:path');
   const { tmpdir } = await import('node:os');
@@ -1688,7 +1689,10 @@ writeFileSync(
 );
 mkdirSync(stateDir(BAD_SESSION), { recursive: true });
 writeFileSync(join(stateDir(BAD_SESSION), 'session-state.yaml'), 'close:\n  status: [unclosed\n');
+// `recordedCloseStatus` calls os.homedir(): Windows reads USERPROFILE, POSIX reads HOME.
+// Set both so the same fixture resolves the recorded map on either platform.
 process.env.USERPROFILE = fakeHome;
+process.env.HOME = fakeHome;
 
 // m2: the live title is the false claim the bug produced, while the map records
 // a terminal close - the status token must not fall back to `active`.
@@ -1889,6 +1893,8 @@ check(
 
 if (realHome === undefined) delete process.env.USERPROFILE;
 else process.env.USERPROFILE = realHome;
+if (realHomePosix === undefined) delete process.env.HOME;
+else process.env.HOME = realHomePosix;
 rmSync(fakeHome, { recursive: true, force: true });
 
 dispose();
@@ -1918,9 +1924,9 @@ function readUnitSource(name: string): string {
   }
 }
 
-// A committed byte must never carry a literal user path. This regex matches a
-// drive-letter `...\Users\` prefix without itself spelling one out.
-const LITERAL_USER_PATH = /[A-Za-z]:\\Users\\/;
+// A committed byte must never carry a literal user path. This regex matches
+// drive-letter `\Users\` and POSIX `/home/<name>` or `/Users/<name>` prefixes.
+const LITERAL_USER_PATH = /(?:[A-Za-z]:\\Users\\|\/home\/[^/\s]+|\/Users\/[^/\s]+)/;
 
 // ---------------------------------------------------------------------------
 // Part L2 - the pure band decision core (decideBand)
