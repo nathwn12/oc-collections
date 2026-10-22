@@ -18,6 +18,7 @@
 //   node scripts/check-docs.mjs --file X   # one file (used by the self-test)
 import fs from "node:fs";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const NAMES = new Set(["AGENTS.md", "CONTRIBUTING.md", "INSTALL.md", "PUBLISHING.md", "README.md", "SKILL.md"]);
@@ -111,6 +112,20 @@ function skipped(file, token) {
   return SKIPS.some((s) => s.file === rel && s.token === token);
 }
 
+// Missing + git-ignored is build output, not a broken link; this is a git rule, not a filename allowlist.
+function isGitIgnored(absPath) {
+  const rel = path.relative(ROOT, absPath);
+  if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) return false;
+  const normalized = rel.split(path.sep).join("/");
+  // Try both forms: a missing directory matches `dist/`, a missing file
+  // matches `dist/file`; git needs the directory form for the former.
+  for (const candidate of [normalized, `${normalized}/`]) {
+    const result = spawnSync("git", ["check-ignore", "-q", "--", candidate], { cwd: ROOT, stdio: "ignore" });
+    if (result.status === 0) return true;
+  }
+  return false;
+}
+
 let checked = 0;
 let failed = 0;
 const seen = new Set();
@@ -129,6 +144,7 @@ for (const file of targets) {
       path.resolve(nearestPackageRoot(file), clean),
     ];
     if (candidates.some((p) => fs.existsSync(p))) continue;
+    if (candidates.some(isGitIgnored)) continue;
     failed++;
     console.log(`FAIL ${rel}:${line}: ${token}`);
   }
