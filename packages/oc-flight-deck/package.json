@@ -1,0 +1,77 @@
+{
+  "name": "oc-flight-deck",
+  "version": "0.20.2",
+  "description": "Live OpenCode V2 session telemetry — agent, model, branch, cost, tokens, cache hit rate and context usage in your sidebar.",
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "opencode-tui",
+    "tui",
+    "cli",
+    "sidebar",
+    "telemetry",
+    "cost"
+  ],
+  "license": "MIT",
+  "author": "nathwn12",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nathwn12/oc-collections.git",
+    "directory": "packages/oc-flight-deck"
+  },
+  "homepage": "https://github.com/nathwn12/oc-collections/tree/main/packages/oc-flight-deck",
+  "bugs": "https://github.com/nathwn12/oc-collections/issues",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./dist/index.js"
+    },
+    "./tui": {
+      "types": "./src/tui/index.tsx",
+      "import": "./dist/tui/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "flight-deck.example.jsonc",
+    "flight-deck.schema.json",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "INSTALL.md",
+    "assets"
+  ],
+  "engines": {
+    "node": ">=22",
+    "bun": ">=1.4.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "compile": "bun scripts/build.ts",
+    "check": "bun run typecheck && bun test",
+    "check:dist": "bun run compile && git diff --exit-code -- dist",
+    "prepublishOnly": "bun run check && bun run compile"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@opencode/plugin": "2.1.1"
+  },
+  "devDependencies": {
+    "@opentui/core": "0.6.6",
+    "@opentui/solid": "0.6.6",
+    "@types/bun": "^1.4.2",
+    "solid-js": "1.9.12",
+    "string-width": "7.2.0",
+    "typescript": "^5.9.3"
+  },
+  "peerDependencies": {
+    "@opentui/core": ">=0.6.6",
+    "@opentui/solid": ">=0.6.6",
+    "solid-js": ">=1.9.0"
+  }
+}

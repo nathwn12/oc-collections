@@ -1,0 +1,389 @@
+{
+  "$schema": "./flight-deck.schema.json",
+
+  // ═════════════════════════════════════════════════════════════════════════
+  //  ✈  Flight Deck — configuration
+  //
+  //  EVERYTHING HERE IS OPTIONAL. Install the plugin and the panel works with
+  //  no config file at all. The values below are the defaults, written out so
+  //  you can see exactly what there is to change. Delete any key and its
+  //  default comes straight back.
+  //
+  //  TO USE IT: copy this file to `~/.config/opencode/flight-deck.jsonc` (or
+  //  `flight-deck.json` — the `.jsonc` name is tried first), then edit. Comments
+  //  and trailing commas are fine.
+  //
+  //  There is ONE config file, global to your user, so the same values apply to
+  //  every project. Flight Deck does NOT look in a project root or in a
+  //  project's `.opencode/` directory: a copy left there configures nothing.
+  //
+  //  If `$XDG_CONFIG_HOME` is set, the path is
+  //  `$XDG_CONFIG_HOME/opencode/flight-deck.jsonc` instead.
+  //
+  //  The file is optional. Having none is the normal case, and it is silent —
+  //  the defaults below are what you get.
+  //
+  //  Upgrading from 0.4.0? A `flight-deck.jsonc` in a project root or in
+  //  `.opencode/` is no longer read; move it to the global path above.
+  //
+  //  The same values can also be passed as plugin options in opencode.jsonc /
+  //  cli.json, which take precedence on hosts that forward them.
+  // ═════════════════════════════════════════════════════════════════════════
+
+  // ── Update cadence ───────────────────────────────────────────────────────
+  // Milliseconds between refreshes: the tick rate of everything that has to
+  // animate. The status spinner has ten frames, so 100 turns it once a second.
+  //
+  // Cost, tokens, and permissions arrive from the host's own events, so they
+  // stay current with no timer at all. Only clock-derived rows need one — and
+  // `elapsed` plus the spinner are the reason this exists. Without a tick they
+  // would sit frozen between turns.
+  //
+  // While nothing is running the tick backs off to about once a second: the
+  // spinner is hidden then, and `elapsed` only reads in whole seconds, so the
+  // host's renderer is woken a tenth as often for the same picture.
+  //
+  //    100  default — the spinner turns once a second, the clock stays live
+  //     50  twice as lively, still negligible work per tick
+  //   1000  a calm wall-clock tick, but the spinner visibly stutters
+  //      0  no timer; `elapsed` and the spinner only move when the session does,
+  //         so a busy stretch with few host events can undercount the clock
+  //
+  // Anything faster than 16 (one frame at 60Hz) is clamped: a tick wakes the
+  // host's renderer, so a smaller value spends work without adding motion.
+  "refresh": 100,
+
+  // ── Sidebar ──────────────────────────────────────────────────────────────
+  "sidebar": {
+    // false hides the whole panel.
+    "enabled": true,
+
+    // Fixed lines, rendered above the live rows. EMPTY by default since
+    // 0.8.0: the branding pair has moved to `sidebar.footer.lines` below, so
+    // the top of the rail starts with the live rows. Put your own words here,
+    // or a rule — an explicit list does NOT suppress the footer default.
+    // Fixed lines use style.lines; live rows use their style.rows entry or the
+    // wildcard. With no custom style, the shipped theme-native look is kept.
+    "lines": [],
+
+    // The sidebar footer slot: fixed lines below the rows, in the host's
+    // dedicated sidebar-footer area, outside the maxLines budget. EMPTY by
+    // default since 0.8.1 — copying this file yields the minimal TUI. The
+    // branding pair is the documented opt-in; set it back to re-enable:
+    //
+    //   "lines": ["▸ FLIGHT DECK", "─────────────────"]
+    //
+    // An explicitly empty "lines" list removes the footer's fixed lines, but
+    // not the slot itself: "go" below can still claim it. Fixed lines use
+    // style.lines.
+    "footer": {
+      "lines": [],
+
+      // The live Go usage panel: three fixed-width lines - rolling (5h),
+      // weekly (1w), monthly (1m) - each with a bar, a right-aligned percent,
+      // and a right-aligned reset countdown. Reads the active `opencode-go`
+      // credential from OpenCode's own credential store (the same
+      // account-wide poll the "go" row uses, one poll for both surfaces). A
+      // window at 90% or more - or reporting a non-ok status - turns its bar
+      // and number red. Off by default; turning it on claims the start of
+      // this footer slot - directly above the host's location row - even with
+      // no fixed lines above, and draws three dim resting lines until the
+      // first poll lands.
+      //
+      // `false` is off; `true` is on with the default look (no header,
+      // 10-cell bar, labels at least 6 wide, both columns, breathing mark on,
+      // static meter). An object turns it on with a custom look - absent keys
+      // fall back to those defaults:
+      //
+      //   "go": { "header": false, "barWidth": 10, "labelWidth": 6, "percent": true, "reset": true, "align": "right", "sweep": false, "labels": { "rolling": "rolling", "weekly": "weekly", "monthly": "monthly" }, "blink": true, "blinkMs": 700 }
+      //
+      // `header` draws the dim OPENCODE GO line above the meters; `sweep`
+      // lets a bright cell travel the fill (off by default: the bar moves
+      // only when the percentage itself moves). `labels` renames the meters;
+      // the column auto-widens past `labelWidth` to hold the longest rename.
+      // `blink` draws the slow breathing mark on the first line (on by
+      // default); `blinkMs` (200-5000) sets the milliseconds per breath step.
+      "go": false
+    },
+
+    // The live rows, top to bottom. Every value is read from the open session,
+    // so you never type these in. Delete any row you don't want, or reorder
+    // them freely — an unknown name is ignored with a one-time warning, so a
+    // typo can never break the panel.
+    //
+    //   caution    the annunciator: silent unless something stopped moving.
+    //              Off by default — enables its own clock
+    //   status     running or idle — the glyph turns while anything is working
+    //   agent      which agent is running (orchestrator, build, plan, ...)
+    //   model      model id, plus the variant when there is one
+    //   branch     current git branch. Off by default — costs a VCS call
+    //   cost       this conversation, plus every subagent session in its tree
+    //              (the host links those by parentID); with `total` on the
+    //              rail, the session figure alone. It cannot see spend from an
+    //              independently spawned top-level session: the rollup follows
+    //              the host's parentID link only (family()), a session spawned
+    //              as an independent top-level session carries no parentID,
+    //              and the host returned no metadata field for the sessions
+    //              probed during this work — so there is no automatic creator
+    //              link today. The `project` row is the surface that covers
+    //              every session in the project, spawned included
+    //   total      the family total and subagent count on a row of its own —
+    //              the session's own cost with `0 subagents` when it spawned
+    //              none, never a blank row
+    //   project    every session in this project, not just the one on screen
+    //   tokens     input and output, in the same family scope as `cost`: this
+    //              conversation plus its subagent sessions when any exist,
+    //              the session alone when there are none
+    //   cache      cache hit rate, then cache reads, in the same family scope
+    //              as `cost`
+    //   context    a gauge of how full the context window is
+    //   perms      what is waiting for approval, not just how many
+    //   elapsed    active time recomputed from the assistant-turn spans the host
+    //              itself recorded for this session and its subagents — a turn
+    //              still in flight ends at "now". A restart comes back with the
+    //              same value instead of resetting, it cannot step backwards
+    //              while the host still reports those turns, and it is NOT
+    //              wall-clock since the session began
+    //   tps        mean speed over `sidebar.tps.scope` below: generation
+    //              tokens (output + reasoning) over the settled turns' own
+    //              generating time. Draws the average by default — an idle
+    //              gap reads as a steady figure rather than zero. `rt`
+    //              below draws the realtime estimate from the host's
+    //              streaming events instead (zero while nothing generates);
+    //              `both` draws both on one line
+    //   spark      recent turn sizes as a sparkline
+    //   reasoning  reasoning tokens, when the model emits them, in the same
+    //              family scope as `cost`
+    //   turns      how many prompts you have sent this session
+    //   guard      harness status from oc-harness-guard: breaches, orphans,
+    //              findings, or ok. Available, off by default.
+    //   go         Zen Go account usage for the 5h / 1w / 1m windows: a dial and
+    //              a percent each, turning red as a window approaches its limit.
+    //              Reads the active opencode-go credential from OpenCode's own
+    //              credential store. Available, off by default.
+    //   ses        the open session id as a clipped preview, labelled `session`
+    //              on the rail (never the full id). A mouse click on the row
+    //              sends the full id to the terminal clipboard as a best-effort
+    //              OSC52 request: terminal-dependent (the terminal may ignore
+    //              it) and never reported as a confirmed copy. May be named
+    //              `session` here — it is normalized to `ses`. The preview
+    //              budget is 18 cells, reduced by however much the `session`
+    //              label overflows `layout.labelWidth` below, floored at 8
+    //              cells (at the default width 10 the budget is the full 18;
+    //              at 6 it is 17), so the row's total width is unchanged by
+    //              the rename at every `layout.labelWidth`. Off by default; needs the host's mouse.
+    //
+    // Every named row renders persistently, so the rail keeps a stable shape:
+    // a row with no data yet draws a real-looking zero — `$0.000` for money
+    // rows, `0 in · 0 out` for tokens, `0 tok/s` for tps — in the same label
+    // column as a live row, never a placeholder symbol. (`caution` is the one
+    // exception: the annunciator stays silent until it has something to say.)
+    // The fixed lines and live rows share the maxLines budget below, and
+    // anything past it is dropped.
+    "rows": [
+      "status",
+      "agent",
+      "model",
+      "cost",
+      "project",
+      "tokens",
+      "cache",
+      "context",
+      "perms",
+      "elapsed",
+      "tps"
+      // ,"go"        Zen Go account usage (needs the active opencode-go credential)
+      // ,"caution"   — the annunciator
+      // ,"branch"    — current git branch
+      // ,"ses"       - session id preview (labelled `session`); click to copy the full id
+    ],
+
+    // Which sessions the `tps` row paces, and which figure it draws.
+    // `"scope"` is who counts. `"family"` (the default) paces the open
+    // session plus its subagent sessions: generation tokens summed across
+    // the whole family over the union of all their streaming spans.
+    // Concurrent decoders share wall clock, so overlapping spans merge
+    // instead of adding — a root that is idle while its child decodes still
+    // reads live. `"session"` restores the per-session figure: the open
+    // session's own tokens over its own spans (the `rt` figure reading zero
+    // while it is idle even when a child is still running). An unknown value
+    // falls back to `"family"` and is reported.
+    //
+    // `"display"` is what draws. `"avg"` (the default) is the settled-turn
+    // average: generation tokens over assistant turns that recorded
+    // `streamed`, divided by the union of their `streamed - created` spans —
+    // in-flight turns excluded, idle gaps never billed. `"rt"` is the
+    // realtime estimate from the host's streaming delta events, reading
+    // `0 tok/s` whenever the scope is not generating (idle, between turns,
+    // or before the first delta). `"both"` draws both on one line
+    // (`106 rt · 41 avg`), plus the mean time to first token over settled
+    // steps (`83 rt · 38 avg · 1.2s ttft`): per step, the earliest
+    // text/reasoning delta's event time minus the step's `started` dispatch
+    // stamp (request dispatch time, before waiting for provider output),
+    // pushed into the scope's ring when the step ends. The mean covers the
+    // most recent finalized steps observed while the plugin ran — in-memory,
+    // so a restart forgets them. An unknown value falls back to `"avg"` and
+    // is reported.
+    "tps": { "scope": "family", "display": "avg" },
+
+    // Every named row renders persistently: with no data yet it draws its
+    // zero skeleton (a real-looking zero, never a placeholder symbol), in the
+    // same label column as a live row. Set to false to omit rows with no data
+    // instead.
+    "persist": true,
+
+    // Fallback for a persistent row with no data that has no skeleton. Any
+    // non-empty string. Every shipped field has a skeleton, so this dash is
+    // unreachable in practice — it only covers a field with nothing to draw
+    // a zero from.
+    "placeholder": "—",
+
+    // Maximum total height, including fixed lines and live rows. Defaults to 24.
+    "maxLines": 24
+  },
+
+  // ── Footer ───────────────────────────────────────────────────────────────
+  // Off by default: the sidebar already carries the data, and the prompt
+  // footer is high-traffic space, so a line there should earn its place.
+  //
+  // Writing ANY footer setting turns it on — `"footer": { "text": "hi" }` is
+  // enough. Set "enabled": false explicitly to keep it hidden.
+  "footer": {
+    "enabled": false,
+    // Any single line. Empty text is ignored.
+    "text": "Flight Deck"
+  },
+
+  // -- Caution ---------------------------------------------------------------
+  // The annunciator: a warning row for the one failure nothing else can see.
+  //
+  // A hang emits NO events - no completion, no error, nothing - so everything
+  // observable about it is the absence of a signal. That is why this uses a
+  // clock and a baseline instead of a listener.
+  //
+  // It is silent unless something has stopped moving, so it costs nothing on a
+  // healthy session. When it speaks it reports what it saw, never what it
+  // means: `shell running 8m41s`, not "stuck". A ten-minute build is not a hang.
+  //
+  // It never aborts, kills, retries or blocks anything. Read-only.
+  "caution": {
+    // Off by default. Turn it on to run the annunciator; while off, the
+    // `caution` row never appears and no timer is spent on it.
+    "enabled": false,
+
+    // A tool running longer than this draws a subdued triangle...
+    "toolWatchSeconds": 180,
+    // ... and longer than this becomes a real caution.
+    // Raised to match the watch value if you set it lower.
+    "toolCautionSeconds": 420,
+
+    // A running session that has produced nothing for this long is noted.
+    // Deliberately generous: a large reasoning model can think for minutes
+    // with nothing to show, which the clock cannot distinguish from a wedge.
+    // Suppressed entirely while a tool or shell is running.
+    "turnWatchSeconds": 600,
+    "turnCautionSeconds": 1200,
+
+    // Identical consecutive calls before it counts as a loop. Two is a retry.
+    // Applies to identical successes and identical failures alike.
+    "repeatThreshold": 3,
+
+    // Tools that are slow by NATURE, so slow is not an anomaly for them.
+    // Matched by exact name.
+    //
+    // Calibrated against 54,218 real settled tool calls: at the default
+    // threshold, 307 (0.57%) exceed it and 200 of those are these tools, so
+    // with the list 0.20% of calls light the row. `subagent` alone crossed 152
+    // times, with a p99 of 14.7 minutes. Without this list the annunciator
+    // lights on every delegated task - which is how an alert gets ignored.
+    // Add your own long-running or orchestration tools here.
+    "exemptTools": ["question", "task", "subagent", "agent", "delegate", "delegate_many", "delegate_task", "tools.delegate", "tools.delegate_many", "tools.subagent", "tools.task"],
+
+    // Also raise a toast, once per distinct problem, re-arming when the session
+    // goes quiet. Off by default: the rail is the signal, a notification is an
+    // interruption. Turn it on if you walk away from long runs.
+    "toast": false
+  },
+
+  // -- Notifications ---------------------------------------------------------
+  // The silencing layer over every toast the plugin can raise: the
+  // invalid-config warning, the copy outcome, and the opt-in caution toast
+  // above. Every flag is on by default and only ever silences — a verified
+  // copy is silent regardless.
+  //
+  // The one-line silence switch (commented, so copying this file keeps the
+  // defaults):
+  //
+  //   "notifications": { "enabled": false }
+  "notifications": {
+    // false silences every toast with one key.
+    "enabled": true,
+    // The one-time warning naming an invalid config key.
+    "config": true,
+    // The copy-outcome toast when a copy could not be verified.
+    "copy": true,
+    // The opt-in caution toast (still needs `caution.enabled` + `caution.toast`).
+    "caution": true
+  },
+
+  // -- Layout ----------------------------------------------------------------
+  // Row geometry and wording. Change these when your terminal is unusually
+  // narrow or wide, or when you want a row called something else.
+  "layout": {
+    // Width of the label column every row pads to. 10 fits "caution" plus a
+    // space. Narrow it to fit more value on screen.
+    "labelWidth": 10,
+    // Cells in the `context` gauge.
+    "barWidth": 10,
+    // Samples drawn in the `spark` row. The newest turns are kept, so
+    // narrowing this keeps the recent shape rather than the oldest. The row is
+    // this many cells wide, so a large value is a wide row.
+    "sparkWidth": 12,
+    // Rename any rail row, keyed by its row name exactly as `sidebar.rows`
+    // spells it (`session` is folded to `ses`). Empty by default, so every row
+    // keeps its built-in label; a row you leave out keeps it too. To call the
+    // session's own cost "session" and the family/lifetime total "lifetime":
+    //
+    //   "labels": { "cost": "session", "total": "lifetime" }
+    //
+    // An unknown row name, a non-string value, or an empty label is reported
+    // and that row keeps its default.
+    "labels": {}
+  },
+
+  // -- Format ----------------------------------------------------------------
+  // How values are written on the rail. Display only: nothing here changes
+  // what is measured, only how a number is drawn.
+  "format": {
+    // How the elapsed row joins its segments.
+    //   "spaced"   one space between units: 2h 14m 37s (the default)
+    //   "compact"  no space between units: 2h14m37s
+    // Zero-padding is the same either way: minutes pad when hours are present,
+    // seconds pad when minutes are present, so 2h 14m 07s never reads 2h 14m 7s.
+    "duration": "spaced"
+  },
+
+  // -- Glyphs ----------------------------------------------------------------
+  // The annunciator's characters. Change these if your terminal renders a
+  // default as a box or at the wrong width - an ugly but readable panel beats
+  // an unreadable one. One or two characters each.
+  "glyphs": {
+    "watch": "▲",
+    "caution": "●",
+    "clear": "○"
+  },
+
+  // -- Style -----------------------------------------------------------------
+  // Optional appearance, resolved through your active theme (no ANSI escapes).
+  // Colors are theme roles: default, subdued, warning, error, success, info.
+  // Attributes: bold, dim, italic, underline, blink, inverse, hidden,
+  // strikethrough. The values below are the defaults.
+  "style": {
+    "lines": { "color": "default", "attributes": [] },
+    "rows": {
+      "*": { "color": "subdued", "attributes": [] }
+      // Uncomment an override to make one row stand out:
+      // ,"cost": { "color": "success", "attributes": ["bold"] }
+    }
+  }
+}

@@ -1,0 +1,425 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/nathwn12/oc-flight-deck/flight-deck.schema.json",
+  "title": "Flight Deck configuration",
+  "description": "Configuration for the oc-flight-deck TUI plugin. Every key is optional: install the plugin and it works with no config file at all — a missing file is normal and silent. Copy flight-deck.example.jsonc to the one global path, ~/.config/opencode/flight-deck.jsonc ($XDG_CONFIG_HOME/opencode/flight-deck.jsonc when XDG_CONFIG_HOME is set), and edit; that single file applies to every project. There is no per-project lookup: a flight-deck.jsonc in a project root or in .opencode/ is not read. Comments and trailing commas are allowed. An invalid value is ignored, its default is restored, and a one-time toast names the key to fix — a typo can never break the TUI.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Points an editor or an AI at this file, which is the authoritative list of every option, type, default and valid value."
+    },
+
+    "refresh": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 60000,
+      "default": 100,
+      "description": "Milliseconds between ticks. Cost and tokens arrive with host events; anything derived from the clock — `elapsed`, the status spinner, and the caution thresholds — needs this timer. 100 turns the spinner once a second. 0 turns the ticker off entirely, which also freezes the annunciator (it works, but only updates on host events). Practical range 16–1000; 1–15 are treated as 16, while 0 is the deliberate off switch and is never clamped."
+    },
+
+    "sidebar": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The rail itself: the fixed lines, the live rows, and the sidebar footer slot's lines.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Draw the sidebar rail at all. false leaves the plugin loaded but invisible."
+        },
+        "lines": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "maxItems": 24,
+          "description": "Fixed lines rendered above the live rows, in order. Empty by default since 0.8.0 — the branding pair moved to `sidebar.footer.lines`, so the top of the rail starts with the live rows. Any lines you list here render at full brightness while the live rows below them are dimmed, and they draw from the same 24-line cap as the rows. An explicit list does not suppress the footer default."
+        },
+        "footer": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The sidebar footer slot: fixed lines, plus an optional live Go usage panel, rendered in a separate host region below the rows that draws outside the 24-line rail cap. The fixed lines are empty by default since 0.8.1 - set the documented `▸ FLIGHT DECK` branding pair in `lines` to re-enable it. An explicitly empty `lines` array removes the fixed lines; `go` still claims the slot on its own.",
+          "properties": {
+            "lines": {
+              "type": "array",
+              "items": { "type": "string" },
+              "default": [],
+              "maxItems": 24,
+              "description": "The footer's fixed lines, in order. Empty by default since 0.8.1 - set the documented `▸ FLIGHT DECK` pairing here to re-enable it. Independent of `sidebar.lines`, so setting your own top lines does not turn the footer on. An explicit empty array removes the fixed lines (and never registers the slot on its own; `go` can still claim it)."
+            },
+            "go": {
+              "default": false,
+              "description": "Draw the live Go usage panel under the footer's fixed lines: three fixed-width lines - rolling (5h), weekly (1w), monthly (1m) - each with a bar, a right-aligned percent and a right-aligned reset countdown, read from the active opencode-go credential in OpenCode's own credential store (there is no env var). true enables with the default look (no header, 10-cell bar, labels at least 6 wide, both columns, breathing mark on, static meter); an object with header, barWidth, labelWidth, percent, reset, align, sweep, labels, blink and blinkMs enables with a custom look. A window at 90% or more, or reporting a non-ok status, turns its bar and number red. Off by default; turning it on starts the same account-wide poll the `go` row uses and claims the sidebar footer slot even when `lines` is empty. The panel renders first inside the footer slot, directly above the host's own location row.",
+              "anyOf": [
+                { "type": "boolean" },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "header": {
+                      "type": "boolean",
+                      "default": false,
+                      "description": "Draw the dim OPENCODE GO header above the three meters. Off by default; the panel is three lines unless this is true."
+                    },
+                    "barWidth": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 40,
+                      "default": 10,
+                      "description": "Cells in the panel meter. Honoured while the longest line stays within the sidebar width; capped rather than wrapped."
+                    },
+                    "labelWidth": {
+                      "type": "integer",
+                      "minimum": 5,
+                      "maximum": 24,
+                      "default": 6,
+                      "description": "Minimum width of the panel label column. Left-aligned and shared by all three rows; auto-widens past this to hold the longest rendered rename, so a rename can never overflow or wrap."
+                    },
+                    "percent": {
+                      "type": "boolean",
+                      "default": true,
+                      "description": "Draw the right-aligned percent column beside the meter. Turn it off to show only the bar and the countdown."
+                    },
+                    "reset": {
+                      "type": "boolean",
+                      "default": true,
+                      "description": "Draw the right-aligned reset countdown column. Turn it off to hide the time to relief."
+                    },
+                    "align": {
+                      "type": "string",
+                      "enum": ["left", "right", "center"],
+                      "default": "right",
+                      "description": "Where a trailing value sits inside its own fixed-width cell. The percent (4) and reset (6) widths stay fixed; right pins the value to the cell's right edge so digits stay put as values change length, left hugs the bar, center splits the padding. Both trailing cells use the same setting."
+                    },
+                    "sweep": {
+                      "type": "boolean",
+                      "default": false,
+                      "description": "Let a bright cell sweep the fill while the ticker runs. Off by default: the bar is static and changes only when the percentage itself changes."
+                    },
+                    "labels": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "description": "Rename the three meter labels, each optionally and independently. Absent keys keep their lowercase defaults; the label column auto-widens to hold the longest rename.",
+                      "properties": {
+                        "rolling": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 24,
+                          "default": "rolling",
+                          "description": "Label for the 5h window. Must be a non-empty string of at most 24 characters; anything else falls back to the default and is reported."
+                        },
+                        "weekly": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 24,
+                          "default": "weekly",
+                          "description": "Label for the 1w window. Must be a non-empty string of at most 24 characters; anything else falls back to the default and is reported."
+                        },
+                        "monthly": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 24,
+                          "default": "monthly",
+                          "description": "Label for the 1m window. Must be a non-empty string of at most 24 characters; anything else falls back to the default and is reported."
+                        }
+                      }
+                    },
+                    "blink": {
+                      "type": "boolean",
+                      "default": true,
+                      "description": "Draw the slow breathing mark at the start of the first meter line. On by default: only the mark breathes, the meter stays static. Off removes the two-cell mark column entirely."
+                    },
+                    "blinkMs": {
+                      "type": "integer",
+                      "minimum": 200,
+                      "maximum": 5000,
+                      "default": 700,
+                      "description": "Milliseconds per breath step of the mark. One step moves the mark rest, swell, live, swell; indexed from the wall clock so the breath is independent of the ticker period."
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "rows": {
+          "type": "array",
+          "items": { "enum": ["caution", "status", "agent", "model", "branch", "cost", "total", "project", "tokens", "cache", "context", "perms", "elapsed", "tps", "spark", "reasoning", "turns", "guard", "go", "ses", "session"] },
+          "default": ["status", "agent", "model", "cost", "project", "tokens", "cache", "context", "perms", "elapsed", "tps"],
+          "maxItems": 24,
+          "description": "Which live fields to draw, top to bottom. Any subset, any order - this is the single most useful thing to change. With `sidebar.persist` (the default) every named row always renders, drawing its zero skeleton until the host has data; with `persist: false` rows with no data are omitted entirely. Counted together with `sidebar.lines` against a 24-line cap on the whole rail. The opt-in `ses` row shows a clipped preview of the session id under the `session` label - budget 18 cells, reduced by however much the label overflows `layout.labelWidth`, floored at 8 - and a mouse click on that row copies the full id to the OS clipboard: a host write reporting `written` or an exact clipboard read-back after the OSC52 dispatch verifies it, only a verified copy counts as success, a verified copy stays silent, and an unverified or failed outcome surfaces a toast gated by `notifications.copy`. `session` is accepted as an alias for `ses` and is normalized to it."
+        },
+        "tps": {
+          "type": "object",
+          "additionalProperties": false,
+          "default": { "scope": "family", "display": "avg" },
+          "description": "The `tps` row: which sessions it paces (`scope`) and which figure it draws (`display`). By default it shows the settled-turn average over the whole family: on hosts that record turn timestamps, generation tokens (output plus reasoning) over assistant turns that recorded `streamed`, divided by the union of their `streamed − created` spans — in-flight turns excluded, idle gaps never billed; on hosts without turn timestamps, generation tokens over the borrowed active clock instead. `display: \"rt\"` draws the realtime figure from the host's streaming events instead — an estimate from delta bytes while a turn streams, reading zero while nothing generates; `\"both\"` draws both figures on one line, plus the mean time to first token over settled steps (`1.2s ttft`) — per step, the earliest delta's event time minus the step's `started` dispatch stamp, pushed into the scope's ring when the step ends and kept in memory for the plugin's lifetime.",
+          "properties": {
+            "scope": {
+              "type": "string",
+              "enum": ["family", "session"],
+              "default": "family",
+              "description": "The `tps` row's scope. `family` sums generation tokens (output plus reasoning) across the open session and its subagent sessions over the union of their streaming spans, so a root that is idle while its child decodes still reads realtime. `session` restores the per-session figure: the open session's own tokens over its own spans — under `display: \"rt\"` reading zero while it is idle even when a child is still running. An unknown value falls back to `family` and is reported."
+            },
+            "display": {
+              "type": "string",
+              "enum": ["avg", "rt", "both"],
+              "default": "avg",
+              "description": "Which figure the `tps` row draws. `avg` (the default) is the settled-turn average: on hosts that record turn timestamps, generation tokens over assistant turns with `streamed` recorded, divided by the union of their `streamed - created` spans, in the row's scope; on hosts without them, generation tokens over the borrowed active clock. `rt` is the realtime figure from the host's streaming events — an estimate from delta bytes while a turn streams, reading zero while nothing generates. `both` draws `rt` and `avg` on one line (`106 rt · 41 avg`), plus the mean time to first token over settled steps (`83 rt · 38 avg · 1.2s ttft`): per step, the earliest text/reasoning delta's event time minus the step's `started` dispatch stamp (request dispatch time, before waiting for provider output), pushed into the scope's ring when the step ends — the mean covers the most recent finalized steps observed while the plugin ran (in-memory; a restart forgets them). An unknown value falls back to `avg` and is reported."
+            }
+          }
+        },
+        "persist": {
+          "type": "boolean",
+          "default": true,
+          "description": "Render every field named in `sidebar.rows` as a persistent row, drawing its zero skeleton when the host has no data yet (`$0.000` for money rows, `0 in · 0 out` for tokens, `0 tok/s` for tps — `0 live · 0 avg` when `sidebar.tps.display` is `both` — and so on; `caution` is the one row that never draws a skeleton and stays silent until it has something to announce). True keeps the rail a stable shape that fills in as the session produces data; false restores the old behavior of omitting rows with no data."
+        },
+        "placeholder": {
+          "type": "string",
+          "minLength": 1,
+          "default": "—",
+          "description": "Fallback value for a persistent row with no data that has no skeleton. Used only when `sidebar.persist` is true. Must be a non-empty string; anything else falls back to the default em dash. Every shipped field has a skeleton, so this dash is unreachable in practice."
+        },
+        "maxLines": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 24,
+          "default": 24,
+          "description": "Maximum height of the whole rail, including fixed lines and live rows. Defaults to 24 and may be lowered from 1 to 24; lines past the limit are dropped."
+        }
+      }
+    },
+
+    "footer": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "A single line in the prompt footer. Off unless configured — writing any footer setting turns it on.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Show the footer line. Defaults to true if any other footer key is present, false if the footer section is absent."
+        },
+        "text": {
+          "type": "string",
+          "default": "Flight Deck",
+          "description": "The footer text. Max 120 characters; control characters are replaced with spaces."
+        }
+      }
+    },
+
+    "caution": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The annunciator: a warning row for the one failure nothing else can see. A hang emits no events at all, so this uses a clock and a baseline rather than a listener. Silent unless something has stopped moving. It reports observations, never verdicts — `shell running 8m41s`, not 'stuck' — and it never aborts, kills, retries or blocks anything.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Run the annunciator. Off by default. false means the `caution` row never appears and no timer is spent on it."
+        },
+        "toolWatchSeconds": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 180,
+          "description": "A tool running longer than this draws a subdued ▲. 180s is longer than a slow build and short enough to notice before you start wondering. Lower it if you work on fast tools and want to catch stalls sooner."
+        },
+        "toolCautionSeconds": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 420,
+          "description": "A tool running longer than this becomes a real ●. Raised to match toolWatchSeconds if set below it, and reported."
+        },
+        "turnWatchSeconds": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 600,
+          "description": "A running session that has produced nothing for this long draws a ▲. Deliberately generous: a large reasoning model can think for minutes with nothing to show, which is indistinguishable from a wedge by the clock alone. Suppressed entirely while a tool or shell is running."
+        },
+        "turnCautionSeconds": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 1200,
+          "description": "A quiet session becomes a real ● after this long. Raised to match turnWatchSeconds if set below it, and reported."
+        },
+        "repeatThreshold": {
+          "type": "integer",
+          "minimum": 2,
+          "default": 3,
+          "description": "How many identical consecutive calls count as a loop. Two is a retry; three is a pattern. Applies to both the repeat rule (identical successes) and the failure rule (identical errors)."
+        },
+        "exemptTools": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "default": ["question", "task", "subagent", "agent", "delegate", "delegate_many", "delegate_task", "tools.delegate", "tools.delegate_many", "tools.subagent", "tools.task"],
+          "description": "Tools that are slow by nature, so slow is not an anomaly for them. Matched by exact name. Calibrated against 54,218 real settled tool calls: at the default threshold 307 calls exceed it and 200 of those are these tools — `subagent` alone crossed 152 times with a p99 of 14.7 minutes. Without this list the annunciator lights on every delegated task, which is how an alert gets ignored. Add your own long-running or orchestration tools here."
+        },
+        "toast": {
+          "type": "boolean",
+          "default": false,
+          "description": "Also raise a toast the first time a caution appears, once per distinct problem, re-arming when the session goes quiet. Off by default: the rail is the signal and a notification is an interruption. Worth enabling if you walk away from long runs."
+        }
+      }
+    },
+
+    "notifications": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The silencing layer over every toast the plugin can raise: the invalid-config warning, the copy outcome, and the opt-in caution toast. Every flag is on by default and only ever silences — a verified copy is silent regardless and never reaches this gate.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Master switch: false silences every toast with one key. True leaves each per-kind flag to decide."
+        },
+        "config": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the one-time warning naming an invalid config key. False ignores bad values silently, restoring defaults."
+        },
+        "copy": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the copy-outcome toast when a copy could not be verified. False keeps failures silent too; verified copies are always silent."
+        },
+        "caution": {
+          "type": "boolean",
+          "default": true,
+          "description": "Allow the opt-in caution toast. False suppresses it even when `caution.enabled` and `caution.toast` are both true."
+        }
+      }
+    },
+
+    "layout": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Row geometry and wording. Change these when your terminal is unusually narrow or wide, or when you want a row called something else.",
+      "properties": {
+        "labelWidth": {
+          "type": "integer",
+          "minimum": 6,
+          "maximum": 24,
+          "default": 10,
+          "description": "Width of the label column that every row pads to. 10 fits `caution` plus a space. Narrow it to fit more value on screen, widen it if you rename the labels with `labels` below."
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": { "type": "string", "minLength": 1 },
+          "description": "Rename any rail row, keyed by its row name exactly as `sidebar.rows` spells it (`session` is folded to `ses`). For example `{ \"cost\": \"session\", \"total\": \"lifetime\" }` draws the session's own cost under `session` and the family total under `lifetime`. A row left out keeps its built-in label, so omitting the key changes nothing. An unknown row name, a non-string value, or an empty label is reported as a config issue and that row keeps its default label. A label wider than `labelWidth` is still given its guaranteed space rather than being glued to its value."
+        },
+        "barWidth": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 40,
+          "default": 10,
+          "description": "Cells in the `context` gauge — the filled/empty bar."
+        },
+        "sparkWidth": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 64,
+          "default": 12,
+          "description": "Samples drawn in the `spark` row. The newest turns are kept, so narrowing it keeps the recent shape rather than the oldest. The row is this many cells wide, so a large value is a wide row — mind a narrow sidebar."
+        }
+      }
+    },
+
+    "format": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "How values are written on the rail. Display only: these options change how a number is drawn, never what is measured.",
+      "properties": {
+        "duration": {
+          "type": "string",
+          "enum": ["spaced", "compact"],
+          "default": "spaced",
+          "description": "How the `elapsed` row joins its segments. `spaced` puts one space between them (`2h 14m 37s`, the default); `compact` runs them together (`2h14m37s`). Zero-padding is identical either way: minutes pad when hours are present, seconds pad when minutes are present (`14m 07s`, never `14m 7s`). An invalid value falls back to `spaced` and is reported."
+        }
+      }
+    },
+
+    "glyphs": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The annunciator's characters. Change these when a terminal renders the defaults as a box, or at the wrong width — an ugly-but-readable panel beats an unreadable one. One or two characters each.",
+      "properties": {
+        "watch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2,
+          "default": "▲",
+          "description": "Shown for a watch: something is slower than it should be, but below the caution threshold."
+        },
+        "caution": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2,
+          "default": "●",
+          "description": "Shown for a real caution. This is the row that has to read at a glance."
+        },
+        "clear": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2,
+          "default": "○",
+          "description": "Reserved for a future always-visible annunciator state. Not currently drawn: the row is absent when nothing is wrong."
+        }
+      }
+    },
+
+    "style": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional per-line text styling. Colors are theme roles, not ANSI codes; attributes use OpenTUI text descriptor names. An absent style keeps the theme-native default appearance.",
+      "properties": {
+        "lines": {
+          "type": "object",
+          "additionalProperties": false,
+          "default": { "color": "default", "attributes": [] },
+          "description": "Appearance shared by the fixed branding and separator lines. Defaults to the theme's primary text color with no attributes.",
+          "properties": {
+            "color": {
+              "type": "string",
+              "enum": ["default", "subdued", "warning", "error", "success", "info"],
+              "default": "default",
+              "description": "Theme color role for fixed lines. Valid roles are default, subdued, warning, error, success, and info; default follows the active theme's primary text color."
+            },
+            "attributes": {
+              "type": "array",
+              "items": { "enum": ["bold", "dim", "italic", "underline", "blink", "inverse", "hidden", "strikethrough"] },
+              "default": [],
+              "description": "OpenTUI text attributes applied to fixed lines. Choose any combination of bold, dim, italic, underline, blink, inverse, hidden, and strikethrough; an empty list adds none."
+            }
+          }
+        },
+        "rows": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Appearance for the wildcard or one live row. Missing fields inherit the wildcard style.",
+            "properties": {
+              "color": {
+                "type": "string",
+                "enum": ["default", "subdued", "warning", "error", "success", "info"],
+                "default": "subdued",
+                "description": "Theme color role for this row. The wildcard defaults to subdued; a row override that omits color inherits the wildcard role."
+              },
+              "attributes": {
+                "type": "array",
+                "items": { "enum": ["bold", "dim", "italic", "underline", "blink", "inverse", "hidden", "strikethrough"] },
+                "default": [],
+                "description": "OpenTUI text attributes for this row. The wildcard defaults to none; a row override that omits attributes inherits the wildcard list."
+              }
+            }
+          },
+          "propertyNames": {
+            "enum": ["*", "caution", "status", "agent", "model", "branch", "cost", "total", "project", "tokens", "cache", "context", "perms", "elapsed", "tps", "spark", "reasoning", "turns", "guard", "go", "ses", "session"]
+          },
+          "default": { "*": { "color": "subdued", "attributes": [] } },
+          "description": "Style all live rows under `*`, then optionally override any known row name such as `cost`. A row can change one field and inherit the other from `*`; unknown row names are reported and ignored. `session` is accepted as an alias for `ses` and is normalized to it."
+        }
+      }
+    }
+  }
+}

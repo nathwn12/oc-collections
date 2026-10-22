@@ -1,0 +1,304 @@
+import { describe, expect, test } from "bun:test";
+import stringWidth from "string-width";
+import { CAUTION_GLYPH, WATCH_GLYPH, cautionMark } from "../src/tui/caution.js";
+import { DEFAULT_CONFIG } from "../src/tui/config.js";
+import { normalizeGoUsage } from "../src/tui/go-usage.js";
+import { railLines, sidebarLines } from "../src/tui/presentation.js";
+import { sparkline, statLine, STAT_FIELDS, type StatSource } from "../src/tui/stats.js";
+
+// A rail that wraps is not a rail. The sidebar is roughly 30-40 columns, and the
+// host does the layout — the plugin cannot ask how wide it is, so every row has
+// to stay inside the budget on its own.
+//
+// This exists because one row blew it: `cost` carried a subagent delta
+// (`$0.245 · +$0.020 · 2 subagents`) which is 40 columns with the label, and it
+// wrapped. The delta was real information that did not earn its width.
+
+/** Everything the default rail reads, all present at once. */
+const FULL: StatSource = {
+  agent: "orchestrator",
+  model: { id: "deepseek-v4.1-flash", providerID: "opencode-go", variant: "high" },
+  cost: 0.2246,
+  tokens: { input: 517512, output: 75683, reasoning: 152995, cache: { read: 29174144, write: 0 } },
+  branch: "main",
+  tree: { cost: 0.2447, count: 2 },
+  context: { used: 218000, limit: 1000000 },
+  project: { cost: 12.5, count: 40 },
+  status: "running",
+  busy: true,
+  perms: { count: 1, action: "shell", resource: "npm publish" },
+  tps: { rt: 87, avg: 41 },
+  elapsedMs: 840000,
+  turns: 48,
+  spark: [1, 2, 3, 4, 5, 6, 7, 8],
+  caution: "● shell running 8m41s",
+  frame: 0,
+};
+
+/**
+ * The widest a row may be.
+ *
+ * The plugin cannot ask the host how wide the sidebar is, so this is not the
+ * real limit — it is the envelope the rows already shipped inside. `model` with
+ * a variant (`model     deepseek-v4.1-flash · high`) is 37 columns and has never
+ * wrapped, so 38 is the line the rail has always lived within.
+ *
+ * The point of the guard is to stop a *new* row escaping that envelope, which is
+ * exactly what `cost` did when it grew a subagent delta to 40 and wrapped.
+ */
+const BUDGET = 38;
+
+function overBudget(source: StatSource, rows?: readonly string[]): string[] {
+  const config = rows === undefined ? DEFAULT_CONFIG : { ...DEFAULT_CONFIG, sidebar: { ...DEFAULT_CONFIG.sidebar, rows } };
+  return sidebarLines(config, source)
+    .slice(config.sidebar.lines.length)
+    .filter((line) => line.length > BUDGET);
+}
+
+describe("the rail fits", () => {
+  test("every row separates its label from its value, at any label width", () => {
+    // `reasoning` is nine characters. Before this was fixed, a label wider than
+    // the column was glued to its value - at labelWidth 8 the row rendered as
+    // "reasoning153k". Any label outgrowing any valid width has to stay legible.
+    for (const labelWidth of [6, 8, 9, 10, 12, 16, 24]) {
+      const config = {
+        ...DEFAULT_CONFIG,
+        sidebar: { ...DEFAULT_CONFIG.sidebar, rows: DEFAULT_CONFIG.sidebar.rows },
+        layout: { ...DEFAULT_CONFIG.layout, labelWidth },
+      };
+      const rows = sidebarLines(config, FULL).slice(config.sidebar.lines.length);
+      expect(rows.length).toBeGreaterThan(0);
+      for (const line of rows) {
+        // label, at least one space, then something.
+        expect(line).toMatch(/^\S+\s+\S/);
+      }
+    }
+  });
+
+  test("the shipped default rail fits", () => {
+    expect(overBudget(FULL)).toEqual([]);
+  });
+
+  test("every field fits, including the rows that are off by default", () => {
+    // The default rows are 13 of the 17 fields, so `reasoning` (the widest
+    // label), `spark` (a width of its own) and `total` (the widest value) were
+    // never actually put on the rail by this guard. Two of those shipped bugs.
+    for (const field of STAT_FIELDS) {
+      expect(overBudget(FULL, [field])).toEqual([]);
+    }
+  });
+
+  test("a label wider than its column still gets a separator", () => {
+    // The literal shape of the shipped bug: `reasoning` is nine characters, so
+    // at labelWidth 8 it overflows its column. Padding alone leaves it glued to
+    // the value ("reasoning153k"); the row has to guarantee the space itself.
+    for (const labelWidth of [8, 9, 10]) {
+      expect(statLine("reasoning", { tokens: { reasoning: 152_995 } }, { labelWidth })).toBe("reasoning 153k");
+    }
+  });
+
+  test("the renamed ses row never grows past its pre-rename envelope", () => {
+    const id = "ses_abcdefghijklmnopqrstuvwxyz";
+    // The label grew from `ses` (3) to `session` (7): the budget shrinks by
+    // the real prefix growth measured through `labelPrefix` — 2 cells at
+    // width 6 (budget 16), 1 cell at width 7 (budget 17), none at 8+ — so the
+    // renamed row's total cell width equals the pre-rename row's at every
+    // width (24 at 6, 25 at 7, 26 at 8, 28 at 10).
+    const cases: ReadonlyArray<readonly [number, string, number]> = [
+      [6, "session ses_abcdefghijk…", 24],
+      [7, "session ses_abcdefghijkl…", 25],
+      [8, "session ses_abcdefghijklm…", 26],
+      [10, "session   ses_abcdefghijklm…", 28],
+    ];
+    for (const [labelWidth, expected, width] of cases) {
+      const line = statLine("ses", { sessionId: id }, { labelWidth });
+      expect(line).toBe(expected);
+      expect(line!.length).toBe(width);
+    }
+    // At the width the rail actually runs (8) the renamed row is exactly as
+    // wide as the old `ses` row was: the longer label fits the column it pads.
+    const wide = statLine("ses", { sessionId: id }, { labelWidth: 8 });
+    expect(wide!.length).toBe("ses     ses_abcdefghijklm…".length);
+  });
+
+  test("the spark row is as wide as sparkWidth asks for, and still fits", () => {
+    const source = { ...FULL, spark: Array.from({ length: 32 }, (_, index) => index + 1) };
+    for (const sparkWidth of [2, 12, 16, 24]) {
+      const config = {
+        ...DEFAULT_CONFIG,
+        sidebar: { ...DEFAULT_CONFIG.sidebar, rows: ["spark"] },
+        layout: { ...DEFAULT_CONFIG.layout, sparkWidth },
+      };
+      const [row] = sidebarLines(config, source).slice(config.sidebar.lines.length);
+      // The newest `sparkWidth` samples of 1..32, drawn as a shape.
+      const expected = sparkline(Array.from({ length: sparkWidth }, (_, index) => index + 32 - sparkWidth + 1));
+      expect(row).toBe(`spark     ${expected}`);
+      expect(row!.length).toBeLessThanOrEqual(BUDGET);
+    }
+  });
+
+  test("a populated go row fits, reset hint and all", () => {
+    // The per-field loop above only ever sees the placeholder, so the row's real
+    // width was never measured. The live sample is the real width: three dials.
+    const live = normalizeGoUsage({
+      usage: {
+        rolling: { status: "ok", percent: 0 },
+        weekly: { status: "ok", percent: 79 },
+        monthly: { status: "ok", percent: 39 },
+      },
+    });
+    expect(overBudget({ ...FULL, go: live }, ["go"])).toEqual([]);
+    // The widest shape the live cutoffs produce: one window flagged, so its dial,
+    // number and reset hint are all drawn.
+    const flagged = { windows: [{ id: "1w", ratio: 0.95, resetAtMs: Date.now() + 2 * 3_600_000 }] };
+    expect(overBudget({ ...FULL, go: flagged }, ["go"])).toEqual([]);
+  });
+
+  test("the all-flagged worst case fits on a single reset hint", () => {
+    // Three flagged windows each carrying a reset hint overflowed the budget
+    // (~41 cols). Only the worst one may name its reset, which is what keeps the
+    // worst case inside the rail.
+    const allFlagged = {
+      windows: [
+        { id: "5h", ratio: 1, resetAtMs: Date.now() + 30 * 86_400_000 },
+        { id: "1w", ratio: 1, resetAtMs: Date.now() + 30 * 86_400_000 },
+        { id: "1m", ratio: 1, resetAtMs: Date.now() + 30 * 86_400_000 },
+      ],
+    };
+    expect(overBudget({ ...FULL, go: allFlagged }, ["go"])).toEqual([]);
+    const config = { ...DEFAULT_CONFIG, sidebar: { ...DEFAULT_CONFIG.sidebar, rows: ["go"] } };
+    const [row] = sidebarLines(config, { ...FULL, go: allFlagged }).slice(config.sidebar.lines.length);
+    expect(row!.length).toBeLessThanOrEqual(BUDGET);
+    // The single hint is on the first flagged window, the nearest relief.
+    expect(row!.match(/ · /g)).toHaveLength(1);
+  });
+
+  test("no row wraps when the caution row is at its longest", () => {
+    for (const text of [
+      "● shell running 8m41s",
+      "● read ×3 identical",
+      "● shell failing ×3",
+      "▲ no progress 11m",
+      "● delegate_task failing ×12",
+    ]) {
+      expect(overBudget({ ...FULL, caution: text })).toEqual([]);
+    }
+  });
+
+  test("the merged cost row fits too, which is the one that broke", () => {
+    // No `total` row, so `cost` carries the family figure itself.
+    expect(overBudget({ ...FULL, tree: { cost: 0.2447, count: 2 } })).toEqual([]);
+    // The shapes that made it widest: many subagents, and a large figure.
+    for (const tree of [
+      { cost: 0.2447, count: 2 },
+      { cost: 1.2345, count: 12 },
+      { cost: 128.42, count: 137 },
+    ]) {
+      expect(overBudget({ ...FULL, tree })).toEqual([]);
+    }
+  });
+
+  test("every single field fits on its own", () => {
+    // Omission is opt-in now: the default rail is persistent, so pin the
+    // silent start through an explicit `persist: false`.
+    const silent = { ...DEFAULT_CONFIG, sidebar: { ...DEFAULT_CONFIG.sidebar, persist: false } };
+    const rows = sidebarLines(silent).slice(silent.sidebar.lines.length);
+    expect(rows).toEqual([]); // no data, no rows - the rail starts silent when not persistent
+    for (const field of DEFAULT_CONFIG.sidebar.rows) {
+      expect(overBudget(FULL, [field])).toEqual([]);
+    }
+  });
+
+  test("a row that legitimately cannot be shortened is the only one allowed to be long", () => {
+    // `perms` carries a path when the host gives one. It is clipped, and this
+    // pins that the clipping is what keeps it inside the budget.
+    const long = overBudget({
+      ...FULL,
+      perms: {
+        count: 1,
+        action: "read",
+        resource: "/very/long/path/to/a/config/file/that/needs/clipping/opencode.jsonc",
+      },
+    });
+    expect(long).toEqual([]);
+  });
+});
+
+// A cell is not a character. The annunciator is the proof: `⚠` (U+26A0) is
+// East-Asian Neutral, but the renderer's bundled string-width checks emoji-regex
+// before East-Asian width and charges it two cells, so the row drew a column
+// wider than the rest of the rail. These tests measure the drawn row in cells —
+// the renderer's own algorithm — rather than trusting its character count.
+describe("the caution row aligns in cells", () => {
+  const LABEL_WIDTH = 10;
+  const ENVELOPE = 38;
+  const RAIL = {
+    ...DEFAULT_CONFIG,
+    sidebar: { ...DEFAULT_CONFIG.sidebar, rows: ["caution"] },
+    layout: { ...DEFAULT_CONFIG.layout, labelWidth: LABEL_WIDTH },
+    caution: { ...DEFAULT_CONFIG.caution, enabled: true },
+  };
+
+  /** The states that draw a row, with the mark each one carries. Silence draws
+   * no row at all: the annunciator has no skeleton and takes no placeholder,
+   * so there is nothing to measure until it has something to say. */
+  const STATES = [
+    {
+      name: "watch",
+      glyph: WATCH_GLYPH,
+      source: {
+        caution: cautionMark({ kind: "silent-turn", severity: "watch", elapsedMs: 660_000, key: "w" }),
+      } as StatSource,
+    },
+    {
+      name: "caution",
+      glyph: CAUTION_GLYPH,
+      source: {
+        caution: cautionMark({
+          kind: "hung-shell",
+          severity: "caution",
+          tool: "shell",
+          elapsedMs: 521_000,
+          key: "c",
+        }),
+      } as StatSource,
+    },
+  ];
+
+  test("the words after the mark begin at one cell offset in every state", () => {
+    // The value column starts after the ASCII label (10 cells) and the words
+    // after a one-cell mark start one cell later (11) - identical for watch and
+    // caution, so the severity mark never shifts the sentence.
+    const offsets = STATES.map(({ name, glyph, source }) => {
+      const [line] = sidebarLines(RAIL, source).filter((row) => row.startsWith("caution"));
+      expect(line, `${name} row missing`).toBeDefined();
+      expect(line!.slice(0, LABEL_WIDTH)).toBe("caution   ");
+      expect(stringWidth(line!)).toBeLessThanOrEqual(ENVELOPE);
+      return stringWidth(line!.slice(0, LABEL_WIDTH + glyph.length));
+    });
+    // Logged so a green run carries the measured columns, not just a verdict.
+    console.log("caution row cell offsets (watch, caution):", offsets);
+    expect(offsets).toEqual([11, 11]);
+  });
+
+  test("every severity mark is exactly one cell wide", () => {
+    expect(stringWidth(CAUTION_GLYPH)).toBe(1);
+    expect(stringWidth(WATCH_GLYPH)).toBe(1);
+    // The mark this replaced, kept as the regression being guarded: two cells in
+    // the renderer's own measure, which is what pushed the row wide.
+    expect(stringWidth("\u26A0")).toBe(2);
+  });
+
+  test("the mark rides a coloured run and the words keep the row's colour", () => {
+    const [watch, caution] = STATES;
+    const line = railLines(RAIL, caution!.source).find((row) => row.field === "caution");
+    expect(line).toBeDefined();
+    // One source of truth: the plain text is the exact join of the segments.
+    expect(line!.text).toBe(line!.segments!.map((segment) => segment.text).join(""));
+    // The glyph alone takes the error tone; the words after it do not.
+    expect(line!.segments![1]).toEqual({ text: CAUTION_GLYPH, tone: "error" });
+
+    const watchLine = railLines(RAIL, watch!.source).find((row) => row.field === "caution");
+    expect(watchLine!.segments![1]).toEqual({ text: WATCH_GLYPH, tone: "warning" });
+  });
+});

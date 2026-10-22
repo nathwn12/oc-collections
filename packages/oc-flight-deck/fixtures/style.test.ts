@@ -1,0 +1,226 @@
+import { TextAttributes } from "@opentui/core";
+import { describe, expect, test } from "bun:test";
+import { DEFAULT_CONFIG, MAX_LINES, resolveConfig } from "../src/tui/config.js";
+import { railLineSpans, railLineStyle, railLines, sidebarTextLines } from "../src/tui/presentation.js";
+import { attributeMask, DEFAULT_STYLE, themeColor } from "../src/tui/style.js";
+
+const populatedSource = {
+  agent: "orchestrator",
+  model: { id: "gpt-5", variant: "high" },
+  branch: "main",
+  cost: 0.25,
+  tokens: { input: 1_200, output: 340, cache: { read: 9_000 } },
+};
+
+const baselineRail = [
+  "status    ○ idle",
+  "agent     orchestrator",
+  "model     gpt-5 · high",
+  "cost      $0.250",
+  "project   $0.000",
+  "tokens    1k in · 340 out",
+  "cache     88% hit · 9k read",
+  "context   ░░░░░░░░░░ ~0%",
+  "perms     0 waiting",
+  "elapsed   0s",
+  "tps       0 tok/s",
+];
+
+describe("configurable rail styling", () => {
+  test("keeps the default style and exact pre-style rail text", () => {
+    const { config, issues } = resolveConfig(undefined);
+    expect(issues).toEqual([]);
+    expect(config.style).toEqual(DEFAULT_STYLE);
+    expect(config.style).toEqual(DEFAULT_CONFIG.style);
+    expect(sidebarTextLines(config, populatedSource)).toEqual(baselineRail);
+
+    const lines = railLines(config, populatedSource);
+    // Every rail line is a live row: the fixed branding lines moved to the
+    // sidebar footer slot in 0.8.0.
+    expect(lines.map((line) => line.field)).toEqual([...config.sidebar.rows]);
+    expect(lines.map((line) => railLineStyle(config.style, line))).toEqual(
+      config.sidebar.rows.map(() => config.style.rows.wildcard),
+    );
+  });
+
+  test("applies the wildcard to live rows and leaves fixed lines alone", () => {
+    const { config, issues } = resolveConfig({
+      style: { rows: { "*": { color: "warning", attributes: ["bold", "underline"] } } },
+    });
+    expect(issues).toEqual([]);
+
+    const lines = railLines(config, populatedSource);
+    // Every rail line is live: the fixed branding lines moved to the sidebar
+    // footer slot in 0.8.0, and the wildcard must not touch them.
+    for (const line of lines) {
+      expect(railLineStyle(config.style, line)).toEqual({ color: "warning", attributes: ["bold", "underline"] });
+    }
+    // The footer's fixed branding lines still take `style.lines`, not the wildcard.
+    const branding = { text: "▸ FLIGHT DECK" };
+    expect(railLineStyle(config.style, branding)).toEqual(DEFAULT_STYLE.lines);
+  });
+
+  test("applies per-row overrides while inheriting unspecified wildcard fields", () => {
+    const { config, issues } = resolveConfig({
+      style: {
+        rows: {
+          "*": { color: "subdued", attributes: ["dim", "bold"] },
+          Cost: { color: "success" },
+          status: { attributes: [] },
+        },
+      },
+    });
+    expect(issues).toEqual([]);
+
+    const lines = railLines(config, populatedSource);
+    const cost = lines.find((line) => line.field === "cost")!;
+    const status = lines.find((line) => line.field === "status")!;
+    expect(railLineStyle(config.style, cost)).toEqual({ color: "success", attributes: ["dim", "bold"] });
+    expect(railLineStyle(config.style, status)).toEqual({ color: "subdued", attributes: [] });
+    expect(Object.keys(config.style.rows.overrides)).toContain("cost");
+  });
+
+  test("warns and safely ignores invalid colors, attributes, and row names", () => {
+    expect(() => {
+      const { config, issues } = resolveConfig({
+        style: {
+          lines: { color: "chartreuse", attributes: ["not-an-attribute", "bold"] },
+          rows: {
+            "*": { color: "warning", attributes: ["dim", "not-an-attribute"] },
+            cost: { color: "ultraviolet", attributes: ["blink", 3] },
+            costly: { color: "info" },
+          },
+        },
+      });
+
+      expect(config.style.lines).toEqual({ color: "default", attributes: ["bold"] });
+      expect(config.style.rows.wildcard).toEqual({ color: "warning", attributes: ["dim"] });
+      expect(config.style.rows.overrides.cost).toEqual({ color: "warning", attributes: ["blink"] });
+      expect(config.style.rows.overrides.costly).toBeUndefined();
+      expect(issues.join(" ")).toContain("style.lines.color");
+      expect(issues.join(" ")).toContain("style.lines.attributes[0]");
+      expect(issues.join(" ")).toContain("style.rows.*.attributes[1]");
+      expect(issues.join(" ")).toContain("style.rows.cost.color");
+      expect(issues.join(" ")).toContain("style.rows.cost.attributes[1]");
+      expect(issues.join(" ")).toContain("style.rows.costly");
+    }).not.toThrow();
+  });
+
+  test("keeps maxLines within its supported bounds and caps the whole rail", () => {
+    expect(DEFAULT_CONFIG.sidebar.maxLines).toBe(MAX_LINES);
+    expect(MAX_LINES).toBe(24);
+
+    for (const maxLines of [0, -1, MAX_LINES + 1]) {
+      const { config, issues } = resolveConfig({ sidebar: { maxLines } });
+      expect(config.sidebar.maxLines).toBe(MAX_LINES);
+      expect(issues.join(" ")).toContain("sidebar.maxLines");
+    }
+
+    const { config, issues } = resolveConfig({
+      sidebar: { maxLines: 3, lines: ["one", "two"], rows: ["cost", "branch"] },
+    });
+    expect(config.sidebar.maxLines).toBe(3);
+    expect(issues.join(" ")).toContain("total 4 lines");
+    expect(sidebarTextLines(config, populatedSource)).toEqual(["one", "two", "cost      $0.250"]);
+  });
+});
+
+describe("style role descriptors", () => {
+  test("maps roles onto legacy and renamed host theme tokens", () => {
+    const legacy = {
+      text: {
+        default: "legacy-default",
+        subdued: "legacy-subdued",
+        feedback: {
+          warning: { default: "legacy-warning" },
+          error: { default: "legacy-error" },
+          success: { default: "legacy-success" },
+          info: { default: "legacy-info" },
+        },
+      },
+    };
+    const renamed = {
+      text: {
+        base: "new-base",
+        muted: "new-muted",
+        feedback: {
+          warning: { base: "new-warning" },
+          error: { base: "new-error" },
+          success: { base: "new-success" },
+          info: { base: "new-info" },
+        },
+      },
+    };
+
+    expect(themeColor("default", legacy)).toBe("legacy-default");
+    expect(themeColor("subdued", legacy)).toBe("legacy-subdued");
+    expect(themeColor("warning", legacy)).toBe("legacy-warning");
+    expect(themeColor("error", legacy)).toBe("legacy-error");
+    expect(themeColor("success", legacy)).toBe("legacy-success");
+    expect(themeColor("info", legacy)).toBe("legacy-info");
+    expect(themeColor("default", renamed)).toBe("new-base");
+    expect(themeColor("subdued", renamed)).toBe("new-muted");
+    expect(themeColor("warning", renamed)).toBe("new-warning");
+    expect(themeColor("error", renamed)).toBe("new-error");
+    expect(themeColor("success", renamed)).toBe("new-success");
+    expect(themeColor("info", renamed)).toBe("new-info");
+    expect(themeColor("default", {})).toBeUndefined();
+  });
+
+  test("pins each text-attribute bit to its renderer descriptor literal", () => {
+    expect(attributeMask([])).toBeUndefined();
+    // Each of the 8 attribute bits, individually: the local literal must match
+    // the vendored renderer's enum member, and the enum member its numeric
+    // bit — so a renderer change fails loudly instead of desyncing silently.
+    expect(attributeMask(["bold"])).toBe(TextAttributes.BOLD);
+    expect(TextAttributes.BOLD).toBe(1);
+    expect(attributeMask(["dim"])).toBe(TextAttributes.DIM);
+    expect(TextAttributes.DIM).toBe(2);
+    expect(attributeMask(["italic"])).toBe(TextAttributes.ITALIC);
+    expect(TextAttributes.ITALIC).toBe(4);
+    expect(attributeMask(["underline"])).toBe(TextAttributes.UNDERLINE);
+    expect(TextAttributes.UNDERLINE).toBe(8);
+    expect(attributeMask(["blink"])).toBe(TextAttributes.BLINK);
+    expect(TextAttributes.BLINK).toBe(16);
+    expect(attributeMask(["inverse"])).toBe(TextAttributes.INVERSE);
+    expect(TextAttributes.INVERSE).toBe(32);
+    expect(attributeMask(["hidden"])).toBe(TextAttributes.HIDDEN);
+    expect(TextAttributes.HIDDEN).toBe(64);
+    expect(attributeMask(["strikethrough"])).toBe(TextAttributes.STRIKETHROUGH);
+    expect(TextAttributes.STRIKETHROUGH).toBe(128);
+    // Combined bits still OR together.
+    expect(attributeMask(["bold", "italic", "strikethrough"])).toBe(
+      TextAttributes.BOLD | TextAttributes.ITALIC | TextAttributes.STRIKETHROUGH,
+    );
+  });
+});
+
+describe("rail line spans", () => {
+  test("maps only the flagged window to the error role, inheriting elsewhere", () => {
+    // The decision used to live inline in the JSX, where the render harness
+    // cannot see it: its theme carries no feedback tokens, so a colour assertion
+    // there would pass even if every window turned red. This asserts the role
+    // mapping itself.
+    const { config } = resolveConfig({ sidebar: { rows: ["go"] } });
+    const source = {
+      go: {
+        windows: [
+          { id: "5h", ratio: 0 },
+          { id: "1w", ratio: 0.95 },
+          { id: "1m", ratio: 0.39 },
+        ],
+      },
+    };
+    const line = railLines(config, source).find((entry) => entry.field === "go")!;
+    expect(line.text).toBe("go        ○ 0 ● 95 ◑ 39");
+
+    const spans = railLineSpans(line, railLineStyle(config.style, line));
+    // Only the flagged window's dial and number take `error`; 5h and 1m inherit.
+    expect(spans.filter((span) => span.color === "error")).toEqual([{ text: "● 95", color: "error" }]);
+    expect(
+      spans.filter((span) => span.color !== "error").every((span) => span.color === config.style.rows.wildcard.color),
+    ).toBe(true);
+    // The plain view is still the exact join of the runs.
+    expect(spans.map((span) => span.text).join("")).toBe(line.text);
+  });
+});

@@ -1,0 +1,798 @@
+import { describe, expect, test } from "bun:test";
+import {
+  DEFAULT_CONFIG,
+  DEFAULT_FOOTER_TEXT,
+  DEFAULT_NOTIFICATIONS,
+  DEFAULT_REFRESH_MS,
+  DEFAULT_SIDEBAR_FOOTER_LINES,
+  DEFAULT_SIDEBAR_LINES,
+  DEFAULT_TPS_SCOPE,
+  DEFAULT_TPS_DISPLAY,
+  MIN_REFRESH_MS,
+  mergeOptions,
+  resolveConfig,
+} from "../src/tui/config.js";
+import { footerLine, sidebarLines } from "../src/tui/presentation.js";
+
+describe("flight deck config", () => {
+  test("uses the sane defaults when no options are supplied", () => {
+    const resolution = resolveConfig(undefined);
+    expect(resolution.issues).toEqual([]);
+    expect(resolution.config).toEqual(DEFAULT_CONFIG);
+    // Literal defaults, so a silent edit to the constants is still caught.
+    // With no session data, every selected row renders its zero skeleton.
+    expect(resolution.config.sidebar.persist).toBe(true);
+    expect(resolution.config.sidebar.placeholder).toBe("—");
+    expect(sidebarLines(resolution.config)).toHaveLength(
+      DEFAULT_SIDEBAR_LINES.length + resolution.config.sidebar.rows.length,
+    );
+    expect(sidebarLines(resolution.config)).toContain("cache     0 read");
+    // And omission is still one flag away.
+    const omitted = {
+      ...resolution.config,
+      sidebar: { ...resolution.config.sidebar, persist: false },
+    };
+    // The top rail starts with the live rows since 0.8.0: the branding pair
+    // moved to the sidebar footer default.
+    expect(sidebarLines(omitted)).toEqual([]);
+    expect(resolution.config.sidebar.rows).toEqual([
+      "status",
+      "agent",
+      "model",
+      "cost",
+      "project",
+      "tokens",
+      "cache",
+      "context",
+      "perms",
+      "elapsed",
+      "tps",
+    ]);
+    // The ticker is on by default: clock-derived rows have nothing else to
+    // react to. It runs at the spinner's frame rate so the glyph reads as
+    // motion, not as a stuck character. `refresh: 0` opts out.
+    expect(resolution.config.refresh).toBe(DEFAULT_REFRESH_MS);
+    expect(DEFAULT_REFRESH_MS).toBe(100);
+    // The top rail's fixed lines are empty by default, and so is the sidebar
+    // footer's: a fresh install draws the live rows and nothing else. The
+    // branding pair is a documented opt-in via `sidebar.footer.lines`.
+    expect(DEFAULT_SIDEBAR_LINES).toEqual([]);
+    expect(DEFAULT_SIDEBAR_FOOTER_LINES).toEqual([]);
+    // The prompt footer is off unless configured: the sidebar already has it.
+    expect(footerLine(resolution.config)).toBeUndefined();
+    expect(DEFAULT_CONFIG.footer.enabled).toBe(false);
+    expect(DEFAULT_FOOTER_TEXT).toBe("Flight Deck");
+  });
+
+  test("scopes the tps row to the family by default, with a loud fallback", () => {
+    // The shipped default is the one constant: a silent edit to it is caught
+    // here, and the example file pins the same value in scaffold.test.ts.
+    expect(DEFAULT_TPS_SCOPE).toBe("family");
+    expect(resolveConfig(undefined).config.sidebar.tps).toEqual({ scope: "family", display: "avg" });
+    expect(DEFAULT_CONFIG.sidebar.tps).toEqual({ scope: DEFAULT_TPS_SCOPE, display: DEFAULT_TPS_DISPLAY });
+
+    const session = resolveConfig({ sidebar: { tps: { scope: "session" } } });
+    expect(session.issues).toEqual([]);
+    expect(session.config.sidebar.tps).toEqual({ scope: "session", display: "avg" });
+
+    // No sensible repair for a misspelled scope: the default comes back and
+    // the key is named, like every other invalid option.
+    const bad = resolveConfig({ sidebar: { tps: { scope: "swarm" } } });
+    expect(bad.config.sidebar.tps).toEqual({ scope: "family", display: "avg" });
+    expect(bad.issues.join(" ")).toContain("sidebar.tps.scope");
+
+    // A string where an object belongs falls back whole rather than silently
+    // becoming a scope.
+    const malformed = resolveConfig({ sidebar: { tps: "family" } });
+    expect(malformed.config.sidebar.tps).toEqual({ scope: "family", display: "avg" });
+    expect(malformed.issues.join(" ")).toContain("sidebar.tps must be an object");
+  });
+
+  test("selects which tps figure draws, defaulting to the settled-turn average", () => {
+    // The shipped default is the one constant, like the scope beside it.
+    expect(DEFAULT_TPS_DISPLAY).toBe("avg");
+    expect(DEFAULT_CONFIG.sidebar.tps.display).toBe("avg");
+
+    // Every exact value passes through cleanly, leaving the scope alone.
+    for (const display of ["avg", "rt", "both"] as const) {
+      const resolution = resolveConfig({ sidebar: { tps: { display } } });
+      expect(resolution.issues).toEqual([]);
+      expect(resolution.config.sidebar.tps).toEqual({ scope: "family", display });
+    }
+
+    // No sensible repair for a misspelled display: the default comes back and
+    // the key is named, like every other invalid option.
+    const bad = resolveConfig({ sidebar: { tps: { display: "turbo" } } });
+    expect(bad.config.sidebar.tps).toEqual({ scope: "family", display: "avg" });
+    expect(bad.issues).toEqual(['sidebar.tps.display must be "avg", "rt" or "both"; using "avg"']);
+
+    // The two knobs are independent: a bad display keeps a good scope, and a
+    // bad scope keeps a good display.
+    const mixed = resolveConfig({ sidebar: { tps: { scope: "session", display: "turbo" } } });
+    expect(mixed.config.sidebar.tps).toEqual({ scope: "session", display: "avg" });
+    expect(mixed.issues.join(" ")).toContain("sidebar.tps.display");
+    expect(mixed.issues.join(" ")).not.toContain("sidebar.tps.scope");
+  });
+
+  test("turns the footer on as soon as any footer setting is written", () => {
+    const resolution = resolveConfig({ footer: { text: "hello" } });
+    expect(resolution.issues).toEqual([]);
+    expect(resolution.config.footer.enabled).toBe(true);
+    expect(footerLine(resolution.config)).toBe("hello");
+
+    // An explicit false still wins over the implied opt-in.
+    expect(resolveConfig({ footer: { enabled: false, text: "hello" } }).config.footer.enabled).toBe(false);
+  });
+
+  test("applies user overrides and trims whitespace", () => {
+    const resolution = resolveConfig({
+      sidebar: { enabled: true, lines: ["  MY RAIL  ", "second"], persist: false },
+      footer: { text: " custom footer " },
+    });
+    expect(resolution.issues).toEqual([]);
+    expect(sidebarLines(resolution.config)).toEqual(["MY RAIL", "second"]);
+    expect(footerLine(resolution.config)).toBe("custom footer");
+  });
+
+  test("hides rails that are disabled", () => {
+    const resolution = resolveConfig({ sidebar: { enabled: false }, footer: { enabled: false } });
+    expect(resolution.issues).toEqual([]);
+    expect(sidebarLines(resolution.config)).toEqual([]);
+    expect(footerLine(resolution.config)).toBeUndefined();
+  });
+
+  test("falls back and reports every malformed value", () => {
+    const resolution = resolveConfig({
+      sidebar: { enabled: "yes", lines: [123, "  ", "ok"], persist: false },
+      footer: { enabled: "yes", text: "" },
+    });
+    expect(sidebarLines(resolution.config)).toEqual(["ok"]);
+    expect(footerLine(resolution.config)).toBe(DEFAULT_FOOTER_TEXT);
+    expect(resolution.issues).toHaveLength(5);
+    expect(resolution.issues.join(" ")).toContain("sidebar.enabled");
+    expect(resolution.issues.join(" ")).toContain("footer.enabled");
+    expect(resolution.issues.join(" ")).toContain("sidebar.lines[0]");
+    expect(resolution.issues.join(" ")).toContain("sidebar.lines[1]");
+  });
+
+  test("falls back to the default lines when every entry is unusable", () => {
+    const resolution = resolveConfig({ sidebar: { lines: [42, "   ", null], persist: false } });
+    // The default is now empty: nothing usable means no fixed top lines.
+    expect(sidebarLines(resolution.config)).toEqual([]);
+    expect(resolution.issues.join(" ")).toContain("no usable entries");
+  });
+
+  test("accepts a custom row selection and reports unknown field names", () => {
+    const custom = resolveConfig({ sidebar: { rows: ["cost", "branch"] } });
+    expect(custom.issues).toEqual([]);
+    expect(custom.config.sidebar.rows).toEqual(["cost", "branch"]);
+
+    const bad = resolveConfig({ sidebar: { rows: ["cost", "nope"] } });
+    expect(bad.config.sidebar.rows).toEqual(["cost"]);
+    expect(bad.issues.join(" ")).toContain("sidebar.rows[1]");
+    expect(bad.issues.join(" ")).toContain("not a known field");
+  });
+
+  test("folds the session alias back to ses, in rows and style overrides", () => {
+    // The alias is accepted silently: no issue recorded, and the list carries
+    // the canonical key so every downstream consumer keeps working unchanged.
+    const alias = resolveConfig({ sidebar: { rows: ["session"] } });
+    expect(alias.issues).toEqual([]);
+    expect(alias.config.sidebar.rows).toEqual(["ses"]);
+
+    // Same normalization for per-row style keys: `style.rows.session` styles
+    // the `ses` row, and leaves no `session` key behind.
+    const styled = resolveConfig({ style: { rows: { session: { color: "warning" } } } });
+    expect(styled.issues).toEqual([]);
+    expect(styled.config.style.rows.overrides.ses).toMatchObject({ color: "warning" });
+    expect(styled.config.style.rows.overrides.session).toBeUndefined();
+  });
+
+  test("falls back to the default rows when none are usable", () => {
+    const resolution = resolveConfig({ sidebar: { rows: [1, "  ", "nope"] } });
+    expect(resolution.config.sidebar.rows).toEqual(DEFAULT_CONFIG.sidebar.rows);
+    expect(resolution.issues.join(" ")).toContain("no usable entries");
+  });
+
+  test("normalizes control characters in row names before matching", () => {
+    // A trailing newline is the `cache` row, not an unknown field — and the
+    // normalization is reported, like every other config string.
+    const trailing = resolveConfig({ sidebar: { rows: ["cache\n", "cost"] } });
+    expect(trailing.config.sidebar.rows).toEqual(["cache", "cost"]);
+    expect(trailing.issues.join(" ")).toContain("sidebar.rows[0]");
+    expect(trailing.issues.join(" ")).toContain("control characters");
+
+    // An entry that is still unknown after normalization stays dropped.
+    const ansi = resolveConfig({ sidebar: { rows: ["ca\u001bche"] } });
+    expect(ansi.config.sidebar.rows).toEqual(DEFAULT_CONFIG.sidebar.rows);
+    expect(ansi.issues.join(" ")).toContain("control characters");
+    expect(ansi.issues.join(" ")).toContain("not a known field");
+
+    // Valid entries still resolve cleanly.
+    const clean = resolveConfig({ sidebar: { rows: ["  COST ", "Branch"] } });
+    expect(clean.issues).toEqual([]);
+    expect(clean.config.sidebar.rows).toEqual(["cost", "branch"]);
+  });
+
+  test("flattens control characters so a rail can never become two lines", () => {
+    const resolution = resolveConfig({
+      sidebar: { lines: ["A\nB", "C\td"], persist: false },
+      footer: { text: "x\u001b[31my" },
+    });
+    expect(sidebarLines(resolution.config)).toEqual(["A B", "C d"]);
+    expect(footerLine(resolution.config)).toBe("x [31my");
+    expect(resolution.issues.join(" ")).toContain("control characters");
+    for (const line of sidebarLines(resolution.config)) {
+      expect(line).not.toMatch(/[\u0000-\u001F\u007F-\u009F]/);
+    }
+  });
+
+  test("reports truncation instead of silently shortening", () => {
+    const resolution = resolveConfig({ sidebar: { lines: ["y".repeat(400)] }, footer: { text: "z".repeat(400) } });
+    expect(sidebarLines(resolution.config)[0]).toHaveLength(120);
+    expect(footerLine(resolution.config)).toHaveLength(120);
+    expect(resolution.issues.join(" ")).toContain("longer than 120 characters");
+  });
+
+  test("survives a non-object options payload and ignores unknown keys", () => {
+    expect(resolveConfig("nope").issues).toHaveLength(1);
+    expect(resolveConfig(42).config).toEqual(DEFAULT_CONFIG);
+    const unknown = resolveConfig({ future: true, sidebar: { colour: "red" } });
+    expect(unknown.issues).toEqual([]);
+    expect(unknown.config).toEqual(DEFAULT_CONFIG);
+  });
+
+  test("caps runaway line counts and very long lines after trimming", () => {
+    const many = resolveConfig({ sidebar: { lines: Array.from({ length: 40 }, (_, index) => `line ${index}`) } });
+    expect(sidebarLines(many.config)).toHaveLength(24);
+    expect(many.issues.join(" ")).toContain("keeping the first 24");
+
+    const long = resolveConfig({ sidebar: { lines: ["x".repeat(400)] } });
+    expect(sidebarLines(long.config)[0]).toHaveLength(120);
+
+    // Trimming happens before capping, so padding must not eat visible width.
+    const padded = resolveConfig({ sidebar: { lines: [" ".repeat(50) + "y".repeat(400)] } });
+    expect(sidebarLines(padded.config)[0]).toBe("y".repeat(120));
+
+    const paddedFooter = resolveConfig({ footer: { text: " ".repeat(50) + "z".repeat(400) } });
+    expect(footerLine(paddedFooter.config)).toBe("z".repeat(120));
+  });
+});
+
+// The sidebar footer slot: a separate host region with its own list —
+// independent of `sidebar.lines` and outside the rail's `maxLines` budget.
+// Empty by default since 0.8.1; the branding pair is a documented opt-in
+// set via `sidebar.footer.lines`, and an explicitly empty list removes the
+// slot.
+describe("the sidebar footer", () => {
+  test("ships no footer lines by default since 0.8.1", () => {
+    const resolution = resolveConfig(undefined);
+    expect(resolution.issues).toEqual([]);
+    expect(resolution.config.sidebar.footer.lines).toEqual([]);
+    expect(DEFAULT_CONFIG.sidebar.footer.lines).toEqual(DEFAULT_SIDEBAR_FOOTER_LINES);
+    // The whole footer shape, so a new key cannot arrive without a default.
+    expect(DEFAULT_CONFIG.sidebar.footer).toEqual({ lines: [], go: false });
+  });
+
+  test("reads the footer's go panel flag, off by default", () => {
+    // Off by default, like every other opt-in surface: a fresh install claims
+    // no footer slot and spends no timer on the account-wide poll.
+    expect(DEFAULT_CONFIG.sidebar.footer.go).toBe(false);
+    expect(resolveConfig(undefined).config.sidebar.footer.go).toBe(false);
+
+    const on = resolveConfig({ sidebar: { footer: { go: true } } });
+    expect(on.issues).toEqual([]);
+    expect(on.config.sidebar.footer.go).toBe(true);
+    // Independent of `lines`: the panel is not a fixed line.
+    expect(on.config.sidebar.footer.lines).toEqual([]);
+
+    const off = resolveConfig({ sidebar: { footer: { go: false } } });
+    expect(off.issues).toEqual([]);
+    expect(off.config.sidebar.footer.go).toBe(false);
+
+    // A non-boolean non-object falls back loudly, like every other option.
+    const bad = resolveConfig({ sidebar: { footer: { go: "yes" } } });
+    expect(bad.config.sidebar.footer.go).toBe(false);
+    expect(bad.issues.join(" ")).toContain("sidebar.footer.go");
+  });
+
+  test("reads the footer's go panel look object, absent keys falling back to defaults", () => {
+    const empty = resolveConfig({ sidebar: { footer: { go: {} } } });
+    expect(empty.issues).toEqual([]);
+    expect(empty.config.sidebar.footer.go).toEqual({
+      header: false,
+      barWidth: 10,
+      labelWidth: 6,
+      percent: true,
+      reset: true,
+      align: "right",
+      sweep: false,
+      labels: { rolling: "rolling", weekly: "weekly", monthly: "monthly" },
+      blink: true,
+      blinkMs: 700,
+    });
+
+    const custom = resolveConfig({
+      sidebar: {
+        footer: {
+          go: {
+            header: true,
+            barWidth: 10,
+            labelWidth: 8,
+            percent: false,
+            reset: false,
+            align: "center",
+            sweep: true,
+            labels: { rolling: "5h", weekly: "1w", monthly: "1m" },
+            blink: false,
+            blinkMs: 1000,
+          },
+        },
+      },
+    });
+    expect(custom.issues).toEqual([]);
+    expect(custom.config.sidebar.footer.go).toEqual({
+      header: true,
+      barWidth: 10,
+      labelWidth: 8,
+      percent: false,
+      reset: false,
+      align: "center",
+      sweep: true,
+      labels: { rolling: "5h", weekly: "1w", monthly: "1m" },
+      blink: false,
+      blinkMs: 1000,
+    });
+
+    // Partial objects fill the rest with defaults, cleanly.
+    const partial = resolveConfig({ sidebar: { footer: { go: { header: true } } } });
+    expect(partial.issues).toEqual([]);
+    expect(partial.config.sidebar.footer.go).toEqual({
+      header: true,
+      barWidth: 10,
+      labelWidth: 6,
+      percent: true,
+      reset: true,
+      align: "right",
+      sweep: false,
+      labels: { rolling: "rolling", weekly: "weekly", monthly: "monthly" },
+      blink: true,
+      blinkMs: 700,
+    });
+  });
+
+  test("reports a malformed go look value and ignores it, never crashing", () => {
+    const bad = resolveConfig({
+      sidebar: {
+        footer: {
+          go: {
+            header: "yes",
+            barWidth: "big",
+            labelWidth: -3,
+            percent: 1,
+            reset: null,
+            align: "sideways",
+            sweep: "often",
+            labels: { rolling: 42, weekly: "", monthly: "x".repeat(30) },
+            blink: "yes",
+            blinkMs: 50,
+          },
+        },
+      },
+    });
+    expect(bad.config.sidebar.footer.go).toEqual({
+      header: false,
+      barWidth: 10,
+      labelWidth: 6,
+      percent: true,
+      reset: true,
+      align: "right",
+      sweep: false,
+      labels: { rolling: "rolling", weekly: "weekly", monthly: "monthly" },
+      blink: true,
+      blinkMs: 700,
+    });
+    expect(bad.issues.join(" ")).toContain("sidebar.footer.go.header");
+    expect(bad.issues.join(" ")).toContain("sidebar.footer.go.barWidth");
+    expect(bad.issues.join(" ")).toContain("sidebar.footer.go.labelWidth");
+    expect(bad.issues.join(" ")).toContain("sidebar.footer.go.percent");
+    expect(bad.issues.join(" ")).toContain("sidebar.footer.go.reset");
+    expect(bad.issues.join(" ")).toContain("sidebar.footer.go.align");
+    expect(bad.issues.join(" ")).toContain("sidebar.footer.go.sweep");
+    expect(bad.issues.join(" ")).toContain("sidebar.footer.go.labels.rolling");
+    expect(bad.issues.join(" ")).toContain("sidebar.footer.go.labels.weekly");
+    expect(bad.issues.join(" ")).toContain("sidebar.footer.go.labels.monthly");
+    expect(bad.issues.join(" ")).toContain("sidebar.footer.go.blink");
+    expect(bad.issues.join(" ")).toContain("sidebar.footer.go.blinkMs");
+
+    // Out-of-range numbers fall back too, loudly.
+    const range = resolveConfig({ sidebar: { footer: { go: { barWidth: 100, labelWidth: 100 } } } });
+    expect(range.config.sidebar.footer.go).toMatchObject({ barWidth: 10, labelWidth: 6 });
+    expect(range.issues.join(" ")).toContain("sidebar.footer.go.barWidth");
+    expect(range.issues.join(" ")).toContain("sidebar.footer.go.labelWidth");
+
+    // Unknown keys are ignored forward-compatibly, with no issue.
+    const future = resolveConfig({ sidebar: { footer: { go: { header: true, colour: "red" } } } });
+    expect(future.config.sidebar.footer.go).toMatchObject({ header: true });
+    expect(future.issues).toEqual([]);
+  });
+
+  test("renames go labels per-key and bounds the breath", () => {
+    // Partial renames: a present key wins, an absent key keeps its default.
+    const renamed = resolveConfig({ sidebar: { footer: { go: { labels: { weekly: "this week" } } } } });
+    expect(renamed.issues).toEqual([]);
+    expect(renamed.config.sidebar.footer.go).toMatchObject({
+      labels: { rolling: "rolling", weekly: "this week", monthly: "monthly" },
+    });
+
+    // A non-object labels value falls back whole, loudly.
+    const whole = resolveConfig({ sidebar: { footer: { go: { labels: "loud" } } } });
+    expect(whole.config.sidebar.footer.go).toMatchObject({
+      labels: { rolling: "rolling", weekly: "weekly", monthly: "monthly" },
+    });
+    expect(whole.issues.join(" ")).toContain("sidebar.footer.go.labels");
+
+    // The breath keeps its bounds: 200 to 5000, floored to whole milliseconds.
+    expect(resolveConfig({ sidebar: { footer: { go: { blinkMs: 200 } } } }).issues).toEqual([]);
+    expect(resolveConfig({ sidebar: { footer: { go: { blinkMs: 5000 } } } }).issues).toEqual([]);
+    const slow = resolveConfig({ sidebar: { footer: { go: { blinkMs: 199 } } } });
+    expect(slow.config.sidebar.footer.go).toMatchObject({ blinkMs: 700 });
+    expect(slow.issues.join(" ")).toContain("sidebar.footer.go.blinkMs");
+    const fast = resolveConfig({ sidebar: { footer: { go: { blinkMs: 5001 } } } });
+    expect(fast.config.sidebar.footer.go).toMatchObject({ blinkMs: 700 });
+    expect(fast.issues.join(" ")).toContain("sidebar.footer.go.blinkMs");
+  });
+
+  test("reads the go trailing-cell align, defaulting to right", () => {
+    // Each exact value passes through cleanly.
+    for (const align of ["left", "right", "center"] as const) {
+      const resolution = resolveConfig({ sidebar: { footer: { go: { align } } } });
+      expect(resolution.issues).toEqual([]);
+      expect(resolution.config.sidebar.footer.go).toMatchObject({ align });
+    }
+    // Absent means the default, silently.
+    expect(resolveConfig({ sidebar: { footer: { go: {} } } }).config.sidebar.footer.go).toMatchObject({
+      align: "right",
+    });
+    // Anything else present falls back to right, loudly.
+    for (const align of ["RIGHT", " Left", "", 0, null, { align: "left" }]) {
+      const bad = resolveConfig({ sidebar: { footer: { go: { align } } } });
+      expect(bad.config.sidebar.footer.go).toMatchObject({ align: "right" });
+      expect(bad.issues.join(" ")).toContain("sidebar.footer.go.align");
+    }
+  });
+
+  test("replaces the empty default with an explicit list", () => {
+    const resolution = resolveConfig({ sidebar: { footer: { lines: ["MADE BY", "flight deck"] } } });
+    expect(resolution.issues).toEqual([]);
+    expect(resolution.config.sidebar.footer.lines).toEqual(["MADE BY", "flight deck"]);
+  });
+
+  test("keeps the empty footer default when sidebar.lines is customized", () => {
+    const resolution = resolveConfig({ sidebar: { lines: ["CUSTOM RAIL"] } });
+    expect(resolution.issues).toEqual([]);
+    expect(resolution.config.sidebar.lines).toEqual(["CUSTOM RAIL"]);
+    expect(resolution.config.sidebar.footer.lines).toEqual([]);
+  });
+
+  test("an explicitly empty footer list opts the slot out entirely", () => {
+    const resolution = resolveConfig({ sidebar: { footer: { lines: [] } } });
+    expect(resolution.issues).toEqual([]);
+    expect(resolution.config.sidebar.footer.lines).toEqual([]);
+  });
+
+  test("falls back loudly when the footer list has no usable entries", () => {
+    const resolution = resolveConfig({ sidebar: { footer: { lines: [42, "   "] } } });
+    // The fallback target is the empty default: unusable input lands on no
+    // footer lines at all, with the same loud report as any bad value.
+    expect(resolution.config.sidebar.footer.lines).toEqual([]);
+    expect(resolution.issues.join(" ")).toContain("sidebar.footer.lines[0]");
+    expect(resolution.issues.join(" ")).toContain("no usable entries");
+  });
+});
+
+describe("flight deck option precedence", () => {
+  test("uses file options when the host sends none", () => {
+    const merged = mergeOptions({ footer: { text: "from file" } }, undefined);
+    expect(footerLine(resolveConfig(merged).config)).toBe("from file");
+  });
+
+  test("lets host options win key by key without dropping file siblings", () => {
+    const merged = mergeOptions(
+      { sidebar: { lines: ["file line"], enabled: true }, footer: { text: "file footer" } },
+      { sidebar: { enabled: false } },
+    );
+    const { config, issues } = resolveConfig(merged);
+    expect(issues).toEqual([]);
+    expect(config.sidebar.enabled).toBe(false);
+    expect(config.sidebar.lines).toEqual(["file line"]);
+    expect(footerLine(config)).toBe("file footer");
+  });
+
+  test("reports a malformed section from either source", () => {
+    expect(resolveConfig(mergeOptions({ sidebar: "nope" }, undefined)).issues.join(" ")).toContain("sidebar");
+    expect(resolveConfig(mergeOptions(undefined, { footer: 12 })).issues.join(" ")).toContain("footer");
+    // A non-object `sidebar.footer` is reported like any other malformed
+    // section, and the empty default comes back rather than guessing.
+    const malformedFooter = resolveConfig({ sidebar: { footer: 42 } });
+    expect(malformedFooter.issues.join(" ")).toContain("sidebar.footer must be an object; using defaults");
+    expect(malformedFooter.config.sidebar.footer.lines).toEqual([]);
+  });
+
+  // Pins the intended direction: a malformed section replaces the other source
+  // and resolveConfig reports it, so the problem is loud rather than masked.
+  test("lets a malformed host section win loudly over a valid file section", () => {
+    const { config, issues } = resolveConfig(mergeOptions({ footer: { text: "file footer" } }, { footer: 12 }));
+    expect(issues.join(" ")).toContain("footer must be an object");
+    // The malformed section is discarded entirely, so the rail falls back to
+    // its off-by-default state rather than guessing at the file's intent.
+    expect(footerLine(config)).toBeUndefined();
+  });
+
+  // The mirror case: when the host supplies a valid section, it takes over and
+  // the malformed file section is dropped. (With no host section present, the
+  // malformed file value is surfaced instead — see the test above.)
+  test("lets a valid host section take over a malformed file section", () => {
+    const { config, issues } = resolveConfig(
+      mergeOptions({ sidebar: "nope" }, { sidebar: { lines: ["host"], persist: false } }),
+    );
+    expect(issues).toEqual([]);
+    expect(sidebarLines(config)).toEqual(["host"]);
+  });
+
+  test("merges the nested tps keys leaf by leaf instead of replacing the section", () => {
+    // A host `{ display }` must not drop a file `{ scope }`, and vice versa:
+    // the two knobs ride the same nested merge the footer already uses.
+    const merged = mergeOptions({ sidebar: { tps: { scope: "session" } } }, { sidebar: { tps: { display: "rt" } } });
+    const { config, issues } = resolveConfig(merged);
+    expect(issues).toEqual([]);
+    expect(config.sidebar.tps).toEqual({ scope: "session", display: "rt" });
+  });
+
+  // A tick now wakes the host's renderer, so a sub-frame interval is a way to
+  // wedge the TUI from a config file rather than a way to make it smoother.
+  test("clamps a sub-frame refresh rate instead of accepting it", () => {
+    const { config, issues } = resolveConfig({ refresh: 1 });
+    expect(config.refresh).toBe(MIN_REFRESH_MS);
+    expect(issues.join(" ")).toContain("faster than");
+  });
+
+  // The clamp must not swallow the deliberate "off" value: 0 means no ticker,
+  // not "as fast as possible".
+  test("still lets refresh be switched off entirely", () => {
+    const { config, issues } = resolveConfig({ refresh: 0 });
+    expect(config.refresh).toBe(0);
+    expect(issues).toEqual([]);
+  });
+
+  test("merging two empty sources yields the defaults", () => {
+    expect(resolveConfig(mergeOptions(undefined, undefined)).config).toEqual(DEFAULT_CONFIG);
+    expect(resolveConfig(mergeOptions({}, {})).config).toEqual(DEFAULT_CONFIG);
+  });
+});
+
+// Validation branches that nothing exercised. Each one silently corrected a bad
+// value, so a regression in any of them would have been invisible — the config
+// would simply do something other than what it says.
+describe("option validation", () => {
+  test("raises a caution threshold that could never be reached", () => {
+    const tool = resolveConfig({ caution: { toolWatchSeconds: 300, toolCautionSeconds: 60 } });
+    expect(tool.config.caution.toolCautionSeconds).toBe(300);
+    expect(tool.issues.join(" ")).toContain("raised to match");
+
+    const turn = resolveConfig({ caution: { turnWatchSeconds: 900, turnCautionSeconds: 60 } });
+    expect(turn.config.caution.turnCautionSeconds).toBe(900);
+    expect(turn.issues.join(" ")).toContain("raised to match");
+  });
+
+  test("rejects a glyph that is empty, too wide, or a control character", () => {
+    const { config, issues } = resolveConfig({ glyphs: { watch: "abc", caution: "\u0007", clear: "" } });
+    expect(config.glyphs).toEqual(DEFAULT_CONFIG.glyphs);
+    expect(issues.join(" ")).toContain("glyphs.watch");
+    expect(issues.join(" ")).toContain("glyphs.caution");
+    expect(issues.join(" ")).toContain("glyphs.clear");
+  });
+
+  test("falls back whole when the exempt list is malformed, but accepts empty", () => {
+    const fallback = DEFAULT_CONFIG.caution.exemptTools;
+    expect(resolveConfig({ caution: { exemptTools: "read" } }).config.caution.exemptTools).toEqual(fallback);
+    expect(resolveConfig({ caution: { exemptTools: ["read", "  "] } }).config.caution.exemptTools).toEqual(fallback);
+    // An empty list is a real choice: exempt nothing at all.
+    expect(resolveConfig({ caution: { exemptTools: [] } }).config.caution.exemptTools).toEqual([]);
+  });
+
+  test("sends an out-of-range layout value back to its default, and says so", () => {
+    const small = resolveConfig({ layout: { labelWidth: 5, barWidth: 0, sparkWidth: 1 } });
+    expect(small.config.layout).toEqual(DEFAULT_CONFIG.layout);
+    expect(small.issues.join(" ")).toContain("layout.labelWidth");
+    expect(small.issues.join(" ")).toContain("layout.barWidth");
+    expect(small.issues.join(" ")).toContain("layout.sparkWidth");
+
+    const large = resolveConfig({ layout: { labelWidth: 30, barWidth: 100, sparkWidth: 500 } });
+    expect(large.config.layout).toEqual(DEFAULT_CONFIG.layout);
+    expect(large.issues).toHaveLength(3);
+
+    // Both ends of every range are accepted exactly as written.
+    expect(resolveConfig({ layout: { labelWidth: 6, barWidth: 1, sparkWidth: 2 } }).issues).toEqual([]);
+    expect(resolveConfig({ layout: { labelWidth: 24, barWidth: 40, sparkWidth: 64 } }).issues).toEqual([]);
+  });
+
+  test("leaves every label at its built-in text when layout.labels is absent", () => {
+    const { config, issues } = resolveConfig({ sidebar: { rows: ["cost", "total", "session"] } });
+    expect(issues).toEqual([]);
+    expect(config.layout.labels).toBeUndefined();
+    // The plain rail: every label is the shipped one, `ses` still drawing
+    // `session` because that is its built-in label, not a rename.
+    expect(sidebarLines(config, { cost: 0.1913, tree: { cost: 0.1913, count: 0 }, sessionId: "ses_x" })).toEqual([
+      "cost      $0.191",
+      "total     $0.191 · 0 subagents",
+      "session   ses_x",
+    ]);
+  });
+
+  test("renames the rows layout.labels names, and leaves the rest alone", () => {
+    const { config, issues } = resolveConfig({
+      sidebar: { rows: ["cost", "total", "agent"] },
+      layout: { labels: { cost: "session", total: "lifetime" } },
+    });
+    expect(issues).toEqual([]);
+    expect(config.layout.labels).toEqual({ cost: "session", total: "lifetime" });
+    expect(sidebarLines(config, { agent: "build", cost: 0.1913, tree: { cost: 0.1913, count: 0 } })).toEqual([
+      "session   $0.191",
+      "lifetime  $0.191 · 0 subagents",
+      "agent     build",
+    ]);
+  });
+
+  test("canonicalizes the session alias onto the ses row, like sidebar.rows", () => {
+    const { config, issues } = resolveConfig({
+      sidebar: { rows: ["ses"] },
+      layout: { labels: { session: "id" } },
+    });
+    expect(issues).toEqual([]);
+    // Stored under the canonical key, so one rename lands on whichever spelling
+    // the row list carried.
+    expect(config.layout.labels).toEqual({ ses: "id" });
+    expect(sidebarLines(config, { sessionId: "ses_x" })).toEqual(["id        ses_x"]);
+  });
+
+  test("reports a bad label and keeps that row's default", () => {
+    const unknown = resolveConfig({ layout: { labels: { costt: "money" } } });
+    expect(unknown.config.layout.labels).toBeUndefined();
+    expect(unknown.issues.join(" ")).toContain("layout.labels.costt is not a known row");
+    expect(unknown.issues.join(" ")).toContain("cost, total");
+
+    const wrongType = resolveConfig({ layout: { labels: { cost: 5 } } });
+    expect(wrongType.config.layout.labels).toBeUndefined();
+    expect(wrongType.issues.join(" ")).toContain("layout.labels.cost must be a string");
+
+    const empty = resolveConfig({ layout: { labels: { cost: "  " } } });
+    expect(empty.config.layout.labels).toBeUndefined();
+    expect(empty.issues.join(" ")).toContain("layout.labels.cost must not be empty");
+
+    const notObject = resolveConfig({ layout: { labels: "cost" } });
+    expect(notObject.config.layout.labels).toBeUndefined();
+    expect(notObject.issues.join(" ")).toContain("layout.labels must be an object");
+
+    // A good key beside a bad one survives: only the bad row falls back.
+    const mixed = resolveConfig({ layout: { labels: { cost: "session", nope: "x" } } });
+    expect(mixed.config.layout.labels).toEqual({ cost: "session" });
+    expect(mixed.issues.join(" ")).toContain("layout.labels.nope");
+  });
+
+  test("reports the fixed lines and the live rows overrunning the rail together", () => {
+    const { config, issues } = resolveConfig({
+      sidebar: { lines: Array.from({ length: 20 }, (_, index) => `line ${index}`), rows: DEFAULT_CONFIG.sidebar.rows },
+    });
+    // 20 fixed lines plus 11 live rows, against a 24-line rail.
+    expect(issues.join(" ")).toContain("total 31 lines");
+    // With every default row carrying data, the rail stops at the cap.
+    const source = {
+      caution: "▲ x",
+      status: "idle",
+      agent: "x",
+      model: { id: "m" },
+      branch: "b",
+      cost: 1,
+      project: { cost: 1 },
+      tokens: { input: 1, output: 1, cache: { read: 1 } },
+      context: { used: 1 },
+      perms: { count: 1 },
+      elapsedMs: 1_000,
+      tps: { rt: 10, avg: 10 },
+    };
+    expect(sidebarLines(config, source)).toHaveLength(24);
+  });
+
+  test("says nothing when the rail is comfortably inside its cap", () => {
+    expect(resolveConfig({ sidebar: { lines: ["a", "b"], rows: ["cost"] } }).issues).toEqual([]);
+  });
+});
+
+// The `notifications` silencing layer: every toast on by default, each flag an
+// explicit opt-out. These pin the defaults, the loud fallbacks, and the
+// file/host precedence the other sections share.
+describe("the notifications section", () => {
+  test("ships with every toast on", () => {
+    expect(DEFAULT_NOTIFICATIONS).toEqual({ enabled: true, config: true, copy: true, caution: true });
+    expect(DEFAULT_CONFIG.notifications).toEqual(DEFAULT_NOTIFICATIONS);
+    const resolution = resolveConfig(undefined);
+    expect(resolution.issues).toEqual([]);
+    expect(resolution.config.notifications).toEqual({ enabled: true, config: true, copy: true, caution: true });
+  });
+
+  test("honours valid overrides per flag", () => {
+    const off = resolveConfig({ notifications: { enabled: false } });
+    expect(off.issues).toEqual([]);
+    expect(off.config.notifications).toEqual({ enabled: false, config: true, copy: true, caution: true });
+
+    const kinds = resolveConfig({ notifications: { config: false, copy: false, caution: false } });
+    expect(kinds.issues).toEqual([]);
+    expect(kinds.config.notifications).toEqual({ enabled: true, config: false, copy: false, caution: false });
+  });
+
+  test("reports a malformed section and falls back to all on", () => {
+    const malformed = resolveConfig({ notifications: "silent" });
+    expect(malformed.config.notifications).toEqual(DEFAULT_NOTIFICATIONS);
+    expect(malformed.issues.join(" ")).toContain("notifications must be an object");
+
+    const badFlag = resolveConfig({ notifications: { copy: "never" } });
+    expect(badFlag.config.notifications).toEqual(DEFAULT_NOTIFICATIONS);
+    expect(badFlag.issues.join(" ")).toContain("notifications.copy");
+  });
+
+  test("lets host options override file options key by key", () => {
+    const merged = mergeOptions({ notifications: { copy: false, caution: false } }, { notifications: { copy: true } });
+    const { config, issues } = resolveConfig(merged);
+    expect(issues).toEqual([]);
+    expect(config.notifications).toEqual({ enabled: true, config: true, copy: true, caution: false });
+
+    const malformedHost = resolveConfig(mergeOptions({ notifications: { copy: false } }, { notifications: 42 }));
+    expect(malformedHost.issues.join(" ")).toContain("notifications must be an object");
+    expect(malformedHost.config.notifications).toEqual(DEFAULT_NOTIFICATIONS);
+  });
+});
+// The default-rail flips: `caution`, `branch`, and `go` are all available but
+// not on the shipped rail, and each is one edit away. These pin the flips, so a
+// silent edit to a constant cannot put a clock, a VCS call, or an account-wide
+// poll back on a fresh install.
+describe("the shipped default rail", () => {
+  test("keeps caution, branch, and go off the default rail", () => {
+    expect(DEFAULT_CONFIG.caution.enabled).toBe(false);
+    expect(resolveConfig(undefined).config.caution.enabled).toBe(false);
+    expect(DEFAULT_CONFIG.sidebar.rows).not.toContain("caution");
+    expect(DEFAULT_CONFIG.sidebar.rows).not.toContain("branch");
+    expect(DEFAULT_CONFIG.sidebar.rows).not.toContain("go");
+  });
+
+  test("knows go by name, so naming it is not an unknown-field error", () => {
+    const go = resolveConfig({ sidebar: { rows: ["go"] } });
+    expect(go.issues).toEqual([]);
+    expect(go.config.sidebar.rows).toEqual(["go"]);
+  });
+
+  test("still enables the annunciator when asked, and keeps it off otherwise", () => {
+    const on = resolveConfig({ caution: { enabled: true } });
+    expect(on.issues).toEqual([]);
+    expect(on.config.caution.enabled).toBe(true);
+
+    // The default rail never draws a caution even when the source has one: the
+    // row is off the rail, and enabling it is a second, explicit edit.
+    expect(sidebarLines(DEFAULT_CONFIG, { caution: "● shell running 8m41s" })).not.toContain(
+      "caution   ● shell running 8m41s",
+    );
+
+    // Named but with the annunciator off and nothing to say, it stays silent:
+    // the annunciator has no skeleton and takes no placeholder, so there is
+    // no row under persist — its silence is the design.
+    const rows = resolveConfig({ sidebar: { rows: ["caution"] } }).config;
+    expect(sidebarLines(rows, {})).toEqual([]);
+
+    // Enabled AND on the rail: the annunciator actually draws its text, so the
+    // opt-in is a real path and not just a flag that changes nothing.
+    const onRail = resolveConfig({ caution: { enabled: true }, sidebar: { rows: ["caution"] } }).config;
+    expect(sidebarLines(onRail, { caution: "● shell running 8m41s" })).toContain(
+      "caution   ● shell running 8m41s",
+    );
+  });
+});
