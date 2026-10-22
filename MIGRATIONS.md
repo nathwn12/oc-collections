@@ -1,6 +1,6 @@
 # Migrations
 
-This repo is an npm-workspaces monorepo: the index stays at the root, and each family package moves into `packages/<name>`, keeping its own npm name, version line, and release cadence. This file records every move. Archiving the source repos is the owner's call — nothing has been archived, and no source repo was changed by the migration.
+This repo is an npm-workspaces monorepo: the index stays at the root, and each family package moves into `packages/<name>`, keeping its own npm name, version line, and release cadence. This file records every move. Archiving the source repos is the owner's call, recorded in Retired repositories at the end of this file; no source repo was changed by the migration.
 
 ## 2026-10-22 — `@nathwn12/oc-bifrost@1.6.9`
 
@@ -167,7 +167,7 @@ Kept unchanged on purpose:
 
 Not carried over: `.github/workflows/*` — repo-level; GitHub only runs the monorepo root workflows. The source's release workflow and npm trusted-publisher binding stay with the original repo; publishing from the monorepo is not wired.
 
-## Repos now replaced by this monorepo (not archived yet — the owner archives them)
+## Repos replaced by this monorepo
 
 - `nathwn12/oc-bifrost` — its package lives at `packages/oc-bifrost/`.
 - `nathwn12/oc-flight-deck` — its package lives at `packages/oc-flight-deck/`.
@@ -178,7 +178,7 @@ Not carried over: `.github/workflows/*` — repo-level; GitHub only runs the mon
 - `nathwn12/gladius` — its crate lives at `crates/gladius/`, its launcher at `packages/gladius-mcp/`.
 - `nathwn12/puppet` — its crate lives at `crates/puppet/`, its launcher at `packages/puppet-mcp/`.
 
-No source repo has been archived; each stays in place until the owner archives it.
+The mappings above are the import record; what became of each repository is recorded under "Retired repositories".
 
 ## Rust workspace
 
@@ -215,3 +215,13 @@ Never executed: the workflow and its parser are statically validated and the par
 - **Pack guard in CI.** `.github/workflows/check.yml` runs `npm run pack:check` after the workspace check, so the strongest guard runs on every push and pull request.
 - **Index check split.** `scripts/check-index.ps1` now has `--structural` (offline: table names against the repo's package inventory; runs on every PR) and `--registry` (network: published packages and claimed versions; post-publish only, scoped with `--package` in the release workflow). `scripts/index-registry.ps1` records which packages are released from here — the four npm packages assert `repository` names `nathwn12/oc-collections` — and which are not (`oc-todo` EOL; `gladius-mcp`, `puppet-mcp` original release lanes), with a reason per entry; those are existence/version-only. The self-test proves the structural red path and both repository-assertion directions offline.
 - **Launcher checks and Cargo.** `scripts/check-launcher.mjs` validates each npx launcher offline (bin exists, every `files` entry exists, manifest names/versions agree, `runtime.source` is an immutable GitHub release URL, sha256 slots are placeholder-or-hex), and both launchers are in the workspace plan. `cargo metadata --no-deps` resolves the two crates; CI still runs only the npm checks (no Rust toolchain step).
+
+## Retired repositories
+
+The four published packages — `@nathwn12/oc-bifrost`, `oc-flight-deck`, `oc-harness-setup`, `rea-shim` — now build, tag and publish from `oc-collections` only. Their former repositories — `nathwn12/oc-bifrost`, `nathwn12/oc-flight-deck`, `nathwn12/oc-harness-setup`, `nathwn12/rea-shim` — are being archived and made private. An archived repository stays readable, its npm metadata stays immutable, and nothing resolves it at install time.
+
+`nathwn12/oc-unified` (private, never published) and `nathwn12/oc-todo` (end-of-life, archived) are retained as history.
+
+`nathwn12/gladius` and `nathwn12/puppet` stay public and unarchived: they are the release-asset source for the MCP engine binaries, and archiving either would disable the Actions lane that builds the next engine.
+
+Published packages' older versions still name their original repositories in immutable npm metadata; that is historical, not a fetch target.

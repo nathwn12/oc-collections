@@ -79,7 +79,7 @@ foreach ($line in Get-Content -LiteralPath $readme) {
     $cells = $line.Trim().Trim('|').Split('|')
     if ($cells.Count -lt 2) { continue }
     $name = $cells[0].Trim()
-    if ($name -eq 'Repo' -or $name -match '^[-: ]+$') { continue }
+    if ($name -in @('Repo', 'Package') -or $name -match '^[-: ]+$') { continue }
     $rows += [pscustomobject]@{ Name = $name; Line = $line; Cells = $cells }
 }
 
