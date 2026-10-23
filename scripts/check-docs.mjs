@@ -2,8 +2,8 @@
 // check-docs.mjs - mechanical truth check for maintainer docs.
 //
 // Scope: the docs this repo owns and can edit. The byte-identical imports
-// (crates/, the two MCP launchers) and the archived oc-todo tree are audited
-// separately and excluded here; --all includes them for a one-off report.
+// (crates/, the two MCP launchers) are audited separately and excluded here;
+// --all includes them for a one-off report.
 //
 // A backticked token is treated as a path claim when it looks like a path:
 // it is not absolute, not a URL/anchor, contains no glob or placeholder
@@ -32,7 +32,7 @@ import { spawnSync } from "node:child_process";
 const ROOT = path.resolve(import.meta.dirname, "..");
 const NAMES = new Set(["AGENTS.md", "CONTRIBUTING.md", "INSTALL.md", "PUBLISHING.md", "README.md", "SKILL.md"]);
 const IN_SCOPE = ["README.md", "AGENTS.md", "packages/oc-bifrost", "packages/oc-flight-deck", "packages/oc-harness-setup", "packages/oc-unified", "packages/rea-shim"];
-const REPORT_ONLY = ["archive", "crates", "packages/gladius-mcp", "packages/puppet-mcp"];
+const REPORT_ONLY = ["crates", "packages/gladius-mcp", "packages/puppet-mcp"];
 // Bare filenames are only claims when they name a maintainer document or a
 // manifest. Config examples such as `opencode.jsonc` are not repo paths.
 const BARE_CLAIMS = new Set([

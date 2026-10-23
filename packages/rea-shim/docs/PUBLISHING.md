@@ -22,8 +22,8 @@ retry has not yet been exercised by a real release.
    published version; `scripts/release-target.mjs` refuses anything else.
 2. A `v<version>` tag does nothing — it does not match the trigger.
 3. `rea-shim` is one of the four allowlisted packages. `gladius-mcp` and
-   `puppet-mcp` stay on their original release lanes; `oc-unified` and
-   `oc-todo` are not releasable from here.
+   `puppet-mcp` stay on their original release lanes; `oc-unified` is not
+   releasable from here.
 
 The trusted-publisher binding, when configured, must name
 `nathwn12/oc-collections` and `.github/workflows/release.yml`.

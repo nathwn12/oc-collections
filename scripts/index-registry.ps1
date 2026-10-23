@@ -8,11 +8,6 @@
 # repository assertion on them can never pass. They are checked for existence
 # and claimed version only. Every package must be classified here; an unknown
 # package fails the registry check instead of being guessed.
-#
-# oc-todo is the third such package but is omitted from the table altogether
-# (EOL/deprecated; never republished from this monorepo), so the registry loop
-# never reaches its entry below. It stays classified so the entry is already
-# right if the table ever shows it again.
 $script:RegistryScope = [ordered]@{
     '@nathwn12/oc-bifrost' = [pscustomobject]@{
         Scope  = 'released'
@@ -29,12 +24,6 @@ $script:RegistryScope = [ordered]@{
     'rea-shim' = [pscustomobject]@{
         Scope  = 'released'
         Reason = 'packages/rea-shim; published by this repo''s release workflow.'
-    }
-    # Not in the table, so never queried today; retained rather than deleted so
-    # the external-package classification holds the moment it is shown again.
-    'oc-todo' = [pscustomobject]@{
-        Scope  = 'external'
-        Reason = 'EOL/deprecated; never republished from this monorepo.'
     }
     'gladius-mcp' = [pscustomobject]@{
         Scope  = 'external'

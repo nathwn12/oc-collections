@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.6.11] - 2026-10-23
+
+- npm front door split into a short `README.md`; full documentation moved to `docs/GUIDE.md`; no functional change.
+
 ## [1.6.10] - 2026-10-22
 
 - Version bump for the monorepo release; no runtime change.

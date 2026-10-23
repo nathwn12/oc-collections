@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.1.4] - 2026-10-23
+
+- Pipeline-verification patch; no functional change.
+
 ## [0.1.3] - 2026-10-23
 
 - Corrected `docs/PUBLISHING.md`: the release lane has executed four times, one package per run, all four publishing over OIDC with provenance. The only unproven step is the post-publish registry verify. No code change.

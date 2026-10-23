@@ -28,7 +28,9 @@ const WIN_SKIP = WINDOWS ? false : 'non-Windows OS — this starter ships Window
 
 const PKG_ROOT = path.resolve(import.meta.dirname, '..');
 const CLI = path.join(PKG_ROOT, 'bin', 'cli.js');
-const EXPECTED_VERSION = '0.4.4';
+// Derived, never typed: a patch bump used to leave this literal behind and
+// fail the suite on every release for no product reason.
+const EXPECTED_VERSION = JSON.parse(readFileSync(path.join(PKG_ROOT, 'package.json'), 'utf8')).version;
 const EXPECTED_AGENTS = ['orchestrator', 'worker', 'verifier', 'researcher', 'ops', 'critic', 'historian', 'cleaner', 'maintainer'];
 const EXPECTED_SKILLS = ['close', 'evolve', 'fast', 'goal', 'search', 'swarm'];
 
@@ -176,7 +178,7 @@ function walkFiles(dir, out = []) {
 
 /* ---------------- test 1: --version ---------------- */
 
-test('--version prints 0.4.4', { skip: WIN_SKIP }, () => {
+test(`--version prints ${EXPECTED_VERSION}`, { skip: WIN_SKIP }, () => {
   const r = runCli(['--version']);
   assert.equal(r.status, 0, `exit was ${r.status}: ${r.stderr}`);
   assert.equal((r.stdout || '').trim(), EXPECTED_VERSION);
@@ -502,7 +504,7 @@ test('0.4.x upgrade drops plugin residue, archives an edited template, and keeps
   writeFileSync(path.join(cfgB, 'opencode.jsonc'), JSON.stringify({ model: 'keep-me', plugins: ['oc-flight-deck', 'adopter-plugin'] }, null, 2));
   writeFileSync(path.join(cfgB, 'state', 'template.md'), editedBytes);
   writeFileSync(path.join(cfgB, 'oc-harness-setup.manifest.json'), JSON.stringify({
-    package: 'oc-harness-setup', version: '0.4.4', created: new Date().toISOString(),
+    package: 'oc-harness-setup', version: EXPECTED_VERSION, created: new Date().toISOString(),
     configDir: cfgB,
     files: [
       { path: 'state/template.md', hash: origHash, action: 'written' },
@@ -742,7 +744,7 @@ test('a packed tarball installs and passes the doctor (no dotfile rename)', { sk
 
     const v = spawnSync(process.execPath, [path.join(installedRoot, 'bin', 'cli.js'), '--version'], { encoding: 'utf8' });
     assert.equal(v.status, 0, `installed --version exit was ${v.status}: ${v.stderr}`);
-    assert.equal((v.stdout || '').trim(), '0.4.4');
+    assert.equal((v.stdout || '').trim(), EXPECTED_VERSION);
 
     cfg = mkdtempSync(path.join(os.tmpdir(), 'oc-pack-cfg-'));
     assert.ok(path.resolve(cfg).startsWith(path.resolve(os.tmpdir())), 'cfg stays under os.tmpdir() — never the real config');

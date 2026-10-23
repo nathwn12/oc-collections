@@ -123,6 +123,8 @@ The package declares no scripts; its own check is the two commands its CI runs (
 
 What moved: the source repo's tracked tree, except `.github/**` (repo-level workflows) and `bun.lock` (the root lockfile is the only lockfile). Byte-identical otherwise; nothing was changed during the move. It is excluded from `workspaces` (`packages/*`), so `npm install` never touches it.
 
+Removed 2026-10-23: the npm package was deleted, so the archived tree was removed from this repo as well; `git log -- archive/oc-todo` retains it at `8a1ed50`.
+
 ## 2026-10-22 — `gladius@0.4.2` + `gladius-mcp@0.4.2`
 
 | Field | Value |
@@ -174,7 +176,7 @@ Not carried over: `.github/workflows/*` — repo-level; GitHub only runs the mon
 - `nathwn12/oc-harness-setup` — its package lives at `packages/oc-harness-setup/`.
 - `nathwn12/oc-unified` — its package lives at `packages/oc-unified/` (set `private`; source-only per the owner's ruling).
 - `nathwn12/rea-shim` — its package lives at `packages/rea-shim/`.
-- `nathwn12/oc-todo` — EOL; archived at `archive/oc-todo/` only.
+- `nathwn12/oc-todo` — EOL; deleted from npm and removed from this repo on 2026-10-23 (git history retains it).
 - `nathwn12/gladius` — its crate lives at `crates/gladius/`, its launcher at `packages/gladius-mcp/`.
 - `nathwn12/puppet` — its crate lives at `crates/puppet/`, its launcher at `packages/puppet-mcp/`.
 
@@ -199,7 +201,7 @@ Git and local-clone install routes were removed from every package README and `I
 
 `gladius-mcp` and `puppet-mcp` are deliberately deferred: their `engine-manifest.json` carries `RELEASE_WORKFLOW_FILLS_THIS` placeholders that only their own release pipeline fills after building the Rust engine and uploading the archive. Publishing from this workflow would ship a launcher that fails closed at runtime, so they stay on their original repos' release lanes until that path is proven.
 
-`oc-unified` and `oc-todo` are excluded as deprecated/private per the owner's 2026-10-22 ruling: `oc-unified` is `private: true` and has never been on npm; `oc-todo` is end-of-life because OpenCode ships an official todo feature (2.1 restored the built-in `todowrite`), so the official feature replaces the package and its npm entry is deprecated. Both stay in the repo as source only (`packages/oc-unified/`, `archive/oc-todo/`) and are not releasable until the owner revisits the ruling; the single allowlist lives in `scripts/release-target.mjs`.
+`oc-unified` is excluded as deprecated/private per the owner's 2026-10-22 ruling: it is `private: true` and has never been on npm, so it stays in the repo as source only (`packages/oc-unified/`) and is not releasable until the owner revisits the ruling; the single allowlist lives in `scripts/release-target.mjs`. `oc-todo` was end-of-life for the same reason and was deleted from npm and from this repo on 2026-10-23.
 
 Publishing is OIDC trusted publishing only (`id-token: write`, `--provenance`, no token). `publishConfig` audit of the four releasable packages: `@nathwn12/oc-bifrost` is scoped and declares `access: public`; `oc-flight-deck` and `oc-harness-setup` are unscoped and declare it too; `rea-shim` is unscoped and relies on the default public access. No manifest was changed.
 
@@ -207,20 +209,20 @@ Exercised: the lane has released four packages — `@nathwn12/oc-bifrost@1.6.10`
 
 ## Gate changes after the phase-1 imports
 
-- **Vocabulary guard scope.** Both halves of the check now cover the index's own files only: `packages/` is excluded because imported package trees are their own published documents (oc-unified ships the retired names as product vocabulary; oc-harness-setup's shipped contract uses one), `crates/` is excluded because the imported Rust sources and design docs use the guarded words as ordinary English (including one research note that names the retired term), and `archive/` is excluded because it is imported history. This is a deliberate, owner-visible narrowing, not a silent drop.
-- **Implementation-file assertion.** `.ts`/`.tsx` are allowed under `packages/` and `archive/`; a loose one at the root still fails.
+- **Vocabulary guard scope.** Both halves of the check now cover the index's own files only: `packages/` is excluded because imported package trees are their own published documents (oc-unified ships the retired names as product vocabulary; oc-harness-setup's shipped contract uses one), and `crates/` is excluded because the imported Rust sources and design docs use the guarded words as ordinary English (including one research note that names the retired term). This is a deliberate, owner-visible narrowing, not a silent drop.
+- **Implementation-file assertion.** `.ts`/`.tsx` are allowed under `packages/`; a loose one at the root still fails.
 - **Bun in CI.** `check.yml` installs bun (pinned 1.4.2) because oc-flight-deck and oc-unified run their own checks with it.
 - **Root fan-out.** `scripts/workspace-plan.mjs` (imported by `workspace-run.mjs` and `pack-check.mjs`) names each package's own exact check/build/test commands instead of assuming one script name (oc-bifrost calls its build `compile`, oc-unified has no `check`, rea-shim has no scripts). Both runners fail closed: zero workspaces or an unplanned workspace exits 1.
 - **Pack guard.** `scripts/pack-check.mjs` packs every workspace package and verifies the tarball: no forbidden entries, byte-equal manifest, declared entry points present, and every `files` entry shipped. It exits 1 on zero workspaces or an unplanned workspace. `npm run pack:check` runs check + build first; a bare `npm pack` can still produce a dist-less tarball, which the guard reports but cannot intercept.
 - **Pack guard in CI.** `.github/workflows/check.yml` runs `npm run pack:check` after the workspace check, so the strongest guard runs on every push and pull request.
-- **Index check split.** `scripts/check-index.ps1` now has `--structural` (offline: table names against the repo's package inventory; runs on every PR) and `--registry` (network: published packages and claimed versions; post-publish only, scoped with `--package` in the release workflow). `scripts/index-registry.ps1` records which packages are released from here — the four npm packages assert `repository` names `nathwn12/oc-collections` — and which are not (`oc-todo` EOL; `gladius-mcp`, `puppet-mcp` original release lanes), with a reason per entry; those are existence/version-only. The self-test proves the structural red path and both repository-assertion directions offline.
+- **Index check split.** `scripts/check-index.ps1` now has `--structural` (offline: table names against the repo's package inventory; runs on every PR) and `--registry` (network: published packages and claimed versions; post-publish only, scoped with `--package` in the release workflow). `scripts/index-registry.ps1` records which packages are released from here — the four npm packages assert `repository` names `nathwn12/oc-collections` — and which are not (`gladius-mcp`, `puppet-mcp` original release lanes), with a reason per entry; those are existence/version-only. The self-test proves the structural red path and both repository-assertion directions offline.
 - **Launcher checks and Cargo.** `scripts/check-launcher.mjs` validates each npx launcher offline (bin exists, every `files` entry exists, manifest names/versions agree, `runtime.source` is an immutable GitHub release URL, sha256 slots are placeholder-or-hex), and both launchers are in the workspace plan. `cargo metadata --no-deps` resolves the two crates; CI still runs only the npm checks (no Rust toolchain step).
 
 ## Retired repositories
 
 The four published packages — `@nathwn12/oc-bifrost`, `oc-flight-deck`, `oc-harness-setup`, `rea-shim` — now build, tag and publish from `oc-collections` only. Their former repositories — `nathwn12/oc-bifrost`, `nathwn12/oc-flight-deck`, `nathwn12/oc-harness-setup`, `nathwn12/rea-shim` — are archived and private. An archived repository stays readable, its npm metadata stays immutable, and nothing resolves it at install time.
 
-`nathwn12/oc-unified` (archived, private, never published) and `nathwn12/oc-todo` (end-of-life, archived, private) are retained as history.
+`nathwn12/oc-unified` (archived, private, never published) is retained as history; `nathwn12/oc-todo` (end-of-life, archived, private) was deleted from npm and from this repo on 2026-10-23 and survives only in git history.
 
 `nathwn12/gladius` and `nathwn12/puppet` stay public and unarchived: they are the release-asset source for the MCP engine binaries, and archiving either would disable the Actions lane that builds the next engine.
 

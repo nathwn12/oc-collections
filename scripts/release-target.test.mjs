@@ -76,7 +76,3 @@ test("allowlist: exactly the four releasable packages", () => {
 test("resolvePackage: oc-unified is not releasable (deprecated/private ruling)", () => {
   assert.throws(() => resolvePackage("oc-unified"), /not a releasable package/)
 })
-
-test("resolvePackage: oc-todo is not releasable (EOL ruling)", () => {
-  assert.throws(() => resolvePackage("oc-todo"), /not a releasable package/)
-})

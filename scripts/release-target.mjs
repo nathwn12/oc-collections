@@ -25,8 +25,7 @@ import { fileURLToPath } from "node:url"
 // Releasable packages. Everything else is source-only.
 //
 // Deprecated/private packages are excluded per the owner's 2026-10-22 ruling:
-// oc-unified (private: true, never published) and oc-todo (EOL because
-// OpenCode ships an official todo feature). Re-admitting one is a one-line
+// oc-unified (private: true, never published). Re-admitting it is a one-line
 // change here; the dispatch choice list in .github/workflows/release.yml must
 // match.
 export const ALLOWED = [

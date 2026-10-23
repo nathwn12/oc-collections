@@ -15,6 +15,10 @@
 #     names it,
 #   * a fixture whose table carries a row for an omitted package exits 1 and
 #     names the double claim,
+#   * a fixture whose released package shows a stale version exits 1 and names
+#     the mismatch,
+#   * a fixture whose package released elsewhere shows a version literal exits 1
+#     and names the row,
 #   * the real README exits 0 with a non-empty structural summary,
 #   * a released-from-here package with stale repository metadata fails,
 #   * the same package with monorepo metadata passes,
@@ -84,8 +88,8 @@ try {
     # used; any other label still becomes a phantom package. Same nine rows.
     $tableLines = @($realReadme -split "`r?`n" | Where-Object { $_ -match '^\|' })
     $headerCases = @(
-        [pscustomobject]@{ Label = 'Package'; Exit = 0; Summary = '^structural: rows=7 packages=7 omitted=2 missing=0 extra=0 failed=0$' }
-        [pscustomobject]@{ Label = 'Bogus'; Exit = 1; Summary = '^structural: rows=8 packages=7 omitted=2 missing=0 extra=1 failed=1$' }
+        [pscustomobject]@{ Label = 'Package'; Exit = 0; Summary = '^structural: rows=7 packages=7 omitted=1 missing=0 extra=0 failed=0$' }
+        [pscustomobject]@{ Label = 'Bogus'; Exit = 1; Summary = '^structural: rows=8 packages=7 omitted=1 missing=0 extra=1 failed=1$' }
     )
     foreach ($case in $headerCases) {
         $fixture = Join-Path $temp ('header-' + $case.Label + '.md')
@@ -126,26 +130,29 @@ try {
     function Set-FakePackage([string]$name) {
         $dir = Join-Path $fakeRoot ('packages/' + $name)
         New-Item -ItemType Directory -Force -Path $dir | Out-Null
-        Set-Content -LiteralPath (Join-Path $dir 'package.json') -Encoding utf8 -Value ('{ "name": "' + $name + '" }')
+        # The structural check compares a released package's version cell with
+        # its manifest, and resolves scope by the published name, so the fake
+        # tree carries both from the real manifest: a scoped package must keep
+        # its scope or its lane becomes unclassifiable.
+        $realManifest = Join-Path $PSScriptRoot '..' 'packages' $name 'package.json'
+        $real = Get-Content -LiteralPath $realManifest -Raw | ConvertFrom-Json
+        Set-Content -LiteralPath (Join-Path $dir 'package.json') -Encoding utf8 -Value ('{ "name": "' + $real.name + '", "version": "' + $real.version + '" }')
     }
     foreach ($name in $fakePackages) { Set-FakePackage $name }
-    $fakeArchived = Join-Path $fakeRoot 'archive/oc-todo'
-    New-Item -ItemType Directory -Force -Path $fakeArchived | Out-Null
-    Set-Content -LiteralPath (Join-Path $fakeArchived 'package.json') -Encoding utf8 -Value '{ "name": "oc-todo" }'
     $shownFixture = Join-Path $temp 'omitted-shown.md'
     Set-Content -LiteralPath $shownFixture -Encoding utf8 -Value $realReadme
 
-    # 3c-i. Both omitted, both still in the tree: green, and the count is reported.
+    # 3c-i. The omitted package still in the tree: green, and the count is reported.
     $omittedOut = @(& pwsh -NoProfile -File $fakeCheck --structural -Path $shownFixture 2>&1)
     $omittedExit = $LASTEXITCODE
     $omittedSummary = ($omittedOut | Where-Object { $_ -match '^structural:' } | Select-Object -Last 1)
-    Write-Output ('omission control (both omitted, both present): exit={0}; {1}' -f $omittedExit, $omittedSummary)
+    Write-Output ('omission control (omitted, present): exit={0}; {1}' -f $omittedExit, $omittedSummary)
     if ($omittedExit -ne 0) {
         Write-Output 'FAIL: a table matching the inventory less its omissions exited non-zero'
         $fail++
     }
-    if ($omittedSummary -notmatch '^structural: rows=7 packages=7 omitted=2 missing=0 extra=0 failed=0$') {
-        Write-Output 'FAIL: the omission pass did not report omitted=2 with no failures'
+    if ($omittedSummary -notmatch '^structural: rows=7 packages=7 omitted=1 missing=0 extra=0 failed=0$') {
+        Write-Output 'FAIL: the omission pass did not report omitted=1 with no failures'
         $fail++
     }
 
@@ -187,9 +194,57 @@ try {
         Write-Output 'FAIL: the double-claim failure was not named'
         $fail++
     }
-    if ($doubleSummary -notmatch '^structural: rows=8 packages=7 omitted=2 missing=0 extra=0 failed=1$') {
+    if ($doubleSummary -notmatch '^structural: rows=8 packages=7 omitted=1 missing=0 extra=0 failed=1$') {
         Write-Output 'FAIL: the double-claim run did not isolate its own failure'
         $fail++
+    }
+
+    # 3d. Version cells are claims. A released package must show its manifest
+    # version; a package released elsewhere must show no version literal at all.
+    function Set-VersionCell([string]$text, [string]$name, [string]$cell) {
+        $out = foreach ($line in ($text -split "`r?`n")) {
+            if ($line -match ('^\| ' + [regex]::Escape($name) + ' \|')) {
+                $cells = $line.Trim().Trim('|').Split('|')
+                $cells[2] = ' ' + $cell + ' '
+                '|' + ($cells -join '|') + '|'
+            } else { $line }
+        }
+        return ($out -join "`n")
+    }
+    $versionCases = @(
+        [pscustomobject]@{
+            What   = 'released package, stale version cell'
+            Name   = 'oc-harness-setup'
+            Cell   = '`0.0.1`'
+            Needle = 'does not match manifest'
+        }
+        [pscustomobject]@{
+            What   = 'package released elsewhere, version literal'
+            Name   = 'puppet-mcp'
+            Cell   = '`4.5.5`'
+            Needle = 'does not release it'
+        }
+    )
+    foreach ($case in $versionCases) {
+        $versionFixture = Join-Path $temp ('version-' + $case.Name + '.md')
+        Set-Content -LiteralPath $versionFixture -Encoding utf8 -Value (Set-VersionCell $realReadme $case.Name $case.Cell)
+        $versionOut = @(& pwsh -NoProfile -File $fakeCheck --structural -Path $versionFixture 2>&1)
+        $versionExit = $LASTEXITCODE
+        $versionSummary = ($versionOut | Where-Object { $_ -match '^structural:' } | Select-Object -Last 1)
+        Write-Output ('version guard ({0}): exit={1}; {2}' -f $case.What, $versionExit, $versionSummary)
+        $versionOut | Where-Object { $_ -match ('FAIL ' + $case.Name) } | ForEach-Object { Write-Output ('  ' + $_) }
+        if ($versionExit -eq 0) {
+            Write-Output ('FAIL: {0} exited 0' -f $case.What)
+            $fail++
+        }
+        if (-not ($versionOut -match [regex]::Escape($case.Name) -and $versionOut -match $case.Needle)) {
+            Write-Output ('FAIL: {0} was not named as {1}' -f $case.What, $case.Needle)
+            $fail++
+        }
+        if ($versionSummary -notmatch 'failed=1$') {
+            Write-Output ('FAIL: {0} did not report one failure' -f $case.What)
+            $fail++
+        }
     }
 
     # 4. Registry scope: the repository assertion in both directions, offline.
@@ -197,7 +252,7 @@ try {
     $scopeCases = @(
         [pscustomobject]@{ Name = 'released package, stale repository metadata'; Expected = $false; Actual = (Test-RepositoryMetadata '@nathwn12/oc-bifrost' 'git+https://github.com/nathwn12/oc-bifrost.git') }
         [pscustomobject]@{ Name = 'released package, monorepo metadata'; Expected = $true; Actual = (Test-RepositoryMetadata '@nathwn12/oc-bifrost' 'git+https://github.com/nathwn12/oc-collections.git') }
-        [pscustomobject]@{ Name = 'non-released package, original metadata'; Expected = $true; Actual = (Test-RepositoryMetadata 'oc-todo' 'git+https://github.com/nathwn12/oc-todo.git') }
+        [pscustomobject]@{ Name = 'non-released package, original metadata'; Expected = $true; Actual = (Test-RepositoryMetadata 'gladius-mcp' 'git+https://github.com/nathwn12/gladius-mcp.git') }
         [pscustomobject]@{ Name = 'unclassified package'; Expected = $false; Actual = (Test-RepositoryMetadata 'mystery-pkg' 'git+https://github.com/nathwn12/oc-collections.git') }
     )
     foreach ($case in $scopeCases) {
