@@ -19,10 +19,8 @@ jobs:
         run: |
           git ls-files --error-unmatch README.md LICENSE CHANGELOG.md MIGRATIONS.md
           git ls-files --error-unmatch packages/oc-bifrost/package.json
-          git ls-files --error-unmatch archive/oc-todo/package.json
-          # Implementation files live in packages/ (and the archive/ copy);
-          # the root stays an index.
-          test "$(git ls-files '*.ts' '*.tsx' | grep -v -E '^(packages|archive)/' | wc -l)" -eq 0
+          # Implementation files live in packages/; the root stays an index.
+          test "$(git ls-files '*.ts' '*.tsx' | grep -v -E '^packages/' | wc -l)" -eq 0
       - name: Index structure (offline)
         # The structural half needs no registry: it checks the table names
         # against the repo's package inventory. The self-test proves it can go
@@ -42,12 +40,12 @@ jobs:
           # byte-identical to upstream, and the imported Rust sources and
           # design docs use the words as ordinary English. Both guards cover
           # the index's own files (root docs, workflows, scripts), not
-          # packages/, crates/, or the archived EOL copy.
-          if git grep -I -n -i -E 'fl[e]et|l[i]feline|m[a]sthead' -- . ':(exclude)packages' ':(exclude)crates' ':(exclude)archive'; then
+          # packages/ or crates/.
+          if git grep -I -n -i -E 'fl[e]et|l[i]feline|m[a]sthead' -- . ':(exclude)packages' ':(exclude)crates'; then
             echo "internal name found in this repo's own files" >&2
             exit 1
           fi
-          if git grep -I -n -i -E 'mod[u]le host|supers[e]d|unpubl[i]sh|noth[i]ng mounts' -- . ':(exclude)packages' ':(exclude)crates' ':(exclude)archive'; then
+          if git grep -I -n -i -E 'mod[u]le host|supers[e]d|unpubl[i]sh|noth[i]ng mounts' -- . ':(exclude)packages' ':(exclude)crates'; then
             echo "internal history found in this repo's own files" >&2
             exit 1
           fi

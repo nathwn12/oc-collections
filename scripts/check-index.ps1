@@ -1,12 +1,14 @@
 # check-index.ps1 - the README index, checked in two honest halves.
 #
 #   --structural (default, offline)
-#     Every table name is well-formed, and the set of names matches the repo's
-#     package inventory exactly, less the reasoned omissions declared in
-#     $Omitted below: workspace packages, archived packages, and the root
-#     manifest. A package added, renamed, or removed without the table fails
-#     here, as does an omitted package that disappears from the tree or appears
-#     in the table anyway. No network, so it runs on every pull request.
+#     Every table name is well-formed; a version cell is a claim (a package this
+#     monorepo releases must show its workspace manifest version, and a package
+#     released elsewhere must show no version literal at all); and the set of
+#     names matches the repo's package inventory exactly, less the reasoned
+#     omissions declared in $Omitted below: a workspace package and the root
+#     manifest. A package added, renamed, or removed without the table fails here, as does an omitted package that disappears
+#     from the tree or appears in the table anyway. No network, so it runs on
+#     every pull request.
 #
 #   --registry (network, post-publish)
 #     Every listed package resolves on the npm registry and every claimed
@@ -71,7 +73,6 @@ $ua = @{ 'User-Agent' = 'oc-collections-index-check/1.0' }
 # failure too, so the table and this list can never both claim the same package.
 $Omitted = @{
     'oc-unified' = 'private; never published'
-    'oc-todo'    = 'end-of-life; archived'
 }
 
 # The released/external scope table and the repository-metadata assertion.
@@ -119,8 +120,13 @@ if ($mode -eq 'structural') {
 
     $rootDir = Join-Path $PSScriptRoot '..'
     $inventory = New-Object System.Collections.Generic.List[string]
+    $versions = @{}
+    $manifests = @{}
     $rootPkg = Get-Content (Join-Path $rootDir 'package.json') -Raw | ConvertFrom-Json
-    $inventory.Add((Get-PackageLabel $rootPkg.name))
+    $rootLabel = Get-PackageLabel $rootPkg.name
+    $inventory.Add($rootLabel)
+    $versions[$rootLabel] = $rootPkg.version
+    $manifests[$rootLabel] = $rootPkg.name
     foreach ($base in @('packages', 'archive')) {
         $dir = Join-Path $rootDir $base
         if (-not (Test-Path $dir)) { continue }
@@ -128,10 +134,46 @@ if ($mode -eq 'structural') {
             $manifest = Join-Path $child.FullName 'package.json'
             if (-not (Test-Path $manifest)) { continue }
             $pkg = Get-Content $manifest -Raw | ConvertFrom-Json
-            $inventory.Add((Get-PackageLabel $pkg.name))
+            $label = Get-PackageLabel $pkg.name
+            $inventory.Add($label)
+            $versions[$label] = $pkg.version
+            $manifests[$label] = $pkg.name
         }
     }
     $inventory = @($inventory | Sort-Object -Unique)
+
+    # A version cell is a claim about published bytes. Only this monorepo's own
+    # releases have a manifest here to compare against, so their cell must name
+    # that exact version, and a package on another release lane must carry no
+    # version literal at all: a literal prints this repo's belief about another
+    # repo's release, which is how a stale 0.4.2 outlived its 0.4.4. Scope is
+    # keyed by the published name, which is not always the table label.
+    foreach ($row in $rows) {
+        $name = $row.Name
+        # A malformed name already failed above; one row earns one failure.
+        if ($name -notmatch '^[a-z0-9][a-z0-9._-]*$') { continue }
+        $cell = if ($row.Cells.Count -ge 3) { $row.Cells[2].Trim() } else { '' }
+        $pin = if ($cell -match '`([^`]+)`') { $Matches[1] } else { $null }
+        $published = if ($manifests.ContainsKey($name)) { $manifests[$name] } else { $name }
+        $scope = (Get-RegistryScope $published).Scope
+        if ($scope -eq 'released') {
+            if (-not $versions.ContainsKey($name)) {
+                Write-Output ("FAIL {0,-20} versions itself here but has no workspace manifest" -f $name)
+                $fail++
+            } elseif (-not $pin) {
+                Write-Output ("FAIL {0,-20} version cell names no version (manifest {1})" -f $name, $versions[$name])
+                $fail++
+            } elseif ($pin -ne $versions[$name]) {
+                Write-Output ("FAIL {0,-20} version {1} does not match manifest {2}" -f $name, $pin, $versions[$name])
+                $fail++
+            } else {
+                Write-Output ("PASS {0,-20} version {1} matches its manifest" -f $name, $pin)
+            }
+        } elseif ($cell -match '\d+\.\d+\.\d+') {
+            Write-Output ("FAIL {0,-20} shows version {1} but this monorepo does not release it" -f $name, $cell)
+            $fail++
+        }
+    }
 
     # An omission list that outlives its package would hide a deletion instead of
     # recording one, so every omitted name must still be in the tree.

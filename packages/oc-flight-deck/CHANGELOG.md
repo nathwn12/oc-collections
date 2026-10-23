@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.20.4] - 2026-10-23
+
+- Pipeline-verification patch; no functional change.
+
 ## [0.20.3] - 2026-10-23
 
 - `@opencode/plugin` is no longer a runtime dependency. It moves to an optional peer range (`>=2.1.1 <3`), with 2.1.3 as a dev dependency for types, so an install no longer carries its own copy of the host module.

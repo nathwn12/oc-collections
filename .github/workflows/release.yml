@@ -13,10 +13,9 @@
 #     pipeline fills after building the Rust engine and uploading the archive.
 #     Publishing from this workflow would ship a launcher that fails closed at
 #     runtime. They remain on their original repos' release lanes.
-#   oc-unified, oc-todo - deprecated/private per the owner's 2026-10-22 ruling
-#     (oc-unified is private: true; oc-todo is EOL because OpenCode ships an
-#     official todo feature). They stay in the repo as source only and are not
-#     releasable until the owner revisits the ruling.
+#   oc-unified - private per the owner's 2026-10-22 ruling (private: true).
+#     It stays in the repo as source only and is not releasable until the
+#     owner revisits the ruling.
 #
 # OIDC trusted publishing only: id-token: write, --provenance; no auth-token
 # variable, no secrets, no OTP.

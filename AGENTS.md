@@ -22,7 +22,7 @@ pwsh -NoProfile -File scripts/check-index.selftest.ps1
 
 It asserts a zero-row fixture and a phantom-package fixture exit non-zero, and the real README exits `0` — all offline.
 
-The registry half is the post-publish check (`--registry`): it verifies every listed package resolves and every claimed version is published. The four packages released from this repo must also name this monorepo in their registry metadata; `oc-todo`, `gladius-mcp`, and `puppet-mcp` are existence/version-only by design (the table and its reasons live in `scripts/index-registry.ps1`). It cannot pass before a release.
+The registry half is the post-publish check (`--registry`): it verifies every listed package resolves and every claimed version is published. The four packages released from this repo must also name this monorepo in their registry metadata; `gladius-mcp` and `puppet-mcp` are existence/version-only by design (the table and its reasons live in `scripts/index-registry.ps1`). It cannot pass before a release.
 
 Check the packages from the repo root:
 
@@ -50,7 +50,6 @@ npm run check
 - `Cargo.toml` — the root Cargo workspace for the Rust MCP crates.
 - `packages/<name>/` — one family package per directory; each keeps its own manifest, tests, and version line.
 - `crates/<name>/` — one Rust MCP server per crate; each keeps its own manifest and toolchain file.
-- `archive/oc-todo/` — the EOL package's tracked tree, kept as history; not a workspace.
 - `.github/workflows/check.yml` — index integrity, the offline doc check, the vocabulary guard, and the workspace-wide check.
 - `assets/signature.svg` — shared footer signature.
 - `.gitattributes` — line-ending and export settings.
@@ -73,7 +72,7 @@ The table promises that every repo link reaches a live repository, every npm lin
 
 The root manifest is `private: true` and is never published. The repo's own release is an annotated tag `v<version>` recording a state of the index — this is not a package release tag; package releases use `<package>@<version>` below.
 
-Package releases are tag-driven per package: push `<package>@<version>` (the scoped package is `@nathwn12/oc-bifrost@<version>`), or dispatch the `release` workflow with `dry_run` left on. `.github/workflows/release.yml` has run four times, one package per run: `@nathwn12/oc-bifrost@1.6.10`, `oc-flight-deck@0.20.2`, `oc-harness-setup@0.4.4`, and `rea-shim@0.1.2`, each released through OIDC trusted publishing with provenance, each carrying two attestations, and `latest` correct on all four. Every publish step succeeded, and every run still concluded `failure` at one step: `Verify the released package on the registry` ran about 1.6 s after publish and lost npm's propagation race. That step now retries only the not-published shape (17 attempts, about 7m15s), which no real release has exercised yet; the `dry_run` dispatch path has never run either. `gladius-mcp` and `puppet-mcp` stay on their original release lanes until their engine-manifest placeholders are handled here. `oc-unified` (private) and `oc-todo` (EOL: OpenCode ships an official todo feature) are source-only and not releasable until the owner revisits that ruling. See `MIGRATIONS.md`.
+Package releases are tag-driven per package: push `<package>@<version>` (the scoped package is `@nathwn12/oc-bifrost@<version>`), or dispatch the `release` workflow with `dry_run` left on. `.github/workflows/release.yml` has run four times, one package per run: `@nathwn12/oc-bifrost@1.6.10`, `oc-flight-deck@0.20.2`, `oc-harness-setup@0.4.4`, and `rea-shim@0.1.2`, each released through OIDC trusted publishing with provenance, each carrying two attestations, and `latest` correct on all four. Every publish step succeeded, and every run still concluded `failure` at one step: `Verify the released package on the registry` ran about 1.6 s after publish and lost npm's propagation race. That step now retries only the not-published shape (17 attempts, about 7m15s), which no real release has exercised yet; the `dry_run` dispatch path has never run either. `gladius-mcp` and `puppet-mcp` stay on their original release lanes until their engine-manifest placeholders are handled here. `oc-unified` (private) is source-only and not releasable until the owner revisits that ruling. See `MIGRATIONS.md`.
 
 ## Guardrails
 
