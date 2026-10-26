@@ -1,5 +1,9 @@
 # Changelog
 
+## [Unreleased]
+
+- `rea-shim`: `--bootstrap` now follows the exact upstream release's Ghidra policy and official release data instead of a shim version table; the JDK minimum comes from the installed Ghidra; extraction, download-preservation and exact-version gates were hardened; docs and an offline contract suite were updated. No version bump and no release claim.
+
 ## [0.2.6] - 2026-10-22
 
 - Converted the repo to an npm-workspaces monorepo: a private root `package.json` with fan-out `check`/`build`/`test` scripts, a root lockfile, and a workspace-wide check in `.github/workflows/check.yml`.
