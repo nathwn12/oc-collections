@@ -1,6 +1,6 @@
 {
   "name": "rea-shim",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "description": "Unofficial personal-use one-line MCP launcher and explicit bootstrapper for rea: serves upstream rea-agents over stdio, and can install the official JDK and Ghidra the exact upstream release requires. Ships no upstream code. All credit to the original rea authors.",
   "license": "MIT",
   "repository": {

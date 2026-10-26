@@ -1,28 +1,16 @@
 # Changelog
 
-## [Unreleased]
+## [0.2.0] - 2026-10-26
 
-### Changed
+### Added
 
-- `--bootstrap` now follows upstream instead of a shim version table: it reads the accepted Ghidra release line from the exact `rea-agents` release it installs, selects the latest official NSA Ghidra release in that line, and takes the archive SHA-256 from official GitHub release data. Missing policy, artifact or published hash fails the run; there is no fallback to an older shim pin.
-- The JDK minimum is read from the installed Ghidra's `application.properties`, not a shim constant. Bootstrap installs the latest official Eclipse Temurin x64 Windows JDK for that minimum and verifies the checksum published by the Adoptium API.
-- The `--ghidra <version>` override is gone. Installing an upstream-unsupported line is not a feature; update upstream instead.
-- Bootstrap installs one exact, immutable `rea-agents` release into its own prefix and runs all three upstream checks against that same version. No dist-tag is accepted for bootstrap.
-- `engines` now matches the current upstream `rea-agents` Node range.
-- This supersedes the earlier unreleased pinned-pair design in the working tree.
+- `--bootstrap`: one explicit command takes a clean Windows x64 machine with no Java and no Ghidra to a checked upstream setup. It installs one exact `rea-agents` release, the official NSA Ghidra release that release accepts, and the Eclipse Temurin JDK that Ghidra requires, then runs the upstream doctor, MCP inventory, and a Ghidra analysis against that same set. The Ghidra archive and JDK are checked against the checksums published with their official releases.
+- The bootstrap follows upstream release data rather than a shim version table: the Ghidra line comes from the exact `rea-agents` release, the JDK minimum comes from that Ghidra's `application.properties`, and the Node range matches the current upstream release.
 
 ### Fixed
 
-- Archive extraction refuses traversal, absolute paths, NTFS streams, reserved names, links, devices and other non-regular entries, and checks existing ancestors and the extracted tree for symlinks, junctions and reparse points.
-- A download never overwrites or deletes a pre-existing destination; only a file this run created is cleaned up on failure. A mismatched cache entry is reported and preserved.
-- The Ghidra provider gate requires the observed provider version and every Ghidra provider check, but no longer fails on unrelated skill or registration setup checks.
-- The MCP gate requires the observed upstream package and server version; the analysis gate requires the observed Ghidra provider version. Neither is optional.
-- `--doctor` remains read-only and never creates the bootstrap root.
-
-### Verification
-
-- Added an offline contract suite (`test/bootstrap.test.js`) covering official-release selection, hash extraction, archive safety, installer refusal paths, exact-version gates and the read-only CLI. It uses fixtures and injected runners; it does not download anything or start a real engine.
-- Runtime acceptance remains a clean Windows Sandbox run with no Java or Ghidra installed; the recipe is in `docs/GUIDE.md`. This entry does not claim that run has been performed.
+- Windows short paths and path aliases are accepted: a DOS 8.3 name, a different letter case, or a substituted drive is treated as the directory it names, not refused as a reparse point. Real links, junctions, and other redirections are still refused.
+- Archive extraction refuses traversal, absolute paths, NTFS alternate data streams, reserved names, links, and other non-regular entries. A download never overwrites an existing file, and a mismatched cache entry is reported and kept.
 
 ## [0.1.4] - 2026-10-23
 
