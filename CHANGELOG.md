@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-- `rea-shim`: `--bootstrap` now follows the exact upstream release's Ghidra policy and official release data instead of a shim version table; the JDK minimum comes from the installed Ghidra; extraction, download-preservation and exact-version gates were hardened; docs and an offline contract suite were updated. No version bump and no release claim.
+- `rea-shim`: `--bootstrap` now follows the exact upstream release's Ghidra policy and official release data instead of a shim version table; the JDK minimum comes from the installed Ghidra; extraction, download-preservation and exact-version gates were hardened; docs and an offline contract suite were updated. Ships as `rea-shim@0.2.0`; the root version is unchanged. See [packages/rea-shim/CHANGELOG.md](packages/rea-shim/CHANGELOG.md).
 
 ## [0.2.6] - 2026-10-22
 
