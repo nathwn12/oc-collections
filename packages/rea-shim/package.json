@@ -1,7 +1,7 @@
 {
   "name": "rea-shim",
   "version": "0.1.4",
-  "description": "Unofficial personal-use one-line MCP launcher for rea: resolves a JDK 21+ and Ghidra, then serves upstream rea-agents over stdio at run time. Ships no upstream code. All credit to the original rea authors.",
+  "description": "Unofficial personal-use one-line MCP launcher and explicit bootstrapper for rea: serves upstream rea-agents over stdio, and can install the official JDK and Ghidra the exact upstream release requires. Ships no upstream code. All credit to the original rea authors.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -10,13 +10,14 @@
   },
   "homepage": "https://github.com/nathwn12/oc-collections/tree/main/packages/rea-shim",
   "engines": {
-    "node": ">=22.14.0"
+    "node": "^22.23.4 || ^24.22.1 || >=26.12.1"
   },
   "bin": {
     "rea-shim": "bin/rea-shim.js"
   },
   "files": [
     "bin/",
+    "lib/",
     "README.md",
     "LICENSE",
     "CHANGELOG.md",
