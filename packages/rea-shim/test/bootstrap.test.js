@@ -171,6 +171,25 @@ function realpathLower(target) {
   return fs.realpathSync.native(target).replace(/[\\/]+$/, '').toLowerCase();
 }
 
+// The DOS 8.3 short name of an existing directory, when the volume hands one
+// out, or null. GitHub's Windows runner exposes its profile as
+// `C:\Users\RUNNER~1` while the handle path is `C:\Users\runneradmin`; this
+// reproduces that pair hermetically so a validator that mistakes an alias for
+// a reparse point fails a test instead of the runner.
+function shortPathAlias(target) {
+  if (!WINDOWS) return null;
+  const result = spawnSync(`for %I in ("${target}") do @echo %~sI`, {
+    shell: true,
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: 30000,
+  });
+  if (result.status !== 0) return null;
+  const short = String(result.stdout || '').trim();
+  if (!short || short.toLowerCase() === String(target).toLowerCase()) return null;
+  return short;
+}
+
 function release(tag, assetNames, extra = {}) {
   return {
     tag_name: tag,
@@ -307,6 +326,52 @@ test('assertNoReparsePoints refuses a link inside an extracted tree', { skip: WI
   fs.mkdirSync(path.join(root, 'outside'));
   fs.symlinkSync(path.join(root, 'outside'), path.join(root, 'tree', 'link'), 'junction');
   assert.throws(() => support.assertNoReparsePoints(path.join(root, 'tree')), /symbolic link|reparse/);
+});
+
+test('a DOS 8.3 short path is canonicalized, not refused as a reparse point', { skip: WINDOWS_ONLY }, (t) => {
+  const longRoot = temporary(t, 'rea-shim-alias-long-root-');
+  const shortRoot = shortPathAlias(longRoot);
+  if (!shortRoot) return t.skip('this volume hands out no distinct 8.3 short name');
+
+  // The runner's shape: the same directory named by a short component whose
+  // handle path is the long name. Every write-path validator must accept it.
+  const nested = path.join(shortRoot, 'nested', 'deeper');
+  assert.doesNotThrow(() => support.assertPlainAncestors(nested, 'install root'));
+  support.ensurePlainDir(nested, 'install root');
+  assert.equal(realpathLower(nested), realpathLower(path.join(longRoot, 'nested', 'deeper')));
+});
+
+test('an aliased staging tree is not mistaken for an archive escape', { skip: WINDOWS_ONLY }, (t) => {
+  const longRoot = temporary(t, 'rea-shim-alias-long-root-');
+  const shortRoot = shortPathAlias(longRoot);
+  if (!shortRoot) return t.skip('this volume hands out no distinct 8.3 short name');
+
+  // Extraction staging named through a short component resolves inside itself;
+  // the alias must not read as an entry that escaped the staging directory.
+  fs.mkdirSync(path.join(longRoot, 'Ghidra', 'Features'), { recursive: true });
+  fs.writeFileSync(path.join(longRoot, 'Ghidra', 'application.properties'), 'application.version=12.2\n');
+  assert.doesNotThrow(() => support.assertNoReparsePoints(shortRoot));
+
+  // The alias stays tolerant only of spelling: a real link is still refused.
+  const outside = temporary(t, 'rea-shim-alias-outside-');
+  fs.symlinkSync(outside, path.join(shortRoot, 'link'), 'junction');
+  assert.throws(() => support.assertNoReparsePoints(shortRoot), /symbolic link|reparse/);
+});
+
+test('an ancestor junction resolving outside the trusted root is still refused', { skip: WINDOWS_ONLY }, (t) => {
+  const root = temporary(t, 'rea-shim-escape-root-');
+  const outside = temporary(t, 'rea-shim-escape-outside-');
+  const sentinel = path.join(outside, 'sentinel.txt');
+  fs.writeFileSync(sentinel, 'external sentinel');
+  fs.symlinkSync(outside, path.join(root, 'link'), 'junction');
+
+  // Alias canonicalization must not become link tolerance: an ancestor that
+  // redirects to another tree is refused and nothing is created there.
+  const nested = path.join(root, 'link', 'nested', 'deeper');
+  assert.throws(() => support.assertPlainAncestors(nested, 'install root'), /symbolic link|reparse/);
+  assert.throws(() => support.ensurePlainDir(nested, 'install root'), /symbolic link|reparse/);
+  assert.deepEqual(fs.readdirSync(outside), ['sentinel.txt']);
+  assert.equal(fs.readFileSync(sentinel, 'utf8'), 'external sentinel');
 });
 
 test('downloadFile never deletes a pre-existing destination', async (t) => {
@@ -1251,6 +1316,28 @@ test('ensureNpmCache refuses a junction deeper than _cacache', { skip: WINDOWS_O
   const { root, outside, sentinel } = makePoisonedNpmCache(t, path.join('_cacache', 'content-v2'));
 
   assert.throws(() => install.ensureNpmCache(root), /symbolic link|reparse/);
+  assert.deepEqual(fs.readdirSync(outside), ['sentinel.txt']);
+  assert.equal(fs.readFileSync(sentinel, 'utf8'), 'external sentinel');
+});
+
+test('an aliased install root still refuses a nested _cacache junction', { skip: WINDOWS_ONLY }, (t) => {
+  const longRoot = temporary(t, 'rea-shim-alias-long-root-');
+  const shortRoot = shortPathAlias(longRoot);
+  if (!shortRoot) return t.skip('this volume hands out no distinct 8.3 short name');
+
+  // The cache root named through a short component is still the cache inside
+  // the owned root, and the canonical path is what npm must receive.
+  const cache = install.ensureNpmCache(shortRoot);
+  assert.equal(realpathLower(cache), realpathLower(path.join(longRoot, 'npm-cache')));
+
+  // Alias tolerance must not weaken the descendant protection: a junction
+  // inside the cache is still refused and the external tree stays untouched.
+  const outside = temporary(t, 'rea-shim-npm-cache-outside-');
+  const sentinel = path.join(outside, 'sentinel.txt');
+  fs.writeFileSync(sentinel, 'external sentinel');
+  fs.symlinkSync(outside, path.join(cache, '_cacache'), 'junction');
+
+  assert.throws(() => install.ensureNpmCache(shortRoot), /symbolic link|reparse/);
   assert.deepEqual(fs.readdirSync(outside), ['sentinel.txt']);
   assert.equal(fs.readFileSync(sentinel, 'utf8'), 'external sentinel');
 });

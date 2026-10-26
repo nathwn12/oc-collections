@@ -13,6 +13,10 @@
 //     cache directory and every existing entry beneath it are proved plain the
 //     same way immediately before npm receives it, because npm writes through
 //     every directory it finds (`_cacache` included), not just the cache root.
+//   - a legitimate path alias (a DOS 8.3 short name such as `RUNNER~1` for
+//     `runneradmin`, a different letter case, a substituted drive) is
+//     canonicalized rather than mistaken for a reparse point: identity, not
+//     spelling, decides whether a spelling redirects somewhere else.
 //
 // Builtins only; no dependencies.
 //
@@ -65,6 +69,35 @@ function realpathOrNull(target) {
   } catch {
     return null;
   }
+}
+
+/**
+ * True when following `target` reaches the same directory object `lstat` saw.
+ *
+ * Windows names one directory several ways: a DOS 8.3 short name (`RUNNER~1`
+ * for a `runneradmin` profile), a differently cased path, a substituted drive.
+ * `realpath` answers with the canonical handle path, so such a spelling and its
+ * real path differ textually while naming the same directory. A reparse point
+ * is different: `lstat` reports the link object and `stat` follows it, so the
+ * two carry different file ids (or volumes). Comparing identity - not spelling
+ * - is what separates a legitimate alias from a redirection.
+ *
+ * Returns false for anything that cannot be proved the same object, including
+ * a vanished path, so callers fail closed.
+ */
+function isSameDirectoryObject(target) {
+  let own;
+  let followed;
+  try {
+    own = fs.lstatSync(target, { bigint: true });
+    followed = fs.statSync(target, { bigint: true });
+  } catch {
+    return false;
+  }
+  return Boolean(
+    own.isDirectory() && followed.isDirectory() &&
+    own.dev === followed.dev && own.ino === followed.ino && own.ino !== 0n,
+  );
 }
 
 function isPlainFile(target) {
@@ -135,7 +168,10 @@ function npmChildEnv(baseEnv, npmCache, overrides = {}) {
  * Refuse a path when any existing component between the filesystem root and
  * the target is a symbolic link, junction or other reparse point. Node reports
  * junctions through `lstat().isSymbolicLink()`; `realpath` is the cross-check
- * for other reparse points that resolve elsewhere.
+ * for other reparse points that resolve elsewhere. A component whose real path
+ * only differs by spelling (a DOS 8.3 short name or another alias of the same
+ * directory object) is canonicalized and accepted; a component that resolves
+ * to a different object is refused, wherever its target lives.
  */
 function assertPlainAncestors(target, label) {
   const resolved = path.resolve(target);
@@ -153,7 +189,7 @@ function assertPlainAncestors(target, label) {
       fail(`${label} ${current} is not a directory; refusing to write through it`);
     }
     const real = realpathOrNull(current);
-    if (real && pathKey(real) !== pathKey(current)) {
+    if (real && pathKey(real) !== pathKey(current) && !isSameDirectoryObject(current)) {
       fail(`${label} ${current} resolves to ${real}; refusing to write through a reparse point`);
     }
   }
@@ -255,12 +291,16 @@ function ensureCanonicalDirInside(root, name, label, options = {}) {
  * create a link after the walk and before npm's first write; closing that
  * residual window would need handle-relative opens, which Node does not
  * expose on Windows.
+ *
+ * A root or directory whose real path differs only by an alias of the same
+ * object (a DOS 8.3 short name, a different case) is canonicalized, not
+ * refused; anything that resolves to a different object is refused.
  */
 function assertNoReparseDescendants(root, label) {
   const resolvedRoot = path.resolve(root);
   const realRoot = realpathOrNull(resolvedRoot);
   if (!realRoot) fail(`cannot resolve ${label} ${root}`);
-  if (pathKey(realRoot) !== pathKey(resolvedRoot)) {
+  if (pathKey(realRoot) !== pathKey(resolvedRoot) && !isSameDirectoryObject(resolvedRoot)) {
     fail(`${label} ${root} resolves to ${realRoot}; refusing to write through a reparse point`);
   }
   const visit = (dir) => {
@@ -289,7 +329,7 @@ function assertNoReparseDescendants(root, label) {
         if (lstatOrNull(target)) fail(`cannot resolve ${label} ${target}`);
         continue;
       }
-      if (pathKey(real) !== pathKey(target)) {
+      if (pathKey(real) !== pathKey(target) && !isSameDirectoryObject(target)) {
         fail(`${label} ${target} resolves to ${real}; refusing to write through a reparse point`);
       }
       visit(target);
@@ -600,11 +640,16 @@ function extractArchive(archive, staging) {
  * Walk an extracted tree and refuse links or non-file entries. This is the
  * post-extraction counterpart to the listing check: even a hostile archive
  * that slipped a link past the listing cannot turn staging into a write path.
+ *
+ * Containment is decided from each entry's canonical path, so an aliased
+ * staging path (a DOS 8.3 short name under the temp directory) is not mistaken
+ * for an escape, while an entry that resolves elsewhere still is.
  */
 function assertNoReparsePoints(root) {
   const resolvedRoot = path.resolve(root);
   const realRoot = realpathOrNull(resolvedRoot);
   if (!realRoot) fail(`cannot resolve the extracted directory ${root}`);
+  const realRootKey = pathKey(realRoot);
   const visit = (dir) => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       const target = path.join(dir, entry.name);
@@ -618,8 +663,9 @@ function assertNoReparsePoints(root) {
       } else if (!stat.isFile()) {
         fail(`extracted archive contains a non-regular entry: ${target}`);
       }
-      const inside = pathKey(target).startsWith(`${pathKey(realRoot)}${path.sep}`);
-      if (target !== resolvedRoot && !inside) {
+      const real = realpathOrNull(target);
+      if (!real) fail(`cannot resolve the extracted archive entry ${target}`);
+      if (!pathKey(real).startsWith(`${realRootKey}${path.sep}`)) {
         fail(`extracted archive entry resolves outside the staging directory: ${target}`);
       }
     }
