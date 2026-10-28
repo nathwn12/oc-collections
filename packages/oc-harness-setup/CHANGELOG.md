@@ -1,5 +1,29 @@
 # Changelog
 
+## [Unreleased]
+
+## [0.5.0] - 2026-10-28
+
+### Fixed
+
+- `plugins[]` entries are emitted in the OpenCode 2.2.0 shape: a specifier
+  string. A 1.x `[specifier, options]` tuple is reduced to its specifier and
+  reported (2.2.0 drops a tuple entry outright, so the plugin silently stopped
+  loading), a non-string entry is reported instead of written, and the union
+  dedupes on strings so a re-run is byte-identical. The retired distro-plugin
+  match no longer assumes an unscoped `name@version` specifier.
+- Config shapes are proven against the installed host rather than assumed:
+  new `test/host-schema.test.js` round-trips the shipped config and a real
+  merged config through `opencode debug config` and fails if the host drops any
+  key, while the hermetic suite pins `plugins` strings, `permissions[]` rules,
+  `policies[]` with `tool.use`, and the absence of 1.x singular keys.
+- Preflight reads the `opencode v2.2.0` banner instead of echoing it (the log
+  line printed the product name twice), refuses a 1.x host before writing
+  anything (different config dialect), warns on a 2.0/2.1 host that the
+  `permissions[]`/`policies[]` deny gate is unproven there, and records the
+  host version in the install manifest. Compatibility truth: 2.2.0 tested;
+  2.x warned; 1.x refused.
+
 ## [0.4.5] - 2026-10-23
 
 - npm front door split into a short `README.md`; full documentation moved to `docs/GUIDE.md`; no functional change.

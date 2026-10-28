@@ -6,7 +6,7 @@
 // character in a host-supplied string cannot move the cursor. Pure, so the
 // rendering is trivial to test.
 
-import { DEFAULT_BAR_WIDTH, clip, formatCost, formatCount, formatDuration, fuelBar, sparkline } from "./format.js";
+import { DEFAULT_BAR_WIDTH, clip, formatCost, formatCount, formatDuration, formatTimestamp, fuelBar, sparkline } from "./format.js";
 import { asCount, asRecord, asText } from "./coerce.js";
 import { goResetSuffix, goTone, type GoWindow } from "./go-usage.js";
 import { guardToken } from "./guard-tokens.js";
@@ -25,6 +25,21 @@ import {
 
 /** Braille frames, advanced by the ticker, shown only while the session runs. */
 const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const;
+
+// How a money figure introduces itself. A bare figure is the host's recorded
+// charge. `~` says at least one part of it was priced from the model catalog
+// rather than charged, and the floor mark says it counts only the history the
+// host still holds. Built from code points so this file stays ASCII, the same
+// way the other non-ASCII glyphs here are.
+const ESTIMATE_MARK = "~";
+const FLOOR_MARK = String.fromCharCode(0x2265);
+
+/** The mark a money figure carries, from the strength of its claim. */
+function feeMark(kind: unknown): string {
+  if (kind === "estimated") return ESTIMATE_MARK;
+  if (kind === "bounded") return FLOOR_MARK;
+  return "";
+}
 
 /**
  * Value-column design budget for the `ses` row's preview, in cells.
@@ -341,8 +356,11 @@ export function statLine(
         treeCost > cost;
 
       if (!merge) {
-        const value = layout.hasTotalRow === true ? (cost ?? treeCost) : (treeCost ?? cost);
-        return value === undefined ? undefined : row("cost", formatCost(value));
+        // `cost` is the current model's spend and nothing else: when it is not
+        // known the row stays absent rather than borrowing the family figure
+        // under a label that promises one model.
+        if (cost === undefined) return undefined;
+        return row("cost", `${feeMark(source.costKind)}${formatCost(cost)}`);
       }
 
       // The delta (`+$0.020`) used to be here and pushed the row to 40 columns,
@@ -350,7 +368,10 @@ export function statLine(
       // did not earn its width: the count already explains why the figure is
       // higher, and this form is the same width as the old `total` row.
       const plural = family === 1 ? "subagent" : "subagents";
-      return row("cost", `${formatCost(treeCost as number)} · ${family} ${plural}`);
+      return row(
+        "cost",
+        `${feeMark(tree?.kind)}${formatCost(treeCost as number)} · ${family} ${plural}`,
+      );
     }
     case "total": {
       // The family figure: this session plus its subagent sessions. Since 0.20.0
@@ -365,7 +386,7 @@ export function statLine(
       if (cost === undefined) return undefined;
       const count = asCount(tree.count) ?? 0;
       const plural = count === 1 ? "subagent" : "subagents";
-      return row("total", `${formatCost(cost)} · ${count} ${plural}`);
+      return row("total", `${feeMark(tree.kind)}${formatCost(cost)} · ${count} ${plural}`);
     }
     case "project": {
       const project = asRecord(source.project);
@@ -446,6 +467,19 @@ export function statLine(
       const ms = asCount(source.elapsedMs);
       if (ms === undefined || ms <= 0) return undefined;
       return row("elapsed", formatDuration(ms, layout.durationStyle));
+    }
+    case "updated": {
+      // An absolute instant, not a relative age: the row answers "when did the
+      // host last record something here", and a wall-clock stamp stays
+      // meaningful after the panel has been idle for a while. A zero or
+      // negative stamp is not a real action time (1970 is a missing value that
+      // coerced to a number), so it hides like every other no-data row; the
+      // formatter owns the presentation and returns `undefined` when the
+      // configured styles or zone cannot draw anything.
+      const ms = asCount(source.lastActionMs);
+      if (ms === undefined || ms <= 0) return undefined;
+      const value = formatTimestamp(ms, layout.timestamp);
+      return value === undefined ? undefined : row("updated", value);
     }
     case "tps": {
       // The triple the reader hands over: `rt` the realtime estimate from

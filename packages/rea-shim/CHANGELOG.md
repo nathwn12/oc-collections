@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+## [0.2.1] - 2026-10-28
+
+### Added
+
+- `npm test` and `npm run check`. The suite existed but nothing ran it: `test/bootstrap.test.js` was orphaned (no `scripts` block), so 57 contract tests were unreachable from the package. `check` syntax-checks every `bin/*.js` and `lib/*.js`, and a test asserts that coverage so a new source file cannot be left out.
+- `test/handshake.test.js`: a spawned-binary handshake. A stub `npx` first on `PATH` stands in for upstream, and the real launcher is driven through `initialize` and `tools/list`. It asserts that stdout carries only JSON-RPC frames (one per line), that upstream receives the frames byte-identically, that the child exit code is forwarded, and that a refusal writes nothing to stdout.
+
+### Fixed
+
+- `--print-config` printed a flat `"rea": { ... }` entry with a `timeout` key. OpenCode 2.2.0 reads MCP servers at `mcp.servers.<name>` and writes `{ type, command }` itself; the printed block omitted the `servers` level and promised a startup timeout the client does not write or honour. It now prints the 2.2.0 shape, generated with `JSON.stringify` so it is always valid JSON. `docs/GUIDE.md` showed the older `mcpServers` shape for the same block and is corrected.
+
 ## [0.2.0] - 2026-10-26
 
 ### Added

@@ -50,6 +50,7 @@ export function railLines(config: FlightDeckConfig, source: StatSource = {}): re
     persist: config.sidebar.persist,
     placeholder: config.sidebar.placeholder,
     durationStyle: config.format.duration,
+    timestamp: config.format.timestamp,
     tpsDisplay: config.sidebar.tps.display,
     // Decided from the whole row list, the way `statRows` decides it: `cost`
     // folds the subagent total into itself only when no `total` row was asked

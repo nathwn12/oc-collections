@@ -10,7 +10,7 @@
 
 import { DEFAULT_PLACEHOLDER, canonicalField, isStatField, STAT_FIELDS } from "./stats.js";
 import type { CautionThresholds } from "./caution.js";
-import type { DurationStyle } from "./format.js";
+import type { DurationStyle, TimestampDateStyle, TimestampTimeStyle } from "./format.js";
 import {
   DEFAULT_STYLE,
   STYLE_ATTRIBUTES,
@@ -331,6 +331,27 @@ interface GlyphConfig {
 }
 
 /**
+ * Presentation for the `updated` row's absolute timestamp.
+ *
+ * Every key is optional and every default is the host's own: `locale`,
+ * `hour12` and `timeZone` are omitted from the formatter unless set, so the
+ * host locale's date order and 12/24-hour cycle and the host's zone apply
+ * without a table of our own to drift from the runtime's ICU data.
+ */
+export interface TimestampConfig {
+  /** A BCP-47 locale for the stamp; absent means the host's locale. */
+  readonly locale?: string;
+  /** Date presentation. Default `"short"`. */
+  readonly dateStyle: TimestampDateStyle;
+  /** Time presentation. Default `"medium"`. */
+  readonly timeStyle: TimestampTimeStyle;
+  /** Force 12-hour (`true`) or 24-hour (`false`); absent follows the locale. */
+  readonly hour12?: boolean;
+  /** An IANA zone or UTC offset; absent means the host's zone. */
+  readonly timeZone?: string;
+}
+
+/**
  * How values are written on the rail.
  *
  * Display only: nothing here changes what is measured, only how a number is
@@ -343,6 +364,8 @@ interface FormatConfig {
    * (`2h14m37s`). Zero-padding is identical either way.
    */
   readonly duration: DurationStyle;
+  /** How the `updated` row writes its absolute timestamp. */
+  readonly timestamp: TimestampConfig;
 }
 
 const DEFAULT_LAYOUT: LayoutConfig = {
@@ -351,7 +374,16 @@ const DEFAULT_LAYOUT: LayoutConfig = {
   sparkWidth: 12,
 };
 
-const DEFAULT_FORMAT: FormatConfig = { duration: "spaced" };
+/**
+ * A short date and a time with seconds: enough to tell when the last action
+ * was and how recent it is, in the host locale and zone.
+ */
+export const DEFAULT_TIMESTAMP: TimestampConfig = { dateStyle: "short", timeStyle: "medium" };
+
+const DEFAULT_FORMAT: FormatConfig = {
+  duration: "spaced",
+  timestamp: DEFAULT_TIMESTAMP,
+};
 
 const DEFAULT_GLYPHS: GlyphConfig = {
   watch: "▲",
@@ -865,10 +897,11 @@ function mergeSection(
   if (hostValue !== undefined && !isRecord(hostValue)) return hostValue;
   if (fileValue !== undefined && !isRecord(fileValue) && hostValue === undefined) return fileValue;
   const merged: Record<string, unknown> = { ...sectionOf(file, key), ...sectionOf(host, key) };
-  // A nested `sidebar.footer` / `sidebar.tps` object from the host replaces
-  // only the leaf keys it names: a host `{ footer: { lines } }` must not drop
-  // a file `{ footer: { go } }`, and vice versa. Either side malformed (or
-  // absent) keeps the shallow winner above so resolveConfig still reports it.
+  // A nested `sidebar.footer` / `sidebar.tps` / `format.timestamp` object from
+  // the host replaces only the leaf keys it names: a host `{ footer: { lines } }`
+  // must not drop a file `{ footer: { go } }`, and vice versa. Either side
+  // malformed (or absent) keeps the shallow winner above so resolveConfig still
+  // reports it.
   if (key === "sidebar") {
     const fileSidebar = sectionOf(file, key);
     const hostSidebar = sectionOf(host, key);
@@ -881,6 +914,13 @@ function mergeSection(
     const hostTps = hostSidebar["tps"];
     if (isRecord(fileTps) && isRecord(hostTps)) {
       merged["tps"] = { ...fileTps, ...hostTps };
+    }
+  }
+  if (key === "format") {
+    const fileTimestamp = sectionOf(file, key)["timestamp"];
+    const hostTimestamp = sectionOf(host, key)["timestamp"];
+    if (isRecord(fileTimestamp) && isRecord(hostTimestamp)) {
+      merged["timestamp"] = { ...fileTimestamp, ...hostTimestamp };
     }
   }
   return merged;
@@ -1003,8 +1043,148 @@ function readDurationStyle(value: unknown, issues: string[]): DurationStyle {
   return DEFAULT_FORMAT.duration;
 }
 
+/** One presentation rung, from a fixed vocabulary. */
+function readTimestampStyle<T extends string>(
+  value: unknown,
+  allowed: readonly T[],
+  fallback: T,
+  path: string,
+  issues: string[],
+): T {
+  if (value === undefined) return fallback;
+  const text = typeof value === "string" ? value.trim() : "";
+  if ((allowed as readonly string[]).includes(text)) return text as T;
+  issues.push(`${path} must be one of ${allowed.join(", ")}; using "${fallback}"`);
+  return fallback;
+}
+
+/**
+ * The optional 12/24-hour switch.
+ *
+ * Absent is a real value here, not a missing one: leaving it out is how the
+ * host locale's own clock style is followed. A malformed value therefore falls
+ * back to absent, loudly, rather than to an arbitrary boolean.
+ */
+function readHour12(value: unknown, issues: string[]): boolean | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value === "boolean") return value;
+  issues.push("format.timestamp.hour12 must be true or false; using the host locale");
+  return undefined;
+}
+
+/**
+ * The optional locale for the stamp.
+ *
+ * Validated structurally with `Intl.getCanonicalLocales`, which is the same
+ * runtime data the formatter uses; a locale it accepts but does not carry
+ * falls back inside Intl on its own, as ECMA-402 requires. Empty means "host
+ * locale" and is silent, so an explicit blank in a copied config is not a
+ * warning.
+ */
+function readTimestampLocale(value: unknown, issues: string[]): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") {
+    issues.push("format.timestamp.locale must be a BCP-47 locale string; using the host locale");
+    return undefined;
+  }
+  const path = "format.timestamp.locale";
+  const text = normalizeText(value, path, issues).trim();
+  if (text.length === 0) return undefined;
+  if (text.length > 64) {
+    issues.push(`${path} was longer than 64 characters; using the host locale`);
+    return undefined;
+  }
+  try {
+    Intl.getCanonicalLocales(text);
+  } catch {
+    issues.push(`${path} is not a valid BCP-47 locale; using the host locale`);
+    return undefined;
+  }
+  return text;
+}
+
+/**
+ * The optional time-zone override.
+ *
+ * The only accepted names are the ones ECMA-402 accepts: IANA Zone/Link
+ * identifiers and offset identifiers (`+05:30`). Validation is a probe
+ * formatter, never a lookup table — Windows zone ids are explicitly not valid
+ * `timeZone` inputs and go through a versioned, territory-sensitive ICU
+ * mapping, so a hardcoded map here would be exactly the drift the runtime's
+ * own data avoids. The host zone is the default: an omitted or empty value
+ * passes no `timeZone` at all.
+ */
+function readTimestampZone(value: unknown, issues: string[]): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") {
+    issues.push("format.timestamp.timeZone must be an IANA zone or UTC offset; using the host zone");
+    return undefined;
+  }
+  const path = "format.timestamp.timeZone";
+  const text = normalizeText(value, path, issues).trim();
+  if (text.length === 0) return undefined;
+  if (text.length > 64) {
+    issues.push(`${path} was longer than 64 characters; using the host zone`);
+    return undefined;
+  }
+  try {
+    new Intl.DateTimeFormat(undefined, { timeZone: text });
+  } catch {
+    issues.push(`${path} is not a valid IANA zone or UTC offset; using the host zone`);
+    return undefined;
+  }
+  return text;
+}
+
+/**
+ * The `updated` row's presentation.
+ *
+ * A malformed section falls back whole and is reported, like `sidebar.tps`; a
+ * bad leaf falls back alone. Both halves `"none"` is a config that can only
+ * draw a blank row, so it is reported and the default pair is restored rather
+ * than rendering nothing.
+ */
+function readTimestamp(value: unknown, issues: string[]): TimestampConfig {
+  if (value !== undefined && !isRecord(value)) {
+    issues.push("format.timestamp must be an object; using the defaults");
+    return DEFAULT_TIMESTAMP;
+  }
+  const section = isRecord(value) ? value : {};
+  let dateStyle = readTimestampStyle(
+    section["dateStyle"],
+    ["none", "short", "medium"] as const,
+    DEFAULT_TIMESTAMP.dateStyle,
+    "format.timestamp.dateStyle",
+    issues,
+  );
+  let timeStyle = readTimestampStyle(
+    section["timeStyle"],
+    ["none", "short", "medium"] as const,
+    DEFAULT_TIMESTAMP.timeStyle,
+    "format.timestamp.timeStyle",
+    issues,
+  );
+  if (dateStyle === "none" && timeStyle === "none") {
+    issues.push('format.timestamp.dateStyle and timeStyle are both "none"; using the default presentation');
+    dateStyle = DEFAULT_TIMESTAMP.dateStyle;
+    timeStyle = DEFAULT_TIMESTAMP.timeStyle;
+  }
+
+  const timestamp: { -readonly [K in keyof TimestampConfig]: TimestampConfig[K] } = { dateStyle, timeStyle };
+  const locale = readTimestampLocale(section["locale"], issues);
+  if (locale !== undefined) timestamp.locale = locale;
+  const hour12 = readHour12(section["hour12"], issues);
+  if (hour12 !== undefined) timestamp.hour12 = hour12;
+  const timeZone = readTimestampZone(section["timeZone"], issues);
+  if (timeZone !== undefined) timestamp.timeZone = timeZone;
+  return timestamp;
+}
+
 function readFormat(section: Record<string, unknown>, issues: string[]): FormatConfig {
-  return { duration: readDurationStyle(section["duration"], issues) };
+  return {
+    duration: readDurationStyle(section["duration"], issues),
+    timestamp: readTimestamp(section["timestamp"], issues),
+  };
 }
 
 /**

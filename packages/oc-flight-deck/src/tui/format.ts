@@ -69,6 +69,83 @@ export function formatDuration(ms: number, style: DurationStyle = "compact"): st
   return minutes > 0 ? `${minutes}m${join}${ss}s` : `${seconds}s`;
 }
 
+/**
+ * How the absolute timestamp's date half is presented: `"none"` omits it,
+ * `"short"` and `"medium"` map straight onto Intl's `dateStyle`.
+ *
+ * A deliberately short ladder: this is one sidebar row, and `long`/`full`
+ * dates spend the panel on a date the reader can open elsewhere. `"none"` is
+ * never passed to Intl — it is the absence of `dateStyle`, because Intl
+ * rejects the name with a `RangeError`.
+ */
+export type TimestampDateStyle = "none" | "short" | "medium";
+
+/**
+ * How the timestamp's time half is presented: `"none"` omits it, `"short"`
+ * drops the seconds, `"medium"` keeps them so the row shows how recent the
+ * action is.
+ */
+export type TimestampTimeStyle = "none" | "short" | "medium";
+
+/**
+ * Presentation for an absolute timestamp.
+ *
+ * Every field is optional and every default is the host's own: `locale`,
+ * `hour12` and `timeZone` are omitted from the formatter unless set, so the
+ * host locale's date order and 12/24-hour cycle and the host's zone apply with
+ * no table of ours to drift from the runtime's own ICU data.
+ */
+export interface TimestampFormat {
+  /** A BCP-47 locale; absent means the host's locale. */
+  readonly locale?: string;
+  /** Date presentation. Default `"short"`. */
+  readonly dateStyle?: TimestampDateStyle;
+  /** Time presentation. Default `"medium"`. */
+  readonly timeStyle?: TimestampTimeStyle;
+  /** `true` forces a 12-hour clock, `false` a 24-hour one; absent follows the locale. */
+  readonly hour12?: boolean;
+  /** An IANA zone name or UTC offset; absent means the host's zone. */
+  readonly timeZone?: string;
+}
+
+/**
+ * An absolute timestamp, or `undefined` when the presentation draws nothing or
+ * the runtime rejects it.
+ *
+ * The styles are Intl's own `dateStyle`/`timeStyle`, never combined with
+ * component options (ECMA-402 forbids that combination). `hour12` is not a
+ * component option and is allowed beside the styles; when it is absent the
+ * locale decides. Omitting `timeZone` is the documented way to ask for the host
+ * environment's zone, and an explicit zone is only ever an IANA identifier or
+ * offset identifier — a Windows zone id is rejected by Intl, which is why the
+ * config boundary validates it and this function still catches the
+ * `RangeError`, so one bad clock setting can never take the rail down. The
+ * catch also covers a structurally invalid locale passed straight to this
+ * function.
+ */
+export function formatTimestamp(ms: number, format: TimestampFormat = {}): string | undefined {
+  const dateStyle = format.dateStyle ?? "short";
+  const timeStyle = format.timeStyle ?? "medium";
+  // Both halves off draws nothing: no timestamp exists to show.
+  if (dateStyle === "none" && timeStyle === "none") return undefined;
+
+  const options: Intl.DateTimeFormatOptions = {};
+  if (dateStyle !== "none") options.dateStyle = dateStyle;
+  if (timeStyle !== "none") options.timeStyle = timeStyle;
+  if (format.hour12 !== undefined) options.hour12 = format.hour12;
+  const timeZone = format.timeZone?.trim();
+  if (timeZone !== undefined && timeZone.length > 0) options.timeZone = timeZone;
+
+  const locale = format.locale?.trim();
+  try {
+    return new Intl.DateTimeFormat(locale === undefined || locale.length === 0 ? undefined : locale, options).format(ms);
+  } catch {
+    // `RangeError` for an unknown zone or malformed locale. Presentation is a
+    // display concern: the row hides rather than failing the rail.
+    return undefined;
+  }
+}
+
 /** Fuel-gauge width in cells when the caller does not override it. */
 export const DEFAULT_BAR_WIDTH = 10;
 

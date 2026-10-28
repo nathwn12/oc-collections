@@ -80,11 +80,16 @@ Wire the server into your MCP client config:
 
 ```json
 {
-  "mcpServers": {
-    "rea": { "type": "local", "timeout": { "startup": 45000 }, "command": ["cmd","/c","npx","-y","rea-shim@latest"] }
+  "mcp": {
+    "servers": {
+      "rea": { "type": "local", "command": ["cmd", "/c", "npx", "-y", "rea-shim@latest"] }
+    }
   }
 }
 ```
+
+`--print-config` prints exactly this block. The `mcp.servers` nesting is the
+shape OpenCode 2.2.0 reads and writes itself (`opencode mcp add` writes there).
 
 ### Offline or pinned
 

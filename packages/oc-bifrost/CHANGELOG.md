@@ -11,6 +11,45 @@
 
 ## [Unreleased]
 
+## [1.6.12] - 2026-10-28
+
+### Changed
+
+- **The V1 contract is vendored; the 1.x type import is gone**
+  (`src/v1-contract.ts`, `src/types.ts`). The package no longer imports the 1.x
+  plugin scope for its V1 types, so the emitted declarations carry no 1.x
+  module reference and a host on the 2.x line alone can consume them (they
+  previously failed with `TS2307` when the 1.x package was absent). The
+  vendored shapes are a transcription of what this bridge actually hands a V1
+  hook - an approximation of the 1.x contract, not the 1.x SDK's original
+  declarations: payload types that the 1.x `Hooks` drew from its SDK (`Message`,
+  `Part`, `Model`, `Event`, ...) are declared opaquely, and the
+  `@opencode-ai/plugin` devDependency is dropped.
+- **Peer range widened** (`package.json`): `@opencode/plugin` peer `2.1.1` ->
+  `>=2.1.1 <3`, dev pin `2.2.0`, and the package is typechecked against the
+  2.2.0 typings. The `session`/`tool`/`shell`/`permission` hook surface this
+  bridge registers is unchanged in 2.2.0.
+
+### Fixed
+
+- **A V1 tool definition the bridge cannot run is refused instead of faked**
+  (`src/hooks.ts`). A `tool` map entry without a callable `execute` used to be
+  registered with a fallback that answered `{"content":""}` - a tool that
+  silently produced nothing. It now fails the mount with a
+  `V1ToolDefinitionError` (`code: "oc-bifrost/v1-tool-definition"`, naming the
+  tool and the offending field), raised before any hook is registered; a
+  non-object `args` schema is refused the same way.
+- **A wrong-typed generation setting no longer reaches the model request**
+  (`src/hooks.ts`). `chat.params` numerics (`temperature`, `topP`, `topK`,
+  `maxOutputTokens`) are checked at write-back: a non-numeric or non-finite
+  value is refused with a logged warning and the request keeps its own value
+  instead of the bad value being copied in.
+- **The vendored contract fails closed** (`src/v1-contract.ts`): `execute` is
+  required, a tool's `args` is an object schema, and `chat.params` numerics are
+  numbers - held by compile-time assertions in `test/types/` and by
+  `test/v1-contract.test.js` (six new checks: the three refusals, a valid-tool
+  control, the generation-setting write-back, and the type contract).
+
 ## [1.6.9] - 2026-10-21
 
 ### Fixed

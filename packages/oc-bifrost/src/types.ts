@@ -1,13 +1,12 @@
 /**
  * oc-bifrost — shared types.
  *
- * The V1 side is the real published contract from `@opencode-ai/plugin`.
- * The V2 side is described structurally so this package compiles against any
- * `@opencode/plugin` >= 2.0 without pinning internal subpaths.
+ * The V1 side is vendored in `v1-contract.ts`: this package must not depend on
+ * the 1.x line it bridges. The V2 side is described structurally so this
+ * package compiles against `@opencode/plugin` without pinning internal
+ * subpaths.
  */
-import type { Hooks as V1Hooks, PluginInput as V1PluginInput, Plugin as V1Plugin } from "@opencode-ai/plugin"
-
-export type { V1Hooks, V1PluginInput, V1Plugin }
+export type { V1Hooks, V1Plugin, V1PluginInput, V1PluginOptions } from "./v1-contract.js"
 
 /** A plugin entry as declared in oc-bifrost's own options. */
 export type PluginEntry = string | { spec: string; options?: Record<string, unknown> }

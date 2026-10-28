@@ -52,7 +52,12 @@ describe("format.duration config", () => {
     const { config, issues } = resolveConfig({});
     expect(issues).toEqual([]);
     expect(config.format.duration).toBe("spaced");
-    expect(DEFAULT_CONFIG.format).toEqual({ duration: "spaced" });
+    // `format` also carries the `updated` row's timestamp presentation, which
+    // keeps its own defaults here: a short date and a time with seconds.
+    expect(DEFAULT_CONFIG.format).toEqual({
+      duration: "spaced",
+      timestamp: { dateStyle: "short", timeStyle: "medium" },
+    });
   });
 
   test("accepts both styles explicitly", () => {

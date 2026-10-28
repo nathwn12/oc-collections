@@ -1,6 +1,6 @@
 {
   "name": "rea-shim",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Unofficial personal-use one-line MCP launcher and explicit bootstrapper for rea: serves upstream rea-agents over stdio, and can install the official JDK and Ghidra the exact upstream release requires. Ships no upstream code. All credit to the original rea authors.",
   "license": "MIT",
   "repository": {
@@ -14,6 +14,10 @@
   },
   "bin": {
     "rea-shim": "bin/rea-shim.js"
+  },
+  "scripts": {
+    "test": "node --test \"test/**/*.test.js\"",
+    "check": "node --check bin/rea-shim.js && node --check lib/bootstrap.js && node --check lib/checks.js && node --check lib/discovery.js && node --check lib/install.js && node --check lib/sources.js && node --check lib/support.js"
   },
   "files": [
     "bin/",

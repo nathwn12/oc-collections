@@ -58,7 +58,7 @@ This starter grows through `evolve`: the smallest deliberate extension — one s
 
 - Windows 10/11 only; macOS and Linux are not supported.
 - Node.js 22 or newer, the only runtime requirement with zero runtime dependencies.
-- OpenCode CLI installed and runnable; setup refuses without it.
+- OpenCode 2.2.0 or newer (the tested floor). A 2.0/2.1 host warns — the merged `permissions[]`/`policies[]` deny gate is unproven there — and a 1.x host is refused before anything is written (different config dialect).
 - PowerShell 7 for the doctor gate; without it the doctor reports skipped, never passed.
 
 ## Links

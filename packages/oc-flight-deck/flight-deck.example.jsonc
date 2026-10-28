@@ -144,6 +144,12 @@
     //              same value instead of resetting, it cannot step backwards
     //              while the host still reports those turns, and it is NOT
     //              wall-clock since the session began
+    //   updated    the newest action the host recorded, as an absolute
+    //              timestamp: the latest message's completed, else streamed,
+    //              else created stamp, written in the host locale and time zone
+    //              by default. `format.timestamp` below picks the date and time
+    //              styles, the 12-hour or 24-hour clock, and an IANA zone.
+    //              Available, off by default.
     //   tps        mean speed over `sidebar.tps.scope` below: generation
     //              tokens (output + reasoning) over the settled turns' own
     //              generating time. Draws the average by default — an idle
@@ -176,8 +182,10 @@
     // Every named row renders persistently, so the rail keeps a stable shape:
     // a row with no data yet draws a real-looking zero — `$0.000` for money
     // rows, `0 in · 0 out` for tokens, `0 tok/s` for tps — in the same label
-    // column as a live row, never a placeholder symbol. (`caution` is the one
-    // exception: the annunciator stays silent until it has something to say.)
+    // column as a live row, never a placeholder symbol. Two rows are the
+    // exceptions: `caution` stays silent until it has something to say, and
+    // `updated` draws `sidebar.placeholder` (`—`) until the host records an
+    // action, because there is no honest zero timestamp.
     // The fixed lines and live rows share the maxLines budget below, and
     // anything past it is dropped.
     "rows": [
@@ -195,6 +203,7 @@
       // ,"go"        Zen Go account usage (needs the active opencode-go credential)
       // ,"caution"   — the annunciator
       // ,"branch"    — current git branch
+      // ,"updated"   — absolute timestamp of the newest recorded action
       // ,"ses"       - session id preview (labelled `session`); click to copy the full id
     ],
 
@@ -233,9 +242,9 @@
     "persist": true,
 
     // Fallback for a persistent row with no data that has no skeleton. Any
-    // non-empty string. Every shipped field has a skeleton, so this dash is
-    // unreachable in practice — it only covers a field with nothing to draw
-    // a zero from.
+    // non-empty string. `caution` never draws it (its silence is the design),
+    // and `updated` draws it until the host records an action: there is no
+    // honest zero timestamp, so this dash is reachable for that one row.
     "placeholder": "—",
 
     // Maximum total height, including fixed lines and live rows. Defaults to 24.
@@ -360,7 +369,30 @@
     //   "compact"  no space between units: 2h14m37s
     // Zero-padding is the same either way: minutes pad when hours are present,
     // seconds pad when minutes are present, so 2h 14m 07s never reads 2h 14m 7s.
-    "duration": "spaced"
+    "duration": "spaced",
+
+    // The `updated` row's absolute timestamp. Every key here is optional;
+    // `locale`, `hour12` and `timeZone` are omitted when you leave them out, and
+    // an omitted value means the host's own: the host locale, the locale's own
+    // 12/24-hour cycle, and the host time zone. There is no zone table to keep
+    // in sync — the runtime's own ECMA-402 data is the source of truth, so a
+    // daylight-saving change is the host's business.
+    "timestamp": {
+      // A BCP-47 locale for the stamp; "" uses the host locale.
+      "locale": "",
+      // Date half: "short" (numeric), "medium" (spelled month), or "none".
+      "dateStyle": "short",
+      // Time half: "medium" (with seconds), "short" (no seconds), or "none".
+      // Setting both halves to "none" is reported and the defaults come back.
+      "timeStyle": "medium"
+      // Omit to follow the locale's clock; true forces 12-hour, false 24-hour.
+      // ,"hour12": false
+      //
+      // An IANA zone (Asia/Tokyo) or UTC offset (+05:30); "" uses the host
+      // zone. A Windows zone id such as "Pacific Standard Time" is not valid
+      // and falls back to the host zone with a reported warning.
+      // ,"timeZone": "UTC"
+    }
   },
 
   // -- Glyphs ----------------------------------------------------------------

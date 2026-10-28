@@ -6,7 +6,7 @@
 // through ./coerce.js rather than re-checked here.
 
 import { DEFAULT_BAR_WIDTH, formatCost, formatCount, formatDuration, fuelBar } from "./format.js";
-import type { DurationStyle } from "./format.js";
+import type { DurationStyle, TimestampFormat } from "./format.js";
 
 /** The subset of a session snapshot the rail reads. All fields are untrusted. */
 export interface StatSource {
@@ -23,6 +23,14 @@ export interface StatSource {
   readonly agent?: unknown;
   readonly model?: unknown;
   readonly cost?: unknown;
+  /**
+   * How strong the `cost` figure's claim is: `"exact"` (the host's recorded
+   * aggregate), `"bounded"` (recorded charges over the history on hand) or
+   * `"estimated"` (at least one step priced from the catalog, not charged).
+   * The row marks the last two so an estimate never reads as a bill. Untrusted
+   * like every other field.
+   */
+  readonly costKind?: unknown;
   readonly tokens?: unknown;
   readonly branch?: unknown;
   /**
@@ -51,6 +59,13 @@ export interface StatSource {
    */
   readonly tps?: unknown;
   readonly elapsedMs?: unknown;
+  /**
+   * When the host recorded the session's newest action, as epoch milliseconds:
+   * the newest message's `completed`, else `streamed`, else `created` stamp.
+   * Untrusted like every other field; the `updated` row formats it through
+   * `format.timestamp` and hides when it is absent or not a positive instant.
+   */
+  readonly lastActionMs?: unknown;
   readonly turns?: unknown;
   /** Recent per-turn output sizes, oldest first, for the sparkline. */
   readonly spark?: unknown;
@@ -81,6 +96,7 @@ export const STAT_FIELDS = [
   "context",
   "perms",
   "elapsed",
+  "updated",
   "tps",
   "spark",
   "reasoning",
@@ -164,6 +180,12 @@ export interface LayoutHint {
    */
   readonly durationStyle?: DurationStyle;
   /**
+   * How the `updated` row writes its timestamp. The rail supplies this from
+   * `format.timestamp`, whose defaults are a short date and a time with
+   * seconds in the host locale and zone.
+   */
+  readonly timestamp?: TimestampFormat;
+  /**
    * True when the rail already draws a `total` row.
    *
    * The `cost` row merges the subagent total into itself only when nothing else
@@ -223,8 +245,11 @@ export const DEFAULT_SPARK_WIDTH = 12;
  * zero would use, so it is byte-identical to a real zero and the rail keeps
  * its shape while reading alive rather than reading broken. `caution` has no
  * skeleton — returning `undefined` keeps the annunciator silent when there is
- * nothing to say, and its silence is the design. An unknown name also yields
- * `undefined`, so a typo stays skipped rather than drawn.
+ * nothing to say, and its silence is the design. `updated` has none either:
+ * there is no honest zero timestamp (1970 would be a lie), so a persistent row
+ * falls back to `sidebar.placeholder` until the host records an action. An
+ * unknown name also yields `undefined`, so a typo stays skipped rather than
+ * drawn.
  */
 export function skeletonValue(field: string, layout: LayoutHint): string | undefined {
   switch (canonicalField(field)) {

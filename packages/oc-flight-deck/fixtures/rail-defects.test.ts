@@ -98,22 +98,26 @@ describe("treeTotals skips an unreadable member and rolls up tokens", () => {
         good: { cost: 5, tokens: { input: 10, output: 20, reasoning: 5, cache: { read: 30 } } },
       }),
     );
-    expect(reads.treeTotals("root", 7)).toEqual({
+    // The money is the family sum (no `cost()` accessor here): the root's 7 plus
+    // the readable child's 5. The tokens still come from every readable member.
+    expect(reads.treeTotals("root")).toEqual({
       cost: 12,
       count: 1,
+      kind: "bounded",
       tokens: { input: 110, output: 70, reasoning: 5, cache: { read: 50, write: 5 } },
     });
   });
 
   test("a root with no descendants still reports its own figure, count zero", () => {
     const reads = createSessionReads(
-      stubContext({ root: "idle" }, { root: ["root", "bad"] }, {}),
+      stubContext({ root: "idle" }, { root: ["root", "bad"] }, { root: { cost: 7 } }),
     );
-    // `root` itself is unreadable too, so only the caller's own cost survives:
-    // the family figure is the session's own cost against a count of zero.
-    expect(reads.treeTotals("root", 7)).toEqual({
+    // The family lists a member with no record, so coverage is incomplete and
+    // the figure is a floor rather than an exact claim.
+    expect(reads.treeTotals("root")).toEqual({
       cost: 7,
       count: 0,
+      kind: "bounded",
       tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
     });
   });
@@ -125,9 +129,10 @@ describe("treeTotals skips an unreadable member and rolls up tokens", () => {
       }),
     );
     // The `total` row now draws this: the session's own cost, `0 subagents`.
-    expect(reads.treeTotals("root", 7)).toEqual({
+    expect(reads.treeTotals("root")).toEqual({
       cost: 7,
       count: 0,
+      kind: "exact",
       tokens: { input: 100, output: 50, reasoning: 0, cache: { read: 0, write: 0 } },
     });
   });
@@ -138,7 +143,7 @@ describe("treeTotals skips an unreadable member and rolls up tokens", () => {
     );
     // `root()` answers with the parent, so this session's family is not its own
     // to total — unchanged by the childless fix.
-    expect(reads.treeTotals("child", 1)).toBeUndefined();
+    expect(reads.treeTotals("child")).toBeUndefined();
   });
 });
 

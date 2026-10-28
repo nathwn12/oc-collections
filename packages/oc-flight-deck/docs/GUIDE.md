@@ -90,6 +90,7 @@ You configure one global file: `~/.config/opencode/flight-deck.jsonc`. The `.jso
 | `context` | Occupancy proxy (last request input plus cache read plus cache write), drawn as a `layout.barWidth`-cell gauge (10 by default) plus `~78%`, or `~N used` when no limit is known. The `~` is deliberate: this is an estimate. | yes |
 | `perms` | Pending approvals. One names the action plus an 18-cell clipped resource (`bash · src/tui…`); several lead with the count (`3 waiting · bash`). | yes |
 | `elapsed` | Active generation time, recomputed from the assistant-turn spans the host recorded for this session and its subagents. Survives a restart, never steps backwards while the host reports those turns, and is not wall-clock since the session began. | yes |
+| `updated` | Absolute timestamp of the newest action the host recorded: the latest message's `completed`, else `streamed`, else `created` stamp. The host locale and time zone apply by default; `format.timestamp` sets the locale, date and time styles, the 12/24-hour clock, and an IANA zone or UTC offset. A Windows zone id is rejected and the host zone is used. | opt-in |
 | `tps` | Session speed. Default `avg`: generation tokens (output plus reasoning) over the union of settled turns' `streamed − created` spans; idle gaps never billed. `rt`: realtime estimate from streaming deltas, zero while nothing generates. `both`: `106 rt · 41 avg`, plus `1.2s ttft` once a step settles. Scope `family` (default; open session plus subagents, overlapping spans merged) or `session`. Below half a token per second no figure is drawn; with `persist: true` the row falls back to its `0 tok/s` skeleton, and `persist: false` omits it. | yes |
 | `spark` | Recent turn sizes as a sparkline; the newest samples are kept. | opt-in |
 | `reasoning` | Reasoning tokens, family scope. | opt-in |
@@ -99,7 +100,7 @@ You configure one global file: `~/.config/opencode/flight-deck.jsonc`. The `.jso
 | `ses` | Clipped 18-cell preview of the session id (less when the label column is narrow, floored at 8), labelled `session`. Click copies the full id. A verified copy is silent: the host write reports `written`, or an exact clipboard read-back confirms an OSC52 dispatch. An unconfirmed dispatch is an advisory warning (paste to verify). Gate the failure toast with `notifications.copy`. | opt-in |
 | `session` | Alias for `ses`; accepted in `sidebar.rows` and folded to it. | opt-in |
 
-With `sidebar.persist` (the default) every named row renders, drawing its zero skeleton until data arrives: `$0.000` money rows, `0 in · 0 out`, `0 read`, empty gauge plus `~0%`, `0 waiting`, `0s`, `0 tok/s` (`0 rt · 0 avg` in both), flat `▁` spark, `0` reasoning and turns, `○ 0 ○ 0 ○ 0` go, `○ idle`, `none` agent, model, and ses, `no branch`, `unknown` guard. `caution` never draws a skeleton. Set `persist: false` to omit rows with no data instead.
+With `sidebar.persist` (the default) every named row renders, drawing its zero skeleton until data arrives: `$0.000` money rows, `0 in · 0 out`, `0 read`, empty gauge plus `~0%`, `0 waiting`, `0s`, `0 tok/s` (`0 rt · 0 avg` in both), flat `▁` spark, `0` reasoning and turns, `○ 0 ○ 0 ○ 0` go, `○ idle`, `none` agent, model, and ses, `no branch`, `unknown` guard. `caution` never draws a skeleton, and `updated` has none either: it draws `sidebar.placeholder` (`—`) until the host records an action, because there is no honest zero timestamp. Set `persist: false` to omit rows with no data instead.
 
 ### Settings
 
@@ -115,7 +116,7 @@ With `sidebar.persist` (the default) every named row renders, drawing its zero s
 - **`sidebar.footer.lines`** (default `[]`) — fixed lines in the host footer slot, outside the rail cap; max 24. The documented branding pair is `["▸ FLIGHT DECK","─────────────────"]`.
 - **`sidebar.footer.go`** (default `false`) — `true` or an object draws the live Go usage panel: three fixed-width lines above the host location row, sharing one account-wide poll with the `go` row. Object keys: `header` (`false`), `barWidth` (`10`, 1–40), `labelWidth` (`6`, 5–24, auto-widens), `percent` (`true`), `reset` (`true`), `align` (`"right"`, left, right, or center), `sweep` (`false`), `labels` (`{rolling,weekly,monthly}`, each 1–24 chars), `blink` (`true`), `blinkMs` (`700`, 200–5000).
 - **`sidebar.persist`** (default `true`) — every named row renders, drawing its zero skeleton until data arrives; `false` omits rows with no data.
-- **`sidebar.placeholder`** (default `"—"`) — non-empty string; only for a data-less row with no skeleton, unreachable for shipped fields.
+- **`sidebar.placeholder`** (default `"—"`) — non-empty string; only for a data-less row with no skeleton. `caution` never draws it, and `updated` draws it until the host records an action.
 - **`sidebar.maxLines`** (default `24`) — whole rail, fixed lines plus rows, 1–24.
 - **`sidebar.tps.scope`** (default `"family"`) — `"family"` paces the open session plus subagents; `"session"` paces the open session alone.
 - **`sidebar.tps.display`** (default `"avg"`) — `"avg"` settled-turn average, `"rt"` realtime estimate, `"both"` both figures plus ttft.
@@ -153,6 +154,11 @@ With `sidebar.persist` (the default) every named row renders, drawing its zero s
 **Format**
 
 - **`format.duration`** (default `"spaced"`, `2h 14m 37s`) — or `"compact"` (`2h14m37s`). Zero-padding is the same either way (`14m 07s`, never `14m 7s`).
+- **`format.timestamp.locale`** (default the host locale) — BCP-47 locale for the `updated` row, for example `"en-GB"`. A malformed locale is reported and the host locale is used.
+- **`format.timestamp.dateStyle`** (default `"short"`) — `"short"` (locale numeric date), `"medium"` (spelled month, wider), or `"none"` (time only).
+- **`format.timestamp.timeStyle`** (default `"medium"`) — `"medium"` keeps seconds, `"short"` drops them, `"none"` leaves a date-only row. Both halves cannot be `"none"`: the pair falls back to the defaults with a warning.
+- **`format.timestamp.hour12`** (default: the locale's own clock) — `true` forces `2:32:07 PM`, `false` forces `14:32:07`.
+- **`format.timestamp.timeZone`** (default the host zone) — an IANA name (`"Asia/Tokyo"`) or UTC offset (`"+05:30"`). Omit it to follow the host through daylight-saving changes; a Windows zone id is not valid and is reported, with the host zone used.
 
 **Glyphs**
 

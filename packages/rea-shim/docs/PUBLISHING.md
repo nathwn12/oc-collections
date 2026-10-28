@@ -43,17 +43,21 @@ run time, so it never appears in the version checklist.
 
 `repository.url` in `package.json` names
 `https://github.com/nathwn12/oc-collections` with
-`directory: packages/rea-shim`; provenance requires it. `package.json` has
-no `scripts` field at all: a postinstall download would silently never run
-under npx, so upstream is acquired on first RUN by the launcher instead.
+`directory: packages/rea-shim`; provenance requires it. `package.json` carries
+no lifecycle hook (`postinstall`/`prepare`/`prepublishOnly`): a postinstall
+download would silently never run under npx, so upstream is acquired on first
+RUN by the launcher instead. The only scripts are the development pair
+`test` and `check`, which are never invoked by an install.
 The workflow runs on a GitHub-hosted runner with `id-token: write` (OIDC
 requirement); self-hosted runners are not trusted publishers.
 
 ## Release evidence
 
-The package's `node --test test/bootstrap.test.js` suite is an offline
-contract suite: fixtures and injected runners, no downloads and no real
-engine. It is required, but it is not runtime proof.
+The package's `npm test` suite is an offline contract suite: fixtures and
+injected runners, no downloads and no real engine. It is required, but the
+part that spawns the launcher drives a stub upstream, so it proves the stdio
+channel, never upstream's inventory. Runtime proof is still the clean Windows
+Sandbox run documented in `docs/GUIDE.md`.
 
 Before calling a release proven, run the clean Windows Sandbox acceptance
 recipe in `docs/GUIDE.md` from the candidate checkout

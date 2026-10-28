@@ -161,6 +161,7 @@ export default Plugin.define({
     const {
       messagesOf,
       treeTotals,
+      sessionCost,
       contextUsage,
       sessionElapsed,
       statusOf,
@@ -302,13 +303,19 @@ export default Plugin.define({
       // share its scope: when the tree is on record its rolled-up tokens
       // replace the session's own, and the cost/total rows read `tree` itself.
       // The tree is derived only when a row that needs it is on the rail.
-      const tree =
-        wants("cost") || wants("total") || wants("tokens") || wants("cache") || wants("reasoning")
-          ? treeTotals(sessionID, session?.cost)
-          : undefined;
+      //
+      // `cost` is the current model's spend; `total` is the host's family
+      // roll-up. Neither reads the other's source, so no hand-off can make the
+      // lifetime figure inherit a per-model one.
+      const wantsUsage =
+        wants("cost") || wants("total") || wants("tokens") || wants("cache") || wants("reasoning");
+      const ownCost = wantsUsage ? sessionCost(sessionID, session as SessionLike | undefined) : undefined;
+      const tree = wantsUsage ? treeTotals(sessionID) : undefined;
 
       return {
         ...session,
+        cost: ownCost?.cost,
+        costKind: ownCost?.kind,
         tokens: tree?.tokens ?? session?.tokens,
         caution: wants("caution") ? announce(sessionID) : undefined,
         branch: wants("branch") ? branchOf(location) : undefined,
@@ -321,6 +328,9 @@ export default Plugin.define({
         tps: wants("tps") ? sessionTps(sessionID, session) : undefined,
         spark: wants("spark") ? sparkValues(sessionID) : undefined,
         elapsedMs: wants("elapsed") ? sessionElapsed(sessionID) : undefined,
+        // The newest action the host recorded, read only when the row asked for
+        // it: a default install does no extra message walk.
+        lastActionMs: wants("updated") ? lastActivity(sessionID) : undefined,
         turns,
         guard: bridge?.status,
         // Read the go store inside the render too, so a poll re-runs the rail

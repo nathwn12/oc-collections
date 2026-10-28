@@ -15,6 +15,10 @@ import { sparkline } from "../src/tui/stats.js";
 type HostWrite = (text: string) => Promise<{ status: string }>;
 let hostWrite: HostWrite = async () => ({ status: "written" });
 
+// The floor mark a history-bounded `cost` figure carries, built from its code
+// point so this file stays ASCII.
+const FLOOR = String.fromCharCode(0x2265);
+
 mock.module("../src/tui/host-clipboard.js", () => ({
   createHostClipboard: () => ({ writeText: (text: string) => hostWrite(text) }),
 }));
@@ -175,6 +179,16 @@ function harness(options: unknown, directory: string, session: unknown = undefin
       },
       session: {
         get: (id: string) => (id === "ses_test" ? session : extras.children?.[id]),
+        // The host's family roll-up: this session plus every child, persisted on
+        // the record, which is what the `total` row reads.
+        cost: () => {
+          const own = (session as { cost?: number } | undefined)?.cost ?? 0;
+          let total = own;
+          for (const child of Object.values(extras.children ?? {})) {
+            total += (child as { cost?: number } | undefined)?.cost ?? 0;
+          }
+          return total;
+        },
         list: () => {
           counts.sessionList += 1;
           return extras.sessions ?? [];
@@ -188,10 +202,29 @@ function harness(options: unknown, directory: string, session: unknown = undefin
         // other test exercises.
         ...(extras.root === undefined ? {} : { root: (id: string) => extras.root!(id) }),
         message: {
-          list: (id: string) =>
-            extras.messageList !== undefined
-              ? extras.messageList(id)
-              : (extras.messagesBySession?.[id] ?? extras.messages ?? []),
+          list: (id: string) => {
+            if (extras.messageList !== undefined) return extras.messageList(id);
+            const explicit = extras.messagesBySession?.[id] ?? extras.messages;
+            if (explicit !== undefined) return explicit;
+            // A record with no message fixture stands for a session whose whole
+            // history is the one completed turn the record summarises: the
+            // `cost` row derives the current model's spend from that step, so
+            // the fixtures stay honest without a per-test message list.
+            const record = (id === "ses_test" ? session : extras.children?.[id]) as
+              | { model?: unknown; cost?: unknown; tokens?: unknown }
+              | undefined;
+            if (record === undefined) return [];
+            return [
+              {
+                id: `msg_${id}`,
+                type: "assistant",
+                model: record.model,
+                time: { created: 0, completed: 1 },
+                cost: record.cost,
+                tokens: record.tokens,
+              },
+            ];
+          },
         },
         permission: { list: () => [] },
       },
@@ -348,7 +381,7 @@ test("draws the family total for a childless session, and under a renamed label"
   // subagent run, that family figure IS the session's own cost - the row says so
   // instead of blanking at `$0.000`.
   const plain = await childless({ sidebar: { rows: ["cost", "total"] } });
-  expect(plain).toContain("cost      $0.191");
+  expect(plain).toContain(`cost      ${FLOOR}$0.191`);
   expect(plain).toContain("total     $0.191 · 0 subagents");
 
   // The owner's rename: only the label column moves, the values do not.
@@ -356,7 +389,7 @@ test("draws the family total for a childless session, and under a renamed label"
     sidebar: { rows: ["cost", "total"] },
     layout: { labels: { cost: "session", total: "lifetime" } },
   });
-  expect(renamed).toContain("session   $0.191");
+  expect(renamed).toContain(`session   ${FLOOR}$0.191`);
   expect(renamed).toContain("lifetime  $0.191 · 0 subagents");
 
   // A session with a subagent still sums the family, unchanged by the fix.
@@ -387,13 +420,13 @@ test("draws the family total for a childless session, and under a renamed label"
 
 test("totals subagent sessions and reads context from the last request", async () => {
   const messages = [
-    { tokens: { input: 100, output: 10, cache: { read: 1000, write: 0 } } },
-    { tokens: { input: 212, output: 415, reasoning: 686, cache: { read: 175744, write: 0 } } },
+    { type: "assistant", model: LIVE_SESSION.model, cost: 0.09565, tokens: { input: 100, output: 10, cache: { read: 1000, write: 0 } } },
+    { type: "assistant", model: LIVE_SESSION.model, cost: 0.09565, tokens: { input: 212, output: 415, reasoning: 686, cache: { read: 175744, write: 0 } } },
   ];
   const { context, claims } = harness(undefined, workspace(), LIVE_SESSION, {
     family: ["ses_test", "ses_child"],
     children: { ses_child: { cost: 0.02010514 } },
-    messages,
+    messagesBySession: { ses_test: messages },
   });
   flightDeck.setup(context);
 
@@ -738,10 +771,10 @@ test("derives only the rows actually on the rail", async () => {
   expect(counts.modelList).toBe(0);
 });
 
-test("a subagent session does not claim its parent's family as its own", async () => {
-  // The host keys `family()` by the family root, so asking from a child returns
-  // the root and every sibling. Merging that into `cost` would report the whole
-  // tree under a label that promises this conversation plus its own subagents.
+test("a subagent session totals the family root but costs only its own model", async () => {
+  // The host keys `cost()` by the family root: handed a child it answers that
+  // child's own figure. So the roll-up is resolved from `root()`, and `total`
+  // is the whole conversation while `cost` stays this session's own spend.
   const { context, claims } = harness(
     { sidebar: { rows: ["cost", "total"], persist: false } },
     workspace(),
@@ -755,11 +788,9 @@ test("a subagent session does not claim its parent's family as its own", async (
 
   const { sidebar } = railClaims(claims);
   const frame = await frameOf(sidebar!.render, 40, 8);
-  // Its own figure, and no family row at all.
-  expect(frame).toContain("cost      $0.191");
-  expect(frame).not.toContain("$8");
-  expect(frame).not.toContain("2 subagents");
-  expect(frame).not.toContain("total");
+  // Its own figure first, then the family's from the root's roll-up.
+  expect(frame).toContain(`cost      ${FLOOR}$0.191`);
+  expect(frame).toContain("$8.19 · 2 subagents");
 });
 
 test("a subagent total is still summed for the family root", async () => {
@@ -1349,6 +1380,33 @@ test("a subagent session paces its own stream, not its family's", async () => {
   const frame = await frameOf(sidebar!.render, 40, 6);
   expect(frame).toContain("tps       100 tok/s");
   expect(frame).not.toContain("1100 tok/s");
+});
+
+test("draws the updated row from the newest host message stamp", async () => {
+  // The row is fed by the host's message times, not by the render clock: a
+  // fixed completed stamp must reach the frame exactly as configured. The
+  // newest message is last in the host's list, which is what the reader walks
+  // backwards from, and `persist: false` keeps the frame to this one row.
+  const stamp = Date.UTC(2026, 9, 27, 14, 32, 7);
+  const { context, claims } = harness(
+    {
+      sidebar: { rows: ["updated"], persist: false },
+      format: {
+        timestamp: { locale: "en-US", dateStyle: "short", timeStyle: "medium", hour12: false, timeZone: "UTC" },
+      },
+    },
+    workspace(),
+    LIVE_SESSION,
+    {
+      messages: [
+        { type: "user", time: { created: stamp - 120_000 } },
+        { type: "assistant", time: { created: stamp - 60_000, completed: stamp }, tokens: { output: 1 } },
+      ],
+    },
+  );
+  flightDeck.setup(context);
+  const { sidebar } = railClaims(claims);
+  expect(await frameOf(sidebar!.render, 60, 6)).toContain("updated   10/27/26, 14:32:07");
 });
 
 // The `ses` row is opt-in and draws a SHORT PRUNED PREVIEW of the id (clipped

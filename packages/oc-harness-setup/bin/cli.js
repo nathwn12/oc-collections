@@ -63,6 +63,54 @@ const DIR_ALIASES = { 'state-seed': 'state' };
 const INSTALL_OWNED = ['$schema', 'default_agent', 'formatter', 'compaction', 'tool_output', 'media', 'watcher', 'policies'];
 const UNION_KEYS = ['plugins'];
 const DISTRO_PLUGIN_IDS = ['oc-flight-deck'];
+
+// `plugins` element truth for OpenCode 2.2.0, measured against the installed
+// host (`opencode v2.2.0`, `opencode debug config`): an entry must be a
+// specifier STRING — an npm name, `name@version`, `github:owner/repo#ref
+// ::path:pkg`, or a local `.ts` path. The 1.x `[specifier, options]` tuple is
+// DROPPED by the 2.2.0 schema (so the plugin silently stops loading), and a
+// non-string is dropped too. A tuple is therefore reduced to its specifier —
+// 2.2.0 has nowhere to express the options — and every entry that cannot be
+// expressed is reported, never written into a config the host would ignore.
+function pluginSpecifier(entry) {
+  if (typeof entry === 'string') {
+    const s = entry.trim();
+    return s ? s : null;
+  }
+  if (Array.isArray(entry) && typeof entry[0] === 'string' && entry[0].trim()) {
+    return entry[0].trim();
+  }
+  return null;
+}
+
+// Bare id of a specifier without mangling a scoped name: strip only a version
+// suffix after the first character (`pkg@1.2.3` → `pkg`, `@scope/pkg@1.2.3`
+// → `@scope/pkg`), and leave a `github:`/path specifier untouched.
+function pluginIdOf(spec) {
+  const s = String(spec ?? '');
+  const at = s.indexOf('@', 1);
+  return at > 0 ? s.slice(0, at) : s;
+}
+
+// Reduce, dedupe (order preserved), and report 1.x plugin entries so a re-run
+// produces byte-identical output and nothing the host would drop survives.
+function normalizePluginEntries(entries) {
+  const out = [];
+  for (const entry of entries) {
+    const spec = pluginSpecifier(entry);
+    if (spec === null) {
+      log('merge', `dropped an unrepresentable plugins entry ${JSON.stringify(entry)} — OpenCode 2.2.0 accepts specifier strings only`);
+      continue;
+    }
+    if (Array.isArray(entry)) {
+      log('merge', `normalized the 1.x plugin tuple ${JSON.stringify(entry)} → "${spec}" (OpenCode 2.2.0 drops tuple entries; per-plugin options cannot be carried)`);
+    }
+    if (out.includes(spec)) continue;
+    out.push(spec);
+  }
+  return out;
+}
+
 // Adopter-owned files: a shipped skeleton that the adopter genuinely edited
 // MUST survive an upgrade — overwriting it destroys their data. Genuineness
 // is proven against the prior manifest (see stageFiles): a destination that
@@ -234,8 +282,34 @@ function preflight() {
         '). Install/upgrade OpenCode first, then re-run setup.'
     );
   }
-  const first = (res.stdout || '').trim().split(/\r?\n/)[0] || 'unknown version';
-  log('preflight', `opencode ${first} — OK`);
+  // The 2.2.0 host prints exactly `opencode v2.2.0`; parse the version out of
+  // the banner instead of echoing the whole line (which logged the product name
+  // twice) and instead of accepting ANY version: the merged config uses the
+  // 2.2.0 dialect, so a 1.x host would silently drop `plugins[]` tuples,
+  // `permissions[]` and `policies[]` rather than honour them.
+  const banner = (res.stdout || '').trim().split(/\r?\n/)[0] || '';
+  const m = banner.match(/(\d+)\.(\d+)\.(\d+)/);
+  if (!m) {
+    bail(`could not read an OpenCode version from '${banner || 'no output'}' — expected 'opencode v2.2.0' or newer. Check 'opencode --version' by hand.`);
+  }
+  const host = { raw: `${m[1]}.${m[2]}.${m[3]}`, major: Number(m[1]), minor: Number(m[2]) };
+  if (host.major < 2) {
+    bail(
+      `OpenCode ${host.raw} speaks the 1.x config dialect (@opencode-ai/* plugins, an object \`permission\` block), not the 2.2.0 shape this package writes ` +
+        '(plugins[] of specifier strings, permissions[] of {action,resource,effect}, policies[] with tool.use). Nothing was written. ' +
+        'Upgrade first (opencode upgrade), then re-run setup.'
+    );
+  }
+  if (host.minor < 2) {
+    console.warn(
+      `[warn] preflight: OpenCode ${host.raw} is below the 2.2.0 this package is tested on. The merge writes the 2.2-shaped config ` +
+        '(plugins[] as specifier strings, permissions[] of {action,resource,effect}, policies[] with tool.use); ' +
+        'on 2.0/2.1 those blocks may be partly ignored, so the deny gate is not proven on this host. ' +
+        'The install proceeds — upgrade to 2.2.0 or newer when you can.'
+    );
+  }
+  log('preflight', `opencode ${host.raw} — OK`);
+  return host;
 }
 
 function findConfigDir() {
@@ -699,24 +773,25 @@ function mergeJsonc(configDir, backupPath, manifest, retiredSkills = new Set(), 
         }
         merged.permissions = [...distroHead, ...userOnly, ...distroTail];
       } else if (UNION_KEYS.includes(k)) {
-        let next;
-        if (Array.isArray(user[k])) {
-          next = [...new Set([...(Array.isArray(merged[k]) ? merged[k] : []), ...user[k]])];
+        if (!Array.isArray(user[k])) {
+          merged[k] = user[k]; // adopter's non-array value wins verbatim
         } else {
-          next = user[k];
+          // `plugins` is the only union key, and it is the one whose element
+          // shape changed in 2.2.0: normalize before the union so dedupe works
+          // on strings (a tuple would never compare equal across runs and
+          // would accumulate).
+          merged[k] = normalizePluginEntries([
+            ...(Array.isArray(merged[k]) ? merged[k] : []),
+            ...user[k],
+          ]);
         }
-        if (k === 'plugins' && priorIsOlder && Array.isArray(next)) {
-          const isDistroPlugin = (e) => {
-            const raw = Array.isArray(e) ? e[0] : e;
-            return DISTRO_PLUGIN_IDS.includes(String(raw ?? '').split('@')[0]);
-          };
-          for (const d of next.filter(isDistroPlugin)) {
-            const raw = Array.isArray(d) ? d[0] : d;
-            log('merge', `dropped the retired distro plugin ${String(raw ?? '').split('@')[0]} (this version ships no plugin; your own plugin entries are kept)`);
+        if (k === 'plugins' && priorIsOlder && Array.isArray(merged[k])) {
+          const isDistroPlugin = (e) => DISTRO_PLUGIN_IDS.includes(pluginIdOf(e));
+          for (const d of merged[k].filter(isDistroPlugin)) {
+            log('merge', `dropped the retired distro plugin ${pluginIdOf(d)} (this version ships no plugin; your own plugin entries are kept)`);
           }
-          next = next.filter((e) => !isDistroPlugin(e));
+          merged[k] = merged[k].filter((e) => !isDistroPlugin(e));
         }
-        merged[k] = next;
       } else if (k === 'references') {
         // Object union: distro keys + user-only keys.
         merged.references = { ...(user.references ?? {}), ...(merged.references ?? {}) };
@@ -1195,7 +1270,7 @@ async function setup(opts) {
     console.log('[ci] refusing to mutate — print-only. Run setup interactively to install.');
     return 0;
   }
-  preflight();
+  const host = preflight();
   const configDir = findConfigDir();
   warnConfigTargets(configDir);
   const files = collectIncoming(configDir);
@@ -1239,6 +1314,9 @@ async function setup(opts) {
   const manifest = {
     package: PKG_NAME,
     version: pkgVersion(),
+    // The host whose dialect the merged config was written for: recorded so an
+    // install's config shapes are auditable against the CLI that will read them.
+    hostVersion: host.raw,
     created: new Date().toISOString(),
     configDir,
     backupPath: backupPath,

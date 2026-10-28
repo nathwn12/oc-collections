@@ -14,7 +14,8 @@
 // rates, and ./rows.js the row rendering. This module re-exports the same
 // public surface it has always had.
 
-export { clip, formatCost, formatCount, formatDuration, fuelBar, sparkline } from "./format.js";
+export { clip, formatCost, formatCount, formatDuration, formatTimestamp, fuelBar, sparkline } from "./format.js";
+export type { TimestampDateStyle, TimestampFormat, TimestampTimeStyle } from "./format.js";
 export { statLine, statRows, statSegments } from "./rows.js";
 export type { StatSegment } from "./rows.js";
 export { ANIMATED_FIELDS, DEFAULT_PLACEHOLDER, STAT_FIELDS, canonicalField, fieldLabel, isStatField, skeletonValue } from "./stat-fields.js";
