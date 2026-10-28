@@ -17,6 +17,23 @@ import { githubCacheId, githubCacheLayoutRoot, sha256Hex } from "../dist/github.
 process.env.OC_BIFROST_REPORT = "off"
 
 /**
+ * Isolate the HOST config root for the whole file, for the same reason as the
+ * sink above. `setup()` reads the global config root twice - `scanStrandedV1`
+ * for stranded V1 plugin files, and `readBifrostFileConfig` for
+ * `oc-bifrost.jsonc` - each resolved from `$XDG_CONFIG_HOME`, falling back to
+ * `~/.config/opencode` (`src/scan.ts:93`, `src/config-file.ts:45`). On a real
+ * host that is the operator's own config: a stranded `plugins/*.ts` there is a
+ * `bridge.warn` from `setup()` before any mount, so a test asserting its own
+ * wiring silence goes red over state it never touched. The empty fixture has no
+ * `opencode/` subtree - no plugins to flag, no file config to merge. The cache
+ * root stays per-test (`withXdgCacheHome`), because each test builds its own
+ * github snapshot under it.
+ */
+const HOST_CONFIG_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "bifrost-multi-config-"))
+process.env.XDG_CONFIG_HOME = HOST_CONFIG_ROOT
+test.after(() => fs.rmSync(HOST_CONFIG_ROOT, { recursive: true, force: true }))
+
+/**
  * The bridge's headline claim is that it scales to N plugins with one writer per
  * artifact and no collision. Until now every test mounted exactly one plugin, so
  * that claim was structural but unexecuted. These tests run the real mount loop.
