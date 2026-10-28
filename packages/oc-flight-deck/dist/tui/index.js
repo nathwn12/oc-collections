@@ -400,6 +400,28 @@ function formatDuration(ms, style = "compact") {
     return `${hours}h${join}${String(minutes).padStart(2, "0")}m${join}${ss}s`;
   return minutes > 0 ? `${minutes}m${join}${ss}s` : `${seconds}s`;
 }
+function formatTimestamp(ms, format = {}) {
+  const dateStyle = format.dateStyle ?? "short";
+  const timeStyle = format.timeStyle ?? "medium";
+  if (dateStyle === "none" && timeStyle === "none")
+    return;
+  const options = {};
+  if (dateStyle !== "none")
+    options.dateStyle = dateStyle;
+  if (timeStyle !== "none")
+    options.timeStyle = timeStyle;
+  if (format.hour12 !== undefined)
+    options.hour12 = format.hour12;
+  const timeZone = format.timeZone?.trim();
+  if (timeZone !== undefined && timeZone.length > 0)
+    options.timeZone = timeZone;
+  const locale = format.locale?.trim();
+  try {
+    return new Intl.DateTimeFormat(locale === undefined || locale.length === 0 ? undefined : locale, options).format(ms);
+  } catch {
+    return;
+  }
+}
 var DEFAULT_BAR_WIDTH = 10;
 function fuelBar(ratio, width = DEFAULT_BAR_WIDTH) {
   const cells = Math.max(1, Math.floor(width));
@@ -702,6 +724,7 @@ var STAT_FIELDS = [
   "context",
   "perms",
   "elapsed",
+  "updated",
   "tps",
   "spark",
   "reasoning",
@@ -1003,6 +1026,13 @@ function statLine(field, source, layout = {}) {
       if (ms === undefined || ms <= 0)
         return;
       return row("elapsed", formatDuration(ms, layout.durationStyle));
+    }
+    case "updated": {
+      const ms = asCount2(source.lastActionMs);
+      if (ms === undefined || ms <= 0)
+        return;
+      const value = formatTimestamp(ms, layout.timestamp);
+      return value === undefined ? undefined : row("updated", value);
     }
     case "tps": {
       const pair = asRecord2(source.tps);
@@ -1553,7 +1583,11 @@ var DEFAULT_LAYOUT = {
   barWidth: 10,
   sparkWidth: 12
 };
-var DEFAULT_FORMAT = { duration: "spaced" };
+var DEFAULT_TIMESTAMP = { dateStyle: "short", timeStyle: "medium" };
+var DEFAULT_FORMAT = {
+  duration: "spaced",
+  timestamp: DEFAULT_TIMESTAMP
+};
 var DEFAULT_GLYPHS = {
   watch: "\u25B2",
   caution: "\u25CF",
@@ -1861,6 +1895,13 @@ function mergeSection(file, host, key) {
       merged["tps"] = { ...fileTps, ...hostTps };
     }
   }
+  if (key === "format") {
+    const fileTimestamp = sectionOf(file, key)["timestamp"];
+    const hostTimestamp = sectionOf(host, key)["timestamp"];
+    if (isRecord(fileTimestamp) && isRecord(hostTimestamp)) {
+      merged["timestamp"] = { ...fileTimestamp, ...hostTimestamp };
+    }
+  }
   return merged;
 }
 function mergeOptions(fileOptions, hostOptions) {
@@ -1942,8 +1983,99 @@ function readDurationStyle(value, issues) {
   issues.push('format.duration must be "compact" or "spaced"; using the default');
   return DEFAULT_FORMAT.duration;
 }
+function readTimestampStyle(value, allowed, fallback, path, issues) {
+  if (value === undefined)
+    return fallback;
+  const text = typeof value === "string" ? value.trim() : "";
+  if (allowed.includes(text))
+    return text;
+  issues.push(`${path} must be one of ${allowed.join(", ")}; using "${fallback}"`);
+  return fallback;
+}
+function readHour12(value, issues) {
+  if (value === undefined)
+    return;
+  if (typeof value === "boolean")
+    return value;
+  issues.push("format.timestamp.hour12 must be true or false; using the host locale");
+  return;
+}
+function readTimestampLocale(value, issues) {
+  if (value === undefined)
+    return;
+  if (typeof value !== "string") {
+    issues.push("format.timestamp.locale must be a BCP-47 locale string; using the host locale");
+    return;
+  }
+  const path = "format.timestamp.locale";
+  const text = normalizeText(value, path, issues).trim();
+  if (text.length === 0)
+    return;
+  if (text.length > 64) {
+    issues.push(`${path} was longer than 64 characters; using the host locale`);
+    return;
+  }
+  try {
+    Intl.getCanonicalLocales(text);
+  } catch {
+    issues.push(`${path} is not a valid BCP-47 locale; using the host locale`);
+    return;
+  }
+  return text;
+}
+function readTimestampZone(value, issues) {
+  if (value === undefined)
+    return;
+  if (typeof value !== "string") {
+    issues.push("format.timestamp.timeZone must be an IANA zone or UTC offset; using the host zone");
+    return;
+  }
+  const path = "format.timestamp.timeZone";
+  const text = normalizeText(value, path, issues).trim();
+  if (text.length === 0)
+    return;
+  if (text.length > 64) {
+    issues.push(`${path} was longer than 64 characters; using the host zone`);
+    return;
+  }
+  try {
+    new Intl.DateTimeFormat(undefined, { timeZone: text });
+  } catch {
+    issues.push(`${path} is not a valid IANA zone or UTC offset; using the host zone`);
+    return;
+  }
+  return text;
+}
+function readTimestamp(value, issues) {
+  if (value !== undefined && !isRecord(value)) {
+    issues.push("format.timestamp must be an object; using the defaults");
+    return DEFAULT_TIMESTAMP;
+  }
+  const section = isRecord(value) ? value : {};
+  let dateStyle = readTimestampStyle(section["dateStyle"], ["none", "short", "medium"], DEFAULT_TIMESTAMP.dateStyle, "format.timestamp.dateStyle", issues);
+  let timeStyle = readTimestampStyle(section["timeStyle"], ["none", "short", "medium"], DEFAULT_TIMESTAMP.timeStyle, "format.timestamp.timeStyle", issues);
+  if (dateStyle === "none" && timeStyle === "none") {
+    issues.push('format.timestamp.dateStyle and timeStyle are both "none"; using the default presentation');
+    dateStyle = DEFAULT_TIMESTAMP.dateStyle;
+    timeStyle = DEFAULT_TIMESTAMP.timeStyle;
+  }
+  const timestamp = { dateStyle, timeStyle };
+  const locale = readTimestampLocale(section["locale"], issues);
+  if (locale !== undefined)
+    timestamp.locale = locale;
+  const hour12 = readHour12(section["hour12"], issues);
+  if (hour12 !== undefined)
+    timestamp.hour12 = hour12;
+  const timeZone = readTimestampZone(section["timeZone"], issues);
+  if (timeZone !== undefined)
+    timestamp.timeZone = timeZone;
+  return timestamp;
+}
 function readFormat(section, issues) {
-  return { duration: readDurationStyle(section["duration"], issues) };
+  return {
+    duration: readDurationStyle(section["duration"], issues),
+    timestamp: readTimestamp(section["timestamp"], issues)
+  };
 }
 function readGlyph(value, fallback, path, issues) {
   if (value === undefined)
@@ -2304,6 +2436,7 @@ function railLines(config, source = {}) {
     persist: config.sidebar.persist,
     placeholder: config.sidebar.placeholder,
     durationStyle: config.format.duration,
+    timestamp: config.format.timestamp,
     tpsDisplay: config.sidebar.tps.display,
     hasTotalRow: config.sidebar.rows.includes("total")
   };
@@ -4051,6 +4184,7 @@ var tui_default = Plugin.define({
         tps: wants("tps") ? sessionTps(sessionID, session) : undefined,
         spark: wants("spark") ? sparkValues(sessionID) : undefined,
         elapsedMs: wants("elapsed") ? sessionElapsed(sessionID) : undefined,
+        lastActionMs: wants("updated") ? lastActivity(sessionID) : undefined,
         turns,
         guard: bridge?.status,
         go: goBridge?.usage,
