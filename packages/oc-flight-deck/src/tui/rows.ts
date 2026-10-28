@@ -6,7 +6,7 @@
 // character in a host-supplied string cannot move the cursor. Pure, so the
 // rendering is trivial to test.
 
-import { DEFAULT_BAR_WIDTH, clip, formatCost, formatCount, formatDuration, fuelBar, sparkline } from "./format.js";
+import { DEFAULT_BAR_WIDTH, clip, formatCost, formatCount, formatDuration, formatTimestamp, fuelBar, sparkline } from "./format.js";
 import { asCount, asRecord, asText } from "./coerce.js";
 import { goResetSuffix, goTone, type GoWindow } from "./go-usage.js";
 import { guardToken } from "./guard-tokens.js";
@@ -446,6 +446,19 @@ export function statLine(
       const ms = asCount(source.elapsedMs);
       if (ms === undefined || ms <= 0) return undefined;
       return row("elapsed", formatDuration(ms, layout.durationStyle));
+    }
+    case "updated": {
+      // An absolute instant, not a relative age: the row answers "when did the
+      // host last record something here", and a wall-clock stamp stays
+      // meaningful after the panel has been idle for a while. A zero or
+      // negative stamp is not a real action time (1970 is a missing value that
+      // coerced to a number), so it hides like every other no-data row; the
+      // formatter owns the presentation and returns `undefined` when the
+      // configured styles or zone cannot draw anything.
+      const ms = asCount(source.lastActionMs);
+      if (ms === undefined || ms <= 0) return undefined;
+      const value = formatTimestamp(ms, layout.timestamp);
+      return value === undefined ? undefined : row("updated", value);
     }
     case "tps": {
       // The triple the reader hands over: `rt` the realtime estimate from

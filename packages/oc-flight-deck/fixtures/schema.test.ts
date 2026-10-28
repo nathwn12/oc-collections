@@ -111,6 +111,24 @@ describe("the schema describes the real config", () => {
     expect(props["layout"]!.properties.barWidth.default).toBe(DEFAULT_CONFIG.layout.barWidth);
     expect(props["layout"]!.properties.sparkWidth.default).toBe(DEFAULT_CONFIG.layout.sparkWidth);
 
+    // The `updated` row's presentation: every key is optional, and the two
+    // style ladders are the code's own lists. The locale and zone defaults are
+    // the empty string, which the config reads as "the host's own".
+    const timestamp = props["format"]!.properties.timestamp;
+    expect(timestamp.default).toEqual(DEFAULT_CONFIG.format.timestamp);
+    expect(timestamp.properties.dateStyle.default).toBe(DEFAULT_CONFIG.format.timestamp.dateStyle);
+    expect(timestamp.properties.dateStyle.default).toBe("short");
+    expect(timestamp.properties.dateStyle.enum).toEqual(["none", "short", "medium"]);
+    expect(timestamp.properties.timeStyle.default).toBe(DEFAULT_CONFIG.format.timestamp.timeStyle);
+    expect(timestamp.properties.timeStyle.default).toBe("medium");
+    expect(timestamp.properties.timeStyle.enum).toEqual(["none", "short", "medium"]);
+    expect(timestamp.properties.locale.default).toBe("");
+    expect(timestamp.properties.timeZone.default).toBe("");
+    expect(timestamp.properties.hour12.type).toBe("boolean");
+    for (const key of ["locale", "dateStyle", "timeStyle", "hour12", "timeZone"]) {
+      expect(timestamp.properties[key].description.length).toBeGreaterThanOrEqual(20);
+    }
+
     expect(props["glyphs"]!.properties.watch.default).toBe(DEFAULT_CONFIG.glyphs.watch);
     expect(props["glyphs"]!.properties.caution.default).toBe(DEFAULT_CONFIG.glyphs.caution);
     expect(props["glyphs"]!.properties.clear.default).toBe(DEFAULT_CONFIG.glyphs.clear);
@@ -310,6 +328,13 @@ describe("the shipped example validates against the shipped schema", () => {
     const style = parsed["style"] as Record<string, unknown>;
     expect(resolveConfig(parsed).config.style).toEqual(DEFAULT_CONFIG.style);
     expect(style["rows"]).toEqual({ "*": { color: "subdued", attributes: [] } });
+    // The timestamp presentation is written out at its defaults too: the empty
+    // locale and zone are the file's spelling of "the host's own", which the
+    // config resolves to the same absence as an omitted key.
+    const format = parsed["format"] as Record<string, unknown>;
+    expect(format["duration"]).toBe("spaced");
+    expect(format["timestamp"]).toEqual({ locale: "", dateStyle: "short", timeStyle: "medium" });
+    expect(resolveConfig(parsed).config.format.timestamp).toEqual(DEFAULT_CONFIG.format.timestamp);
   });
 
   test("hostile values are rejected by the schema or normalized safely by parseConfig", () => {
@@ -340,6 +365,24 @@ describe("the shipped example validates against the shipped schema", () => {
     const maxLinesResolution = resolveConfig(maxLines);
     expect(maxLinesResolution.config.sidebar.maxLines).toBe(DEFAULT_CONFIG.sidebar.maxLines);
     expect(maxLinesResolution.issues.join(" ")).toContain("sidebar.maxLines");
+
+    // The timestamp styles are an enum in the schema too, so `"long"` is
+    // rejected by an editor and falls back loudly in the config.
+    const timestampStyle = { format: { timestamp: { dateStyle: "long" } } };
+    expect(schemaErrors(schema as unknown as SchemaNode, timestampStyle, "")).not.toEqual([]);
+    const timestampStyleResolution = resolveConfig(timestampStyle);
+    expect(timestampStyleResolution.config.format.timestamp.dateStyle).toBe(
+      DEFAULT_CONFIG.format.timestamp.dateStyle,
+    );
+    expect(timestampStyleResolution.issues.join(" ")).toContain("format.timestamp.dateStyle");
+    // A zone is a free string in the schema (the IANA list is runtime data),
+    // so the config probe is the net: a Windows zone id is rejected there and
+    // the host zone is used.
+    const windowsZone = { format: { timestamp: { timeZone: "Pacific Standard Time" } } };
+    expect(schemaErrors(schema as unknown as SchemaNode, windowsZone, "")).toEqual([]);
+    const windowsZoneResolution = resolveConfig(windowsZone);
+    expect(windowsZoneResolution.config.format.timestamp.timeZone).toBeUndefined();
+    expect(windowsZoneResolution.issues.join(" ")).toContain("format.timestamp.timeZone");
 
     // The footer's Go panel flag is a boolean-or-object in the schema too, so
     // a typo is rejected by the editor's validator and corrected loudly by

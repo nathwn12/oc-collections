@@ -145,10 +145,10 @@
         },
         "rows": {
           "type": "array",
-          "items": { "enum": ["caution", "status", "agent", "model", "branch", "cost", "total", "project", "tokens", "cache", "context", "perms", "elapsed", "tps", "spark", "reasoning", "turns", "guard", "go", "ses", "session"] },
+          "items": { "enum": ["caution", "status", "agent", "model", "branch", "cost", "total", "project", "tokens", "cache", "context", "perms", "elapsed", "updated", "tps", "spark", "reasoning", "turns", "guard", "go", "ses", "session"] },
           "default": ["status", "agent", "model", "cost", "project", "tokens", "cache", "context", "perms", "elapsed", "tps"],
           "maxItems": 24,
-          "description": "Which live fields to draw, top to bottom. Any subset, any order - this is the single most useful thing to change. With `sidebar.persist` (the default) every named row always renders, drawing its zero skeleton until the host has data; with `persist: false` rows with no data are omitted entirely. Counted together with `sidebar.lines` against a 24-line cap on the whole rail. The opt-in `ses` row shows a clipped preview of the session id under the `session` label - budget 18 cells, reduced by however much the label overflows `layout.labelWidth`, floored at 8 - and a mouse click on that row copies the full id to the OS clipboard: a host write reporting `written` or an exact clipboard read-back after the OSC52 dispatch verifies it, only a verified copy counts as success, a verified copy stays silent, and an unverified or failed outcome surfaces a toast gated by `notifications.copy`. `session` is accepted as an alias for `ses` and is normalized to it."
+          "description": "Which live fields to draw, top to bottom. Any subset, any order - this is the single most useful thing to change. With `sidebar.persist` (the default) every named row always renders, drawing its zero skeleton until the host has data (the opt-in `updated` row has no skeleton and draws `sidebar.placeholder` instead, because there is no honest zero timestamp); with `persist: false` rows with no data are omitted entirely. Counted together with `sidebar.lines` against a 24-line cap on the whole rail. The opt-in `ses` row shows a clipped preview of the session id under the `session` label - budget 18 cells, reduced by however much the label overflows `layout.labelWidth`, floored at 8 - and a mouse click on that row copies the full id to the OS clipboard: a host write reporting `written` or an exact clipboard read-back after the OSC52 dispatch verifies it, only a verified copy counts as success, a verified copy stays silent, and an unverified or failed outcome surfaces a toast gated by `notifications.copy`. `session` is accepted as an alias for `ses` and is normalized to it."
         },
         "tps": {
           "type": "object",
@@ -173,13 +173,13 @@
         "persist": {
           "type": "boolean",
           "default": true,
-          "description": "Render every field named in `sidebar.rows` as a persistent row, drawing its zero skeleton when the host has no data yet (`$0.000` for money rows, `0 in · 0 out` for tokens, `0 tok/s` for tps — `0 live · 0 avg` when `sidebar.tps.display` is `both` — and so on; `caution` is the one row that never draws a skeleton and stays silent until it has something to announce). True keeps the rail a stable shape that fills in as the session produces data; false restores the old behavior of omitting rows with no data."
+          "description": "Render every field named in `sidebar.rows` as a persistent row, drawing its zero skeleton when the host has no data yet (`$0.000` for money rows, `0 in · 0 out` for tokens, `0 tok/s` for tps — `0 live · 0 avg` when `sidebar.tps.display` is `both` — and so on; `caution` never draws a skeleton and stays silent until it has something to announce, and `updated` draws `sidebar.placeholder` until the host records an action because there is no honest zero timestamp). True keeps the rail a stable shape that fills in as the session produces data; false restores the old behavior of omitting rows with no data."
         },
         "placeholder": {
           "type": "string",
           "minLength": 1,
           "default": "—",
-          "description": "Fallback value for a persistent row with no data that has no skeleton. Used only when `sidebar.persist` is true. Must be a non-empty string; anything else falls back to the default em dash. Every shipped field has a skeleton, so this dash is unreachable in practice."
+          "description": "Fallback value for a persistent row with no data that has no skeleton. Used only when `sidebar.persist` is true. Must be a non-empty string; anything else falls back to the default em dash. `caution` never draws it because its silence is the design, and `updated` uses it until the host records an action — there is no honest zero timestamp."
         },
         "maxLines": {
           "type": "integer",
@@ -327,13 +327,49 @@
     "format": {
       "type": "object",
       "additionalProperties": false,
-      "description": "How values are written on the rail. Display only: these options change how a number is drawn, never what is measured.",
+      "description": "How values are written on the rail. Display only: these options change how a value is drawn, never what is measured.",
       "properties": {
         "duration": {
           "type": "string",
           "enum": ["spaced", "compact"],
           "default": "spaced",
           "description": "How the `elapsed` row joins its segments. `spaced` puts one space between them (`2h 14m 37s`, the default); `compact` runs them together (`2h14m37s`). Zero-padding is identical either way: minutes pad when hours are present, seconds pad when minutes are present (`14m 07s`, never `14m 7s`). An invalid value falls back to `spaced` and is reported."
+        },
+        "timestamp": {
+          "type": "object",
+          "additionalProperties": false,
+          "default": { "dateStyle": "short", "timeStyle": "medium" },
+          "description": "How the opt-in `updated` row writes its absolute timestamp. Every key is optional: leaving `locale`, `hour12` and `timeZone` out follows the host locale, the locale's own 12/24-hour cycle, and the host time zone, so no zone table ships here. `dateStyle` and `timeStyle` map straight onto Intl's own style options, which are never combined with component options.",
+          "properties": {
+            "locale": {
+              "type": "string",
+              "maxLength": 64,
+              "default": "",
+              "description": "A BCP-47 locale for the timestamp, for example `en-US` or `en-GB`. An empty or absent value uses the host's locale. A malformed locale is reported and falls back to the host locale; a well-formed locale the runtime does not carry falls back inside Intl, as ECMA-402 requires."
+            },
+            "dateStyle": {
+              "type": "string",
+              "enum": ["none", "short", "medium"],
+              "default": "short",
+              "description": "The date half of the timestamp. `short` (the default) is the locale's numeric date (`10/27/26` in en-US); `medium` spells the month (`Oct 27, 2026`), which is wider on the rail; `none` omits the date and leaves a time-only row. The deliberately short ladder keeps a wide `long`/`full` date off a thirty-odd-column sidebar. An invalid value falls back to `short` and is reported."
+            },
+            "timeStyle": {
+              "type": "string",
+              "enum": ["none", "short", "medium"],
+              "default": "medium",
+              "description": "The time half of the timestamp. `medium` (the default) keeps the seconds (`2:32:07 PM` in en-US, so recency is readable); `short` drops them (`2:32 PM`); `none` omits the time and leaves a date-only row. `dateStyle` and `timeStyle` cannot both be `none`, because that can only draw a blank: the pair then falls back to the defaults and is reported."
+            },
+            "hour12": {
+              "type": "boolean",
+              "description": "Force a 12-hour clock (`true`) or a 24-hour clock (`false`). Omit the key to follow the locale's own preference. An invalid value is reported and the locale decides. This is Intl's own `hour12` option, so it overrides any hour-cycle extension on `locale`."
+            },
+            "timeZone": {
+              "type": "string",
+              "maxLength": 64,
+              "default": "",
+              "description": "An IANA time-zone identifier (`Asia/Tokyo`, `Europe/Paris`) or a UTC offset identifier (`+05:30`). An empty or absent value uses the host's time zone — ECMA-402's default when `timeZone` is omitted — so daylight-saving changes stay the host's business. A Windows zone id such as `Pacific Standard Time` is not a valid input: it is rejected, reported, and the host zone is used. No Windows-to-IANA mapping is hardcoded here; that data is versioned and belongs to the system's ICU."
+            }
+          }
         }
       }
     },
@@ -414,7 +450,7 @@
             }
           },
           "propertyNames": {
-            "enum": ["*", "caution", "status", "agent", "model", "branch", "cost", "total", "project", "tokens", "cache", "context", "perms", "elapsed", "tps", "spark", "reasoning", "turns", "guard", "go", "ses", "session"]
+            "enum": ["*", "caution", "status", "agent", "model", "branch", "cost", "total", "project", "tokens", "cache", "context", "perms", "elapsed", "updated", "tps", "spark", "reasoning", "turns", "guard", "go", "ses", "session"]
           },
           "default": { "*": { "color": "subdued", "attributes": [] } },
           "description": "Style all live rows under `*`, then optionally override any known row name such as `cost`. A row can change one field and inherit the other from `*`; unknown row names are reported and ignored. `session` is accepted as an alias for `ses` and is normalized to it."

@@ -321,6 +321,9 @@ export default Plugin.define({
         tps: wants("tps") ? sessionTps(sessionID, session) : undefined,
         spark: wants("spark") ? sparkValues(sessionID) : undefined,
         elapsedMs: wants("elapsed") ? sessionElapsed(sessionID) : undefined,
+        // The newest action the host recorded, read only when the row asked for
+        // it: a default install does no extra message walk.
+        lastActionMs: wants("updated") ? lastActivity(sessionID) : undefined,
         turns,
         guard: bridge?.status,
         // Read the go store inside the render too, so a poll re-runs the rail

@@ -1351,6 +1351,33 @@ test("a subagent session paces its own stream, not its family's", async () => {
   expect(frame).not.toContain("1100 tok/s");
 });
 
+test("draws the updated row from the newest host message stamp", async () => {
+  // The row is fed by the host's message times, not by the render clock: a
+  // fixed completed stamp must reach the frame exactly as configured. The
+  // newest message is last in the host's list, which is what the reader walks
+  // backwards from, and `persist: false` keeps the frame to this one row.
+  const stamp = Date.UTC(2026, 9, 27, 14, 32, 7);
+  const { context, claims } = harness(
+    {
+      sidebar: { rows: ["updated"], persist: false },
+      format: {
+        timestamp: { locale: "en-US", dateStyle: "short", timeStyle: "medium", hour12: false, timeZone: "UTC" },
+      },
+    },
+    workspace(),
+    LIVE_SESSION,
+    {
+      messages: [
+        { type: "user", time: { created: stamp - 120_000 } },
+        { type: "assistant", time: { created: stamp - 60_000, completed: stamp }, tokens: { output: 1 } },
+      ],
+    },
+  );
+  flightDeck.setup(context);
+  const { sidebar } = railClaims(claims);
+  expect(await frameOf(sidebar!.render, 60, 6)).toContain("updated   10/27/26, 14:32:07");
+});
+
 // The `ses` row is opt-in and draws a SHORT PRUNED PREVIEW of the id (clipped
 // width-aware to the value column, with an ellipsis), while its click gesture
 // must carry the FULL id. These pin the pruned display, the gesture-only copy
