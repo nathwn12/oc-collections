@@ -792,6 +792,15 @@ function skeletonValue(field, layout) {
 
 // src/tui/rows.ts
 var SPINNER = ["\u280B", "\u2819", "\u2839", "\u2838", "\u283C", "\u2834", "\u2826", "\u2827", "\u2807", "\u280F"];
+var ESTIMATE_MARK = "~";
+var FLOOR_MARK = String.fromCharCode(8805);
+function feeMark(kind) {
+  if (kind === "estimated")
+    return ESTIMATE_MARK;
+  if (kind === "bounded")
+    return FLOOR_MARK;
+  return "";
+}
 var SES_PREVIEW_WIDTH = 18;
 var CONTROL_CHARS = /[\u0000-\u001F\u007F-\u009F]/g;
 function plain(value) {
@@ -947,11 +956,12 @@ function statLine(field, source, layout = {}) {
       const family = count !== undefined && count > 0 ? count : 0;
       const merge = layout.hasTotalRow !== true && cost !== undefined && treeCost !== undefined && family > 0 && treeCost > cost;
       if (!merge) {
-        const value = layout.hasTotalRow === true ? cost ?? treeCost : treeCost ?? cost;
-        return value === undefined ? undefined : row("cost", formatCost(value));
+        if (cost === undefined)
+          return;
+        return row("cost", `${feeMark(source.costKind)}${formatCost(cost)}`);
       }
       const plural = family === 1 ? "subagent" : "subagents";
-      return row("cost", `${formatCost(treeCost)} \xB7 ${family} ${plural}`);
+      return row("cost", `${feeMark(tree?.kind)}${formatCost(treeCost)} \xB7 ${family} ${plural}`);
     }
     case "total": {
       const tree = asRecord2(source.tree);
@@ -962,7 +972,7 @@ function statLine(field, source, layout = {}) {
         return;
       const count = asCount2(tree.count) ?? 0;
       const plural = count === 1 ? "subagent" : "subagents";
-      return row("total", `${formatCost(cost)} \xB7 ${count} ${plural}`);
+      return row("total", `${feeMark(tree.kind)}${formatCost(cost)} \xB7 ${count} ${plural}`);
     }
     case "project": {
       const project = asRecord2(source.project);
@@ -3668,59 +3678,263 @@ function createSessionReads(context) {
       return [];
     }
   };
-  const isFamilyRoot = (sessionID) => {
+  const emptyTokens = () => ({
+    input: 0,
+    output: 0,
+    reasoning: 0,
+    cache: { read: 0, write: 0 }
+  });
+  const readTokens = (source) => {
+    const record = asRecord2(source);
+    const tokens = emptyTokens();
+    if (record === undefined)
+      return tokens;
+    tokens.input = asCount2(record["input"]) ?? 0;
+    tokens.output = asCount2(record["output"]) ?? 0;
+    tokens.reasoning = asCount2(record["reasoning"]) ?? 0;
+    const cache = asRecord2(record["cache"]);
+    tokens.cache.read = asCount2(cache?.["read"]) ?? 0;
+    tokens.cache.write = asCount2(cache?.["write"]) ?? 0;
+    return tokens;
+  };
+  const modelKeyOf = (model) => {
+    const ref = asRecord2(model);
+    const id = asText2(ref?.["id"]) ?? asText2(ref?.["modelID"]);
+    if (id === undefined)
+      return;
+    const provider = asText2(ref?.["providerID"]);
+    return provider === undefined ? id : `${provider}/${id}`;
+  };
+  const PRICE_PER_UNIT = 1e6;
+  let pricedFrom;
+  let priceIndex = new Map;
+  const priceKey = (id, providerID) => providerID === undefined ? id : `${providerID}/${id}`;
+  const readPrice = (source) => {
+    const record = asRecord2(source);
+    if (record === undefined)
+      return;
+    const input = asCount2(record["input"]);
+    const output = asCount2(record["output"]);
+    if (input === undefined || output === undefined)
+      return;
+    const cache = asRecord2(record["cache"]);
+    return {
+      input,
+      output,
+      reasoning: output,
+      cache: {
+        read: asCount2(cache?.["read"]) ?? input,
+        write: asCount2(cache?.["write"]) ?? input
+      }
+    };
+  };
+  const prices = () => {
+    let entries = [];
     try {
-      return context.data.session.root(sessionID) === sessionID;
+      entries = context.data.location.model.list(locationOf(context)) ?? [];
     } catch {
-      return true;
+      entries = [];
+    }
+    if (entries === pricedFrom)
+      return priceIndex;
+    pricedFrom = entries;
+    priceIndex = new Map;
+    for (const entry of entries) {
+      const record = asRecord2(entry);
+      if (record === undefined)
+        continue;
+      const id = asText2(record["id"]) ?? asText2(record["modelID"]);
+      if (id === undefined)
+        continue;
+      const tiers = [];
+      const cost = record["cost"];
+      const rows = Array.isArray(cost) ? cost : [cost];
+      for (const row of rows) {
+        const price = readPrice(row);
+        if (price === undefined)
+          continue;
+        const tier = asRecord2(asRecord2(row)?.["tier"]);
+        tiers.push({ size: asCount2(tier?.["size"]) ?? 0, price });
+      }
+      if (tiers.length === 0)
+        continue;
+      tiers.sort((left, right) => left.size - right.size);
+      priceIndex.set(priceKey(id, asText2(record["providerID"])), tiers);
+    }
+    return priceIndex;
+  };
+  const catalogCost = (tokens, model) => {
+    const ref = asRecord2(model);
+    const id = asText2(ref?.["id"]) ?? asText2(ref?.["modelID"]);
+    if (id === undefined)
+      return 0;
+    const index = prices();
+    const tiers = index.get(priceKey(id, asText2(ref?.["providerID"]))) ?? index.get(id);
+    if (tiers === undefined || tiers.length === 0)
+      return 0;
+    const prompt = tokens.input + tokens.cache.read + tokens.cache.write;
+    let chosen = tiers[0];
+    for (const tier of tiers)
+      if (tier.size <= prompt)
+        chosen = tier;
+    const price = chosen?.price;
+    if (price === undefined)
+      return 0;
+    const micro = tokens.input * price.input + tokens.output * price.output + tokens.reasoning * price.reasoning + tokens.cache.read * price.cache.read + tokens.cache.write * price.cache.write;
+    return micro / PRICE_PER_UNIT;
+  };
+  const sessionCost = (sessionID, record) => {
+    if (record === undefined)
+      return;
+    const messages = messagesOf(sessionID);
+    const model = modelKeyOf(record?.model);
+    const created = asCount2(asRecord2(record?.time)?.["created"]) ?? 0;
+    let cost = 0;
+    let counted = 0;
+    let estimated = false;
+    for (const entry of messages) {
+      const message = asRecord2(entry);
+      if (message?.["type"] !== "assistant")
+        continue;
+      const stamp = asCount2(asRecord2(message["time"])?.["created"]);
+      if (stamp !== undefined && stamp < created)
+        continue;
+      if (model !== undefined && modelKeyOf(message["model"]) !== model)
+        continue;
+      const recorded = asCount2(message["cost"]);
+      const stepTokens = asRecord2(message["tokens"]);
+      if (recorded === undefined && stepTokens === undefined)
+        continue;
+      counted += 1;
+      if (recorded !== undefined && recorded > 0) {
+        cost += recorded;
+      } else {
+        cost += catalogCost(readTokens(stepTokens), message["model"]);
+        estimated = true;
+      }
+    }
+    if (counted === 0)
+      return;
+    return { cost, kind: estimated ? "estimated" : "bounded" };
+  };
+  const hostFamilyCost = (sessionID) => {
+    try {
+      const accessor = context.data.session.cost;
+      if (typeof accessor !== "function")
+        return;
+      return asCount2(accessor.call(context.data.session, sessionID));
+    } catch {
+      return;
     }
   };
-  const treeTotals = (sessionID, ownCost) => {
-    if (!isFamilyRoot(sessionID))
-      return;
+  const treeTotals = (sessionID) => {
+    let root = sessionID;
+    try {
+      root = context.data.session.root(sessionID) ?? sessionID;
+    } catch {
+      root = sessionID;
+    }
     let ids;
     try {
-      ids = context.data.session.family(sessionID) ?? [sessionID];
+      ids = context.data.session.family(root) ?? [root];
     } catch {
+      ids = [root];
+    }
+    const members = ids.includes(root) ? ids : [root, ...ids];
+    const recordOf = (id) => {
+      try {
+        return context.data.session.get(id);
+      } catch {
+        return;
+      }
+    };
+    const own = recordOf(root);
+    if (own === undefined)
       return;
-    }
-    let own;
-    try {
-      own = context.data.session.get(sessionID);
-    } catch {
-      own = undefined;
-    }
-    const tokens = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } };
-    const addTokens = (source) => {
-      const record = asRecord2(source?.tokens);
-      tokens.input += asCount2(record?.["input"]) ?? 0;
-      tokens.output += asCount2(record?.["output"]) ?? 0;
-      tokens.reasoning += asCount2(record?.["reasoning"]) ?? 0;
-      const cache = asRecord2(record?.["cache"]);
-      tokens.cache.read += asCount2(cache?.["read"]) ?? 0;
-      tokens.cache.write += asCount2(cache?.["write"]) ?? 0;
+    const tokens = emptyTokens();
+    const addTokens = (record) => {
+      const read = readTokens(record?.tokens);
+      tokens.input += read.input;
+      tokens.output += read.output;
+      tokens.reasoning += read.reasoning;
+      tokens.cache.read += read.cache.read;
+      tokens.cache.write += read.cache.write;
     };
     addTokens(own);
-    let cost = asCount2(ownCost) ?? 0;
     let count = 0;
-    for (const id of ids) {
-      if (id === sessionID)
+    for (const id of members) {
+      if (id === root)
         continue;
-      let child;
-      try {
-        child = context.data.session.get(id);
-      } catch {
-        continue;
-      }
+      const child = recordOf(id);
       if (child === undefined)
         continue;
       count += 1;
-      cost += asCount2(child.cost) ?? 0;
       addTokens(child);
     }
-    if (ownCost === undefined && count === 0)
-      return;
-    return { cost, count, tokens };
+    let visible = 0;
+    let complete = true;
+    for (const id of members) {
+      const record = recordOf(id);
+      if (record === undefined) {
+        complete = false;
+        continue;
+      }
+      const created = asCount2(asRecord2(record.time)?.["created"]) ?? 0;
+      let charges = 0;
+      for (const entry of messagesOf(id)) {
+        const message = asRecord2(entry);
+        if (message?.["type"] !== "assistant")
+          continue;
+        const stamp = asCount2(asRecord2(message["time"])?.["created"]);
+        if (stamp !== undefined && stamp < created)
+          continue;
+        charges += asCount2(message["cost"]) ?? 0;
+      }
+      visible += Math.max(asCount2(record.cost) ?? 0, charges);
+    }
+    let rolled = hostFamilyCost(root);
+    if (rolled === undefined) {
+      let total = 0;
+      for (const id of members)
+        total += asCount2(recordOf(id)?.cost) ?? 0;
+      rolled = total;
+    }
+    if (rolled > 0) {
+      return {
+        cost: rolled,
+        count,
+        tokens,
+        kind: complete && rolled >= visible ? "exact" : "bounded"
+      };
+    }
+    if (visible > 0)
+      return { cost: visible, count, tokens, kind: "bounded" };
+    if (!complete)
+      return { cost: 0, count, tokens, kind: "bounded" };
+    let priced = 0;
+    for (const id of members) {
+      const record = recordOf(id);
+      if (record === undefined)
+        continue;
+      const created = asCount2(asRecord2(record.time)?.["created"]) ?? 0;
+      const listed = messagesOf(id);
+      let pricedHere = false;
+      for (const entry of listed) {
+        const message = asRecord2(entry);
+        if (message?.["type"] !== "assistant")
+          continue;
+        const stamp = asCount2(asRecord2(message["time"])?.["created"]);
+        if (stamp !== undefined && stamp < created)
+          continue;
+        priced += catalogCost(readTokens(message["tokens"]), message["model"]);
+        pricedHere = true;
+      }
+      if (!pricedHere)
+        priced += catalogCost(readTokens(record.tokens), record.model);
+    }
+    if (priced > 0)
+      return { cost: priced, count, tokens, kind: "estimated" };
+    return { cost: 0, count, tokens, kind: "exact" };
   };
   const contextUsage = (sessionID, model) => {
     const messages = messagesOf(sessionID);
@@ -3880,6 +4094,7 @@ function createSessionReads(context) {
   return {
     messagesOf,
     treeTotals,
+    sessionCost,
     contextUsage,
     sessionElapsed,
     statusOf,
@@ -4104,6 +4319,7 @@ var tui_default = Plugin.define({
     const {
       messagesOf,
       treeTotals,
+      sessionCost,
       contextUsage,
       sessionElapsed,
       statusOf,
@@ -4169,9 +4385,13 @@ var tui_default = Plugin.define({
       const isBusy = busy(sessionID);
       spinnerNeeded = wants("status") && isBusy === true;
       const turns = wants("turns") ? messagesOf(sessionID).filter((entry) => asRecord2(entry)?.["type"] === "user").length : undefined;
-      const tree = wants("cost") || wants("total") || wants("tokens") || wants("cache") || wants("reasoning") ? treeTotals(sessionID, session?.cost) : undefined;
+      const wantsUsage = wants("cost") || wants("total") || wants("tokens") || wants("cache") || wants("reasoning");
+      const ownCost = wantsUsage ? sessionCost(sessionID, session) : undefined;
+      const tree = wantsUsage ? treeTotals(sessionID) : undefined;
       return {
         ...session,
+        cost: ownCost?.cost,
+        costKind: ownCost?.kind,
         tokens: tree?.tokens ?? session?.tokens,
         caution: wants("caution") ? announce(sessionID) : undefined,
         branch: wants("branch") ? branchOf(location) : undefined,

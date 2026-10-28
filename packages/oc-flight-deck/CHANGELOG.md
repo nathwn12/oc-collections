@@ -22,12 +22,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.5] - 2026-10-28
+
 ### Added
 
 - Opt-in `updated` row: the absolute timestamp of the newest action the host recorded for the session — the latest message's `completed`, else `streamed`, else `created` stamp. Off the shipped rail, like `branch` and `go`: add `"updated"` to `sidebar.rows` to draw it. `format.timestamp` sets the presentation: `locale` (default the host locale), `dateStyle` (`"short"` default, `"medium"`, or `"none"`), `timeStyle` (`"medium"` default with seconds, `"short"`, or `"none"`), `hour12` (omit to follow the locale, or force 12/24-hour), and `timeZone` (omit for the host zone, or name an IANA zone or UTC offset). Omitted `timeZone` leaves Intl's own host-zone default in place, so no Windows-to-IANA table ships here; a Windows zone id or an unknown name is reported and falls back to the host zone without breaking the rail. A config that turns both style halves `"none"` is reported and restored to the defaults. With `sidebar.persist` the row draws `sidebar.placeholder` until the host records an action, since there is no honest zero timestamp.
 
 ### Fixed
 
+- `cost` and `total` now read the host's own figures. `total` is the family roll-up (`data.session.cost(root(sessionID))`), resolved from the session's root because `cost()` answers a family only for a root. It is drawn as exact only when the host's family records are complete and consistent with the charges visible on the message lists - every listed member on record, and a roll-up that already covers them. Otherwise the host's figure is shown as a floor (`>=`) and is never raised above itself; when the host reports zero, the visible recorded sum is shown as a floor; `$0.000` is exact only for a complete family with nothing recorded or visible, and incomplete coverage with nothing visible is a floor at zero. a zero roll-up where the family still holds tokens on models the catalog prices is a catalog estimate across the whole family, marked `~`, never exact. `cost` is the current model's spend: the recorded cost of the assistant steps that ran on the selected model, excluding anything older than the session's own creation (the host's own fork guard, so copied parent history is not billed to the fork), and marked as a floor because the TUI surface exposes a window of history with no paging. A step whose charge was not recorded is catalog-priced and marked `~`. The session aggregate is never used as a per-model figure, and no price table ships in this package. `@opencode/plugin` moves to 2.2.0 for types.
 - The rail's count formatter now steps past millions: a 1,769,100,000 cache read draws as `1.8B` instead of `1769.1M`, and the 999,950,000 boundary draws as `1B` instead of `1000M`. The `B` and `T` steps carry the same one-decimal shape as `M`, and the round-before-unit rule holds at every boundary up to the deliberate `T` ceiling (a token count at ~999.95T would still read `1000T`).
 
 ## [0.20.1] - 2026-10-21

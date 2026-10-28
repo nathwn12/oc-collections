@@ -20,7 +20,7 @@ First run prints a manifest of everything it will touch and waits for you to typ
 
 ## Requirements
 
-Windows 10/11 only, with Node.js 22 or newer plus the OpenCode CLI installed and runnable.
+Windows 10/11 only, with Node.js 22 or newer and OpenCode 2.2.0 or newer (the tested floor). A 2.0/2.1 host warns before installing — its `permissions[]`/`policies[]` deny gate is not proven there — and a 1.x host is refused before anything is written.
 
 ## Full documentation
 

@@ -205,17 +205,20 @@ function writeFakeOpencode(binDir) {
   writeFileSync(mjs, `const cfg = process.env.FAKE_OPENCODE_CONFIG ?? '';
 const a = process.argv.slice(2);
 const out = (s) => process.stdout.write(s + '\\n');
-if (a[0] === '--version') out('2.0.32');
+if (a[0] === '--version') out(process.env.FAKE_OPENCODE_VERSION ?? 'opencode v2.2.0');
 else if (a[0] === 'debug' && a[1] === 'paths') out('config = ' + cfg);
 else if (a[0] === 'debug' && a[1] === 'config') out(JSON.stringify([{ type: 'document', path: cfg + '/opencode.jsonc' }]));
-else if (a[0] === 'debug' && a[1] === 'agents') out(JSON.stringify([{ name: 'orchestrator' }]));
+else if (a[0] === 'debug' && a[1] === 'agents') out(JSON.stringify([{ id: 'orchestrator', name: 'Orchestrator', mode: 'primary' }]));
 else if (a[0] === 'plugin' && a[1] === 'list') {
   // Default: no plugins. When FAKE_OPENCODE_PLUGINS names installed plugins,
   // the registry agrees with the config — otherwise Law 6 (correctly) fails
   // a config that declares plugins the registry does not have.
   const rows = (process.env.FAKE_OPENCODE_PLUGINS ?? '').split(/[,\\s]+/).filter(Boolean);
   if (!rows.length) out('No plugins found');
-  else { out('NAME          VERSION'); for (const name of rows) out(name + '  1.0.0'); }
+  // The real v2.2.0 table: ID · VERSION · SOURCE, where SOURCE is the specifier
+  // the config declares. Pinned so a doctor that only matched the ID column
+  // (or the old 'NAME VERSION' header) goes red here, not on the owner's host.
+  else { out('ID                 VERSION  SOURCE'); for (const name of rows) out(name + '  2.2.0  ' + name); }
 }
 else if (a[0] === 'mcp' && a[1] === 'list') out('No MCP servers configured');
 else { process.stderr.write('fake opencode: unknown args ' + a.join(' ') + '\\n'); process.exitCode = 1; }
@@ -239,6 +242,80 @@ function fakePath(fakeBin) {
   });
   return `${fakeBin}${path.delimiter}${dirs.join(path.delimiter)}`;
 }
+
+/* ---------------- preflight: the 2.2.0 banner, the gate, and its contract ---------------- */
+
+// The gate has three tiers and one documented contract. This test pins EVERY
+// branch plus the documents that describe them, so flipping the code without
+// updating the docs (or the reverse) goes red here:
+//   1.x        refused before any discovery/stage/merge (different dialect)
+//   2.0 / 2.1  warned, then installs (same V2 generation; the deny gate is
+//              unproven there, not silently reconfigured)
+//   2.2.0      clean, no warning
+test('version gate: 1.x refused, 2.0/2.1 warn and install, 2.2.0 clean — docs agree', { skip: WIN_SKIP, timeout: 300000 }, () => {
+  const base = mkdtempSync(path.join(os.tmpdir(), 'oc-gate-'));
+  const fakeBin = path.join(base, 'fakebin');
+  mkdirSync(fakeBin, { recursive: true });
+  writeFakeOpencode(fakeBin);
+  const envFor = (cfg, version) => ({
+    OPENCODE_CONFIG_DIR: cfg,
+    FAKE_OPENCODE_CONFIG: cfg,
+    FAKE_OPENCODE_VERSION: version,
+    PATH: fakePath(fakeBin),
+  });
+
+  try {
+    // 1.x: bail before discovery, stage, or merge — nothing a 1.x host cannot
+    // honour is ever written.
+    const cfg1 = path.join(base, 'cfg-1x');
+    const r1 = runCli(['setup'], { env: envFor(cfg1, 'opencode v1.4.2'), input: 'y\n' });
+    assert.equal(r1.status, 1, `1.x host must abort, got ${r1.status}\nSTDOUT:\n${r1.stdout}\nSTDERR:\n${r1.stderr}`);
+    assert.match(r1.stderr || '', /1\.x config dialect/, 'the refusal names the dialect break');
+    assert.ok(!existsSync(cfg1), 'a 1.x host writes nothing');
+
+    // 2.0 and 2.1: warned, not refused (declined gate: warn prints, nothing written).
+    for (const version of ['opencode v2.0.9', 'opencode v2.1.4']) {
+      const cfg = path.join(base, `cfg-${version.replace(/[^\d]/g, '')}`);
+      const r = runCli(['setup'], { env: envFor(cfg, version), input: '' });
+      assert.equal(r.status, 0, `${version} must warn and proceed, got ${r.status}\nSTDOUT:\n${r.stdout}\nSTDERR:\n${r.stderr}`);
+      assert.match(`${r.stdout}${r.stderr}`, /below the 2\.2\.0/, `${version} is warned, not refused`);
+      assert.match(`${r.stdout}${r.stderr}`, /not proven/, 'the warning names what is unproven on an older 2.x host');
+      assert.ok(!existsSync(cfg), 'a declined gate writes nothing');
+    }
+
+    // 2.1 actually installs: the warning is a caution, not a block, and the
+    // manifest records the host the merge targeted.
+    const cfg21 = path.join(base, 'cfg-install');
+    const r21 = runCli(['setup'], { env: envFor(cfg21, 'opencode v2.1.4'), input: 'y\n' });
+    assert.equal(r21.status, 0, `2.1.4 install exit was ${r21.status}\nSTDOUT:\n${r21.stdout}\nSTDERR:\n${r21.stderr}`);
+    assert.match(`${r21.stdout}${r21.stderr}`, /below the 2\.2\.0/);
+    const m21 = JSON.parse(readFileSync(path.join(cfg21, 'oc-harness-setup.manifest.json'), 'utf8'));
+    assert.equal(m21.hostVersion, '2.1.4', 'the install proceeded and journaled the host version');
+
+    // 2.2.0: clean run, banner parsed once, no warning.
+    const cfg22 = path.join(base, 'cfg-22');
+    const r22 = runCli(['setup'], { env: envFor(cfg22, 'opencode v2.2.0'), input: '' });
+    assert.equal(r22.status, 0, `2.2.0 declined gate exit was ${r22.status}\nSTDOUT:\n${r22.stdout}\nSTDERR:\n${r22.stderr}`);
+    assert.ok(!/below the 2\.2\.0|older than the 2\.2\.0/.test(`${r22.stdout}${r22.stderr}`), '2.2.0 is not warned');
+    assert.ok((r22.stdout || '').includes('opencode 2.2.0 — OK'), 'the banner version is parsed out of `opencode v2.2.0`');
+    assert.ok(!(r22.stdout || '').includes('opencode opencode'), 'the product name is not echoed twice');
+
+    // The documented contract must state all three tiers, in the same terms the
+    // code implements. A gate flip that leaves a doc behind fails here. Prose is
+    // flattened first: a wrapped line is formatting, not a different contract.
+    const flat = (s) => s.replace(/\s+/g, ' ');
+    for (const doc of ['README.md', 'docs/GUIDE.md']) {
+      const text = flat(readFileSync(path.join(PKG_ROOT, doc), 'utf8'));
+      assert.match(text, /2\.2\.0/, `${doc} names the tested floor`);
+      assert.match(text, /2\.0\/2\.1[^.]*warn/i, `${doc} states that a 2.0/2.1 host warns`);
+      assert.match(text, /1\.x[^.]*refus/i, `${doc} states that a 1.x host is refused`);
+    }
+    const changelog = flat(readFileSync(path.join(PKG_ROOT, 'CHANGELOG.md'), 'utf8'));
+    assert.match(changelog, /2\.2\.0 tested; 2\.x warned; 1\.x refused/i, 'CHANGELOG states the three-tier compatibility truth');
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
 
 /* ---------------- test 2: --dry-run ---------------- */
 
@@ -494,14 +571,16 @@ test('0.4.x upgrade drops plugin residue, archives an edited template, and keeps
     rmSync(baseA, { recursive: true, force: true });
   }
 
-  // Fixture B: same-version re-run keeps a deliberately re-added plugin.
+  // Fixture B: same-version re-run keeps a deliberately re-added plugin, and a
+  // 1.x `[specifier, options]` tuple is reduced to its specifier (2.2.0 drops a
+  // tuple entry outright, so keeping the tuple would silently unload the plugin).
   const baseB = mkdtempSync(path.join(os.tmpdir(), 'oc-04x-b-'));
   const cfgB = path.join(baseB, 'cfg');
   mkdirSync(path.join(cfgB, 'state'), { recursive: true });
   const fakeBinB = path.join(baseB, 'fakebin');
   mkdirSync(fakeBinB, { recursive: true });
   writeFakeOpencode(fakeBinB);
-  writeFileSync(path.join(cfgB, 'opencode.jsonc'), JSON.stringify({ model: 'keep-me', plugins: ['oc-flight-deck', 'adopter-plugin'] }, null, 2));
+  writeFileSync(path.join(cfgB, 'opencode.jsonc'), JSON.stringify({ model: 'keep-me', plugins: ['oc-flight-deck', 'adopter-plugin', ['legacy-tuple', { opt: 1 }]] }, null, 2));
   writeFileSync(path.join(cfgB, 'state', 'template.md'), editedBytes);
   writeFileSync(path.join(cfgB, 'oc-harness-setup.manifest.json'), JSON.stringify({
     package: 'oc-harness-setup', version: EXPECTED_VERSION, created: new Date().toISOString(),
@@ -516,7 +595,7 @@ test('0.4.x upgrade drops plugin residue, archives an edited template, and keeps
       env: {
         OPENCODE_CONFIG_DIR: cfgB,
         FAKE_OPENCODE_CONFIG: cfgB,
-        FAKE_OPENCODE_PLUGINS: 'oc-flight-deck adopter-plugin',
+        FAKE_OPENCODE_PLUGINS: 'oc-flight-deck adopter-plugin legacy-tuple',
         PATH: fakePath(fakeBinB),
       },
       input: 'y\n',
@@ -526,6 +605,13 @@ test('0.4.x upgrade drops plugin residue, archives an edited template, and keeps
     const mergedB = JSON.parse(stripLineComments(readFileSync(path.join(cfgB, 'opencode.jsonc'), 'utf8')));
     assert.ok((mergedB.plugins || []).includes('oc-flight-deck'), 'same-version re-run keeps the re-added distro plugin');
     assert.ok((mergedB.plugins || []).includes('adopter-plugin'), 'same-version re-run keeps the adopter plugin');
+    assert.ok((rB.stdout || '').includes('normalized the 1.x plugin tuple'), 'the tuple reduction is reported, not silent');
+    assert.ok(
+      (mergedB.plugins || []).every((e) => typeof e === 'string'),
+      `every emitted plugins entry is a 2.2.0 specifier string (saw ${JSON.stringify(mergedB.plugins)})`
+    );
+    assert.ok((mergedB.plugins || []).includes('legacy-tuple'), 'the tuple plugin is kept, reduced to its specifier');
+    assert.ok(!(rB.stdout || '').includes('legacy-tuple System.'), 'the doctor never saw an unresolved tuple entry');
   } finally {
     rmSync(baseB, { recursive: true, force: true });
   }
@@ -688,6 +774,34 @@ test('package audit: files list exists, no leaks, 9/6/6 with 1:1 seam', { skip: 
   assert.equal(commandIds.length, 6, `6 commands (saw ${commandIds.length})`);
   assert.deepEqual([...commandIds].sort(), [...skillDirs].sort(), 'commands and skills are 1:1');
 
+  // OpenCode 2.2.0 config shape, pinned statically so a 2.1-shaped key goes red
+  // without needing a host on PATH. The live proof (host parses the emitted
+  // config and drops nothing) is test/host-schema.test.js.
+  //   2.2.0 truth: `plugins` is the canonical array of specifier STRINGS;
+  //   `permission`/`plugin` singular are the 1.x dialect the host migrates;
+  //   `permissions` is an array of {action, resource, effect}; `policies`
+  //   entries are filtered by a known action enum (unknown → dropped), so
+  //   `tool.use` is the only action this package may emit.
+  const shippedConfig = parseJsoncForTest(readFileSync(path.join(PKG_ROOT, 'opencode.jsonc'), 'utf8'));
+  for (const legacy of ['plugin', 'permission', 'mcpServers', 'mcp_servers']) {
+    assert.ok(!(legacy in shippedConfig), `opencode.jsonc emits no 1.x \`${legacy}\` key`);
+  }
+  assert.ok(
+    !('plugins' in shippedConfig) || shippedConfig.plugins.every((e) => typeof e === 'string'),
+    'every shipped plugins[] entry is a 2.2.0 specifier string (a 1.x tuple is dropped by the host)'
+  );
+  assert.ok(Array.isArray(shippedConfig.permissions), 'permissions is the 2.2.0 array shape');
+  for (const rule of shippedConfig.permissions) {
+    assert.deepEqual(Object.keys(rule).sort(), ['action', 'effect', 'resource'], 'permission rule carries exactly action/resource/effect');
+    assert.ok(['allow', 'ask', 'deny'].includes(rule.effect), `permission effect is allow/ask/deny (saw ${rule.effect})`);
+  }
+  assert.ok(Array.isArray(shippedConfig.policies) && shippedConfig.policies.length > 0, 'policies block present');
+  for (const p of shippedConfig.policies) {
+    assert.equal(p.action, 'tool.use', 'policies use the tool.use action — any other action is dropped by the 2.2.0 schema');
+    assert.ok(typeof p.resource === 'string' && p.resource.includes(':'), 'a tool.use policy resource is `<tool>:<glob>`');
+  }
+  assert.equal(shippedConfig.default_agent, 'orchestrator', 'default_agent is the 2.2.0 snake_case key');
+
   // T4 packaging: every path the doctor requires ships in the tarball.
   for (const entry of ['gitignore.template', 'AGENTS.md', 'opencode.jsonc', '.docs', 'state-seed', 'scripts', 'agents', 'commands', 'skills', 'reference']) {
     assert.ok(pkg.files.includes(entry), `files ships ${entry}`);
@@ -822,7 +936,17 @@ test('a packed tarball installs and passes the doctor (no dotfile rename)', { sk
     assert.ok(readFileSync(path.join(cfg, 'state', 'lessons.md'), 'utf8').includes('lifecycle note: adopter edit'), 'reinstall preserves the adopter edit in state/lessons.md');
     assert.ok((re.stdout || '').includes('harness-doctor passed'), 'reinstall doctor line shows a pass (harness-doctor passed)');
   } finally {
-    if (cfg) rmSync(cfg, { recursive: true, force: true });
+    if (cfg) {
+      // The installer snapshots the config dir to `<cfg>.bak-oc-harness-setup-<stamp>`
+      // BESIDE it, so removing `cfg` alone leaks one snapshot per run. Sweep only
+      // this fixture's own sibling snapshots (name-prefixed), never the temp root.
+      const parent = path.dirname(cfg);
+      const prefix = `${path.basename(cfg)}.bak-oc-harness-setup-`;
+      for (const name of readdirSync(parent)) {
+        if (name.startsWith(prefix)) rmSync(path.join(parent, name), { recursive: true, force: true });
+      }
+      rmSync(cfg, { recursive: true, force: true });
+    }
     rmSync(tmp, { recursive: true, force: true });
   }
 });

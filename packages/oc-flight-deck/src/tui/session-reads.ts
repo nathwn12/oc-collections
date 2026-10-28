@@ -13,6 +13,19 @@ import { asCount, asRecord, asText, type SessionLike } from "./coerce.js";
 import { turnKey, type ThroughputSpan } from "./stats.js";
 
 /**
+ * How strong a money figure's claim is: `exact` is a recorded figure the host
+ * owns, `bounded` is recorded charges over the history the host still holds,
+ * `estimated` needed the model catalog because a charge was not recorded.
+ */
+type UsageKind = "exact" | "bounded" | "estimated";
+
+/** A money figure with the strength of its claim. */
+interface UsageFigure {
+  cost: number;
+  kind: UsageKind;
+}
+
+/**
  * The location the rail reads shell records and VCS from: the host's current
  * location, or its default when no location is set. A host that cannot resolve
  * a default degrades to "no location" rather than taking the rail down.
@@ -23,6 +36,14 @@ export function locationOf(context: Plugin.Context) {
   } catch {
     return context.location;
   }
+}
+
+/** Token counts, in the shape the host publishes them. */
+interface TokenCounts {
+  input: number;
+  output: number;
+  reasoning: number;
+  cache: { read: number; write: number };
 }
 
 export function createSessionReads(context: Plugin.Context) {
@@ -39,81 +60,320 @@ export function createSessionReads(context: Plugin.Context) {
     }
   };
 
-  // A subagent session is already inside its parent's family total, and the
-  // host keys `family()` by the family ROOT — so asking from a child returns
-  // its ancestors and siblings as well. Merging that would report the whole
-  // tree as this conversation's own, under a label that promises the
-  // conversation plus *its* subagents. Only a root has a family beneath it.
-  const isFamilyRoot = (sessionID: string): boolean => {
-    try {
-      return context.data.session.root(sessionID) === sessionID;
-    } catch {
-      // A host without `root` keeps the previous behaviour rather than
-      // silently dropping everyone's subagent total.
-      return true;
-    }
+  // Usage.
+  //
+  // The host publishes both figures and neither needs reconstructing:
+  // `data.session.cost(id)` is the family roll-up (this session plus every
+  // descendant) and `session.get().cost` the session's own persisted aggregate.
+  // The aggregate spans every model the session ran, and there is no host API
+  // for per-model spend, so only `cost` is derived - from the recorded per-step
+  // costs of the model currently selected.
+  //
+  //   total - the host roll-up, exact. Zero with no tokens is a real $0.000;
+  //           zero with tokens on a priced model is a catalog estimate, marked.
+  //   cost  - recorded step costs for the current model over the history the
+  //           host exposes, marked as a floor when that history is a window,
+  //           and as an estimate when a step had to be catalog-priced.
+
+  const emptyTokens = (): TokenCounts => ({
+    input: 0,
+    output: 0,
+    reasoning: 0,
+    cache: { read: 0, write: 0 },
+  });
+
+  const readTokens = (source: unknown): TokenCounts => {
+    const record = asRecord(source);
+    const tokens = emptyTokens();
+    if (record === undefined) return tokens;
+    tokens.input = asCount(record["input"]) ?? 0;
+    tokens.output = asCount(record["output"]) ?? 0;
+    tokens.reasoning = asCount(record["reasoning"]) ?? 0;
+    const cache = asRecord(record["cache"]);
+    tokens.cache.read = asCount(cache?.["read"]) ?? 0;
+    tokens.cache.write = asCount(cache?.["write"]) ?? 0;
+    return tokens;
   };
 
-  // Subagent sessions are separate sessions, and the parent's `cost` does not
-  // include them, so a bare `cost` row understates a swarm. Sum the family —
-  // and the same scope for `tokens`: the money row already shows the family,
-  // so the token rows beside it must share it, or one row's swarm is another
-  // row's session. The parent's own tokens come from its session record (its
-  // own cost arrives via `ownCost`, already in the caller's hand), every
-  // child's from theirs: `input`, `output`, `reasoning`, and both `cache`
-  // rungs, so a caller that uses this INSTEAD of the session's own record
-  // gets the full family figure.
-  const treeTotals = (sessionID: string, ownCost: unknown) => {
-    if (!isFamilyRoot(sessionID)) return undefined;
+  // Model identity as the host keys it: provider and id. The variant is a
+  // setting of the same model, not a different bill, so it is not part of it.
+  const modelKeyOf = (model: unknown): string | undefined => {
+    const ref = asRecord(model);
+    const id = asText(ref?.["id"]) ?? asText(ref?.["modelID"]);
+    if (id === undefined) return undefined;
+    const provider = asText(ref?.["providerID"]);
+    return provider === undefined ? id : `${provider}/${id}`;
+  };
 
-    let ids: readonly string[];
+  // Catalog prices, per million tokens, indexed by provider and model id. The
+  // catalog array is the cache key: when the host swaps it the index is rebuilt.
+  const PRICE_PER_UNIT = 1_000_000;
+  let pricedFrom: readonly unknown[] | undefined;
+  let priceIndex = new Map<string, readonly { size: number; price: TokenCounts }[]>();
+
+  const priceKey = (id: string, providerID: string | undefined): string =>
+    providerID === undefined ? id : `${providerID}/${id}`;
+
+  // One catalog row as the four rates it bills, reusing the token shape so a
+  // step's tokens multiply rate-for-rate: input at the input rate, generation
+  // (output plus reasoning) at the output rate, each cache rung at its own.
+  const readPrice = (source: unknown): TokenCounts | undefined => {
+    const record = asRecord(source);
+    if (record === undefined) return undefined;
+    const input = asCount(record["input"]);
+    const output = asCount(record["output"]);
+    if (input === undefined || output === undefined) return undefined;
+    const cache = asRecord(record["cache"]);
+    return {
+      input,
+      output,
+      reasoning: output,
+      cache: {
+        read: asCount(cache?.["read"]) ?? input,
+        write: asCount(cache?.["write"]) ?? input,
+      },
+    };
+  };
+
+  const prices = (): Map<string, readonly { size: number; price: TokenCounts }[]> => {
+    let entries: readonly unknown[] = [];
     try {
-      ids = context.data.session.family(sessionID) ?? [sessionID];
+      entries = context.data.location.model.list(locationOf(context)) ?? [];
+    } catch {
+      entries = [];
+    }
+    if (entries === pricedFrom) return priceIndex;
+    pricedFrom = entries;
+    priceIndex = new Map();
+    for (const entry of entries) {
+      const record = asRecord(entry);
+      if (record === undefined) continue;
+      const id = asText(record["id"]) ?? asText(record["modelID"]);
+      if (id === undefined) continue;
+      const tiers: { size: number; price: TokenCounts }[] = [];
+      const cost = record["cost"];
+      const rows = Array.isArray(cost) ? cost : [cost];
+      for (const row of rows) {
+        const price = readPrice(row);
+        if (price === undefined) continue;
+        const tier = asRecord(asRecord(row)?.["tier"]);
+        tiers.push({ size: asCount(tier?.["size"]) ?? 0, price });
+      }
+      if (tiers.length === 0) continue;
+      tiers.sort((left, right) => left.size - right.size);
+      priceIndex.set(priceKey(id, asText(record["providerID"])), tiers);
+    }
+    return priceIndex;
+  };
+
+  // What one step costs at catalog prices: the prompt is billed at the input
+  // rate, generation (output plus reasoning) at the output rate, and the two
+  // cache rungs at their own. A tiered model is priced at the largest tier the
+  // prompt reaches. Unknown model, unknown price, or zero rates answer zero - a
+  // genuinely free model stays free.
+  const catalogCost = (tokens: TokenCounts, model: unknown): number => {
+    const ref = asRecord(model);
+    const id = asText(ref?.["id"]) ?? asText(ref?.["modelID"]);
+    if (id === undefined) return 0;
+    const index = prices();
+    const tiers = index.get(priceKey(id, asText(ref?.["providerID"]))) ?? index.get(id);
+    if (tiers === undefined || tiers.length === 0) return 0;
+    const prompt = tokens.input + tokens.cache.read + tokens.cache.write;
+    let chosen = tiers[0];
+    for (const tier of tiers) if (tier.size <= prompt) chosen = tier;
+    const price = chosen?.price;
+    if (price === undefined) return 0;
+    const micro =
+      tokens.input * price.input +
+      tokens.output * price.output +
+      tokens.reasoning * price.reasoning +
+      tokens.cache.read * price.cache.read +
+      tokens.cache.write * price.cache.write;
+    return micro / PRICE_PER_UNIT;
+  };
+
+  // The `cost` figure: recorded step costs for the model the session currently
+  // runs. The aggregate is deliberately NOT used - it spans every model the
+  // session ever ran, so it cannot answer a per-model question.
+  //
+  // Two guards, both mirroring the host's own accounting:
+  //   - a fork's copied parent history predates the fork's creation
+  //     (`stats.ts`: `message.time_created >= session.time_created`), so it is
+  //     not this session's spend;
+  //   - the TUI surface exposes no paging (`message.list` only, no `more()`),
+  //     so the history on hand is a window and the figure is a floor.
+  const sessionCost = (
+    sessionID: string,
+    record: SessionLike | undefined,
+  ): UsageFigure | undefined => {
+    if (record === undefined) return undefined;
+    const messages = messagesOf(sessionID);
+    const model = modelKeyOf(record?.model);
+    const created = asCount(asRecord(record?.time)?.["created"]) ?? 0;
+    let cost = 0;
+    let counted = 0;
+    let estimated = false;
+    for (const entry of messages) {
+      const message = asRecord(entry);
+      if (message?.["type"] !== "assistant") continue;
+      const stamp = asCount(asRecord(message["time"])?.["created"]);
+      if (stamp !== undefined && stamp < created) continue;
+      if (model !== undefined && modelKeyOf(message["model"]) !== model) continue;
+      const recorded = asCount(message["cost"]);
+      const stepTokens = asRecord(message["tokens"]);
+      if (recorded === undefined && stepTokens === undefined) continue;
+      counted += 1;
+      if (recorded !== undefined && recorded > 0) {
+        cost += recorded;
+      } else {
+        cost += catalogCost(readTokens(stepTokens), message["model"]);
+        estimated = true;
+      }
+    }
+    if (counted === 0) return undefined;
+    return { cost, kind: estimated ? "estimated" : "bounded" };
+  };
+
+  // `data.session.cost`, the host's persisted family roll-up. It answers a
+  // family figure only for a ROOT id - handed a child it returns that child's
+  // own cost - so the caller resolves the root first.
+  const hostFamilyCost = (sessionID: string): number | undefined => {
+    try {
+      const accessor = context.data.session.cost;
+      if (typeof accessor !== "function") return undefined;
+      return asCount(accessor.call(context.data.session, sessionID));
     } catch {
       return undefined;
     }
+  };
 
-    let own: SessionLike | undefined;
+  // The `total` figure: the host's family roll-up, always resolved from the
+  // family ROOT. Nothing is summed for a non-zero figure - the roll-up is the
+  // persisted total of per-session aggregates, so it already survives
+  // stop/resume, model switches and compaction, and it is exact.
+  //
+  // A zero roll-up is a real zero when the family spent nothing. Where the
+  // family holds tokens on models the catalog prices, a provider-reported zero
+  // is a missing charge: every member's messages are priced at the model each
+  // message ran, and the figure is marked as an estimate - never exact.
+  const treeTotals = (
+    sessionID: string,
+  ): { cost: number; count: number; tokens: TokenCounts; kind: UsageKind } | undefined => {
+    let root = sessionID;
     try {
-      own = context.data.session.get(sessionID) as SessionLike | undefined;
+      root = context.data.session.root(sessionID) ?? sessionID;
     } catch {
-      own = undefined;
+      root = sessionID;
     }
-    const tokens = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } };
-    const addTokens = (source: SessionLike | undefined): void => {
-      const record = asRecord(source?.tokens);
-      tokens.input += asCount(record?.["input"]) ?? 0;
-      tokens.output += asCount(record?.["output"]) ?? 0;
-      tokens.reasoning += asCount(record?.["reasoning"]) ?? 0;
-      const cache = asRecord(record?.["cache"]);
-      tokens.cache.read += asCount(cache?.["read"]) ?? 0;
-      tokens.cache.write += asCount(cache?.["write"]) ?? 0;
+    let ids: readonly string[];
+    try {
+      ids = context.data.session.family(root) ?? [root];
+    } catch {
+      ids = [root];
+    }
+    const members = ids.includes(root) ? ids : [root, ...ids];
+
+    const recordOf = (id: string): SessionLike | undefined => {
+      try {
+        return context.data.session.get(id) as SessionLike | undefined;
+      } catch {
+        return undefined;
+      }
+    };
+
+    const own = recordOf(root);
+    // No session record is no figure: the row stays absent (the persist layer's
+    // skeleton draws in its place), never a fabricated $0.000.
+    if (own === undefined) return undefined;
+
+    const tokens = emptyTokens();
+    const addTokens = (record: SessionLike | undefined): void => {
+      const read = readTokens(record?.tokens);
+      tokens.input += read.input;
+      tokens.output += read.output;
+      tokens.reasoning += read.reasoning;
+      tokens.cache.read += read.cache.read;
+      tokens.cache.write += read.cache.write;
     };
     addTokens(own);
 
-    let cost = asCount(ownCost) ?? 0;
     let count = 0;
-    for (const id of ids) {
-      if (id === sessionID) continue;
-      let child: SessionLike | undefined;
-      try {
-        child = context.data.session.get(id) as SessionLike | undefined;
-      } catch {
-        // One unreadable member must not blank the rest of the tree.
-        continue;
-      }
+    for (const id of members) {
+      if (id === root) continue;
+      const child = recordOf(id);
       if (child === undefined) continue;
       count += 1;
-      cost += asCount(child.cost) ?? 0;
       addTokens(child);
     }
-    // The family figure, subagents included. A session that spawned none still
-    // records one: its own cost against a count of zero, so the `total` row has
-    // a real number to draw instead of blanking at `$0.000`. `undefined` is now
-    // reserved for a figure that genuinely cannot be computed — a non-root
-    // session (its family is its parent's), or a host read that threw.
-    if (ownCost === undefined && count === 0) return undefined;
-    return { cost, count, tokens };
+
+    // Per member: its record, and the recorded assistant charges visible for it
+    // with the host's fork guard applied. `visible` is the floor the family can
+    // prove from what it holds; `complete` says whether every id the family
+    // lists has a record at all.
+    let visible = 0;
+    let complete = true;
+    for (const id of members) {
+      const record = recordOf(id);
+      if (record === undefined) {
+        complete = false;
+        continue;
+      }
+      const created = asCount(asRecord(record.time)?.["created"]) ?? 0;
+      let charges = 0;
+      for (const entry of messagesOf(id)) {
+        const message = asRecord(entry);
+        if (message?.["type"] !== "assistant") continue;
+        const stamp = asCount(asRecord(message["time"])?.["created"]);
+        if (stamp !== undefined && stamp < created) continue;
+        charges += asCount(message["cost"]) ?? 0;
+      }
+      visible += Math.max(asCount(record.cost) ?? 0, charges);
+    }
+
+    let rolled = hostFamilyCost(root);
+    if (rolled === undefined) {
+      // A host without the accessor: the per-session aggregates are the same
+      // persisted numbers, so their sum is still the family figure.
+      let total = 0;
+      for (const id of members) total += asCount(recordOf(id)?.cost) ?? 0;
+      rolled = total;
+    }
+    // The table, in order. `rolled` is the host's persisted family figure and is
+    // never exceeded: a floor above it would claim money the host says was not
+    // spent. `exact` is claimed only when the family is complete and the roll-up
+    // already covers the charges visible on the message lists.
+    if (rolled > 0) {
+      return {
+        cost: rolled,
+        count,
+        tokens,
+        kind: complete && rolled >= visible ? "exact" : "bounded",
+      };
+    }
+    if (visible > 0) return { cost: visible, count, tokens, kind: "bounded" };
+    if (!complete) return { cost: 0, count, tokens, kind: "bounded" };
+
+    // Zero: price the whole family's messages, each at its own model; a member
+    // with no message list on hand still contributes its recorded tokens.
+    let priced = 0;
+    for (const id of members) {
+      const record = recordOf(id);
+      if (record === undefined) continue;
+      const created = asCount(asRecord(record.time)?.["created"]) ?? 0;
+      const listed = messagesOf(id);
+      let pricedHere = false;
+      for (const entry of listed) {
+        const message = asRecord(entry);
+        if (message?.["type"] !== "assistant") continue;
+        const stamp = asCount(asRecord(message["time"])?.["created"]);
+        if (stamp !== undefined && stamp < created) continue;
+        priced += catalogCost(readTokens(message["tokens"]), message["model"]);
+        pricedHere = true;
+      }
+      if (!pricedHere) priced += catalogCost(readTokens(record.tokens), record.model);
+    }
+    if (priced > 0) return { cost: priced, count, tokens, kind: "estimated" };
+    return { cost: 0, count, tokens, kind: "exact" };
   };
 
   // A message's own totals are per-request, so the last assistant message's
@@ -340,6 +600,7 @@ export function createSessionReads(context: Plugin.Context) {
   return {
     messagesOf,
     treeTotals,
+    sessionCost,
     contextUsage,
     sessionElapsed,
     statusOf,

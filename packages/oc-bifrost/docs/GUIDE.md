@@ -106,7 +106,7 @@ If your `github:obra/superpowers` mount refuses with a missing package because i
 - OpenCode V2 (`opencode --version` reports `2.x`).
 - Node 22 or later (`node --version`).
 - The npm registry reachable for the first fetch; `preset:rtk` needs no network but needs the `rtk` binary on `PATH`.
-- Peer `@opencode/plugin@2.1.1`, supplied by your host — you install nothing extra.
+- Peer `@opencode/plugin@>=2.1.1 <3` (verified against `2.2.0`), supplied by your host — you install nothing extra.
 
 ## Links
 

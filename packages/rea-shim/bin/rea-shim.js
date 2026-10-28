@@ -250,10 +250,19 @@ function printVersion() {
 }
 
 function printConfig() {
-  const block = [
-    '"rea": { "type": "local", "timeout": { "startup": 45000 }, "command": ["cmd","/c","npx","-y","rea-shim@latest"] }',
-  ].join('\n') + '\n';
-  fs.writeSync(1, block);
+  // Emitted in the shape the installed client writes itself: OpenCode 2.2.0's
+  // `mcp add` produces { mcp: { servers: { <name>: { type, command } } } }.
+  // A flat `mcp.<name>` entry (the pre-2.2 layout this used to print) is not
+  // what 2.2.0 reads, and an unverified `timeout` key is not a knob the client
+  // honours, so neither is printed.
+  const block = {
+    mcp: {
+      servers: {
+        rea: { type: 'local', command: ['cmd', '/c', 'npx', '-y', `${SHIM_NAME}@latest`] },
+      },
+    },
+  };
+  fs.writeSync(1, JSON.stringify(block, null, 2) + '\n');
   process.exit(0);
 }
 

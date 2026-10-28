@@ -7,12 +7,94 @@
  * is honoured; `execute.before` is the only hook whose throw rejects a call).
  */
 import type { OCContext, V1Hooks } from "./types.js"
+import type { V1ToolDefinition, V1ToolParameters } from "./v1-contract.js"
 import type { Reporter } from "./report.js"
 
 type Handler = (...args: unknown[]) => unknown
 
 function asHandler(value: unknown): Handler | undefined {
   return typeof value === "function" ? (value as Handler) : undefined
+}
+
+/**
+ * A V1 tool definition the bridge refuses to register.
+ *
+ * Thrown from `registerV1Hooks` before any transform is queued, never from
+ * inside a `tool.transform` callback: the transform runs at tool-apply time,
+ * where a throw would take out tool listing for the whole session. A definition
+ * is judged the moment it reaches the bridge, at mount time, where the mount
+ * report can name it.
+ *
+ * `code` is stable for callers that want to branch without matching prose.
+ */
+export class V1ToolDefinitionError extends Error {
+  readonly code = "oc-bifrost/v1-tool-definition"
+  readonly tool: string
+  readonly field: "execute" | "args"
+
+  constructor(tool: string, field: "execute" | "args", detail: string) {
+    super(
+      `[oc-bifrost] V1 tool "${tool}" cannot be bridged: ${detail}. ` +
+        `A tool definition needs a callable execute(input) and, when present, an object args schema. ` +
+        `Registering it anyway would make the tool answer with empty content.`,
+    )
+    this.name = "V1ToolDefinitionError"
+    this.tool = tool
+    this.field = field
+  }
+}
+
+/**
+ * Runtime validation of one V1 tool definition, independent of the author's
+ * types: a cast, a `as any`, or a JS plugin all land here. Refusing is the
+ * point - the previous fallback (`execute ?? async () => ({ content: "" })`)
+ * turned a broken definition into a tool that silently answered with nothing.
+ */
+function assertBridgeableTool(name: string, definition: unknown): V1ToolDefinition {
+  if (definition === null || typeof definition !== "object") {
+    throw new V1ToolDefinitionError(name, "execute", `the definition is ${definition === null ? "null" : typeof definition}, not an object`)
+  }
+  const def = definition as Record<string, unknown>
+  if (typeof def.execute !== "function") {
+    throw new V1ToolDefinitionError(
+      name,
+      "execute",
+      def.execute === undefined ? "execute is missing" : `execute is ${typeof def.execute}, not a function`,
+    )
+  }
+  if (def.args !== undefined) {
+    if (def.args === null || typeof def.args !== "object" || Array.isArray(def.args)) {
+      throw new V1ToolDefinitionError(
+        name,
+        "args",
+        `args is ${def.args === null ? "null" : Array.isArray(def.args) ? "an array" : typeof def.args}, not an object schema`,
+      )
+    }
+  }
+  return def as unknown as V1ToolDefinition
+}
+
+/** The schema a V1 tool gets when it declares no `args`. */
+const DEFAULT_TOOL_PARAMETERS: V1ToolParameters = { type: "object", properties: {}, additionalProperties: true }
+
+/**
+ * Validates every entry of a V1 `tool` map. Runs before any hook is
+ * registered, so a refused definition fails the mount instead of leaving half
+ * a bridge mounted behind it.
+ */
+function validateToolMap(value: unknown): Array<{ name: string; definition: V1ToolDefinition }> {
+  if (value === undefined) return []
+  if (value === null || typeof value !== "object") {
+    throw new V1ToolDefinitionError(
+      "tool",
+      "execute",
+      `the tool map is ${value === null ? "null" : typeof value}, not an object`,
+    )
+  }
+  return Object.entries(value as Record<string, unknown>).map(([name, definition]) => ({
+    name,
+    definition: assertBridgeableTool(name, definition),
+  }))
 }
 
 /**
@@ -151,6 +233,9 @@ export async function registerV1Hooks(
 ): Promise<RegisterResult> {
   const cleanups: Array<() => void | Promise<void>> = []
   const table = hooks as unknown as Record<string, unknown>
+  // Judged before ANY registration: a tool definition the bridge cannot honour
+  // is a mount failure, not a tool that answers with empty content.
+  const toolDefinitions = validateToolMap(table.tool)
 
   /* ---------------- tool.execute.before ---------------- */
   const before = asHandler(table["tool.execute.before"])
@@ -249,11 +334,33 @@ export async function registerV1Hooks(
         options: {} as Record<string, unknown>,
       }
       await chatParams({ sessionID: event.sessionID, model: event.model }, output)
-      if (output.temperature !== undefined) options.temperature = output.temperature
-      if (output.topP !== undefined) options.topP = output.topP
-      if (output.topK !== undefined) options.topK = output.topK
-      if (output.maxOutputTokens !== undefined) options.maxTokens = output.maxOutputTokens
-      Object.assign(options, output.options ?? {})
+      // Write-back is checked twice: the contract types these as finite numbers,
+      // and a plugin that casts (or is plain JS) can still hand back a string.
+      // Writing that into the model request would corrupt it silently, so a
+      // wrong-typed value is refused by name and the request keeps its value.
+      const writeNumber = (field: string, option: string, value: unknown) => {
+        if (value === undefined) return
+        if (typeof value === "number" && Number.isFinite(value)) {
+          options[option] = value
+          return
+        }
+        reporter.warn(
+          `chat.params ignored output.${field} (typeof ${typeof value}): generation settings are finite numbers`,
+        )
+      }
+      writeNumber("temperature", "temperature", output.temperature)
+      writeNumber("topP", "topP", output.topP)
+      writeNumber("topK", "topK", output.topK)
+      writeNumber("maxOutputTokens", "maxTokens", output.maxOutputTokens)
+      const extra = output.options
+      if (extra !== undefined) {
+        if (extra !== null && typeof extra === "object" && !Array.isArray(extra)) Object.assign(options, extra)
+        else {
+          reporter.warn(
+            `chat.params ignored output.options (${Array.isArray(extra) ? "an array" : extra === null ? "null" : typeof extra}): provider options must be an object`,
+          )
+        }
+      }
       event.options = options
     }
     for (const kind of ["context", "compaction", "generate", "title"] as const) {
@@ -513,23 +620,23 @@ export async function registerV1Hooks(
   }
 
   /* ---------------- tool map ---------------- */
-  const toolMap = (table.tool ?? undefined) as Record<string, { description?: string; args?: unknown; execute?: unknown }> | undefined
-  if (toolMap && typeof toolMap === "object" && Object.keys(toolMap).length > 0) {
+  // Every definition was validated above, before any hook was registered: no
+  // silent `{"content":""}` fallback exists any more.
+  if (toolDefinitions.length > 0) {
     await ctx.tool.transform((editor) => {
-      for (const [name, definition] of Object.entries(toolMap)) {
-        const execute = typeof definition.execute === "function" ? definition.execute : async () => ({ content: "" })
+      for (const { name, definition } of toolDefinitions) {
         editor.add({
           name,
           description: definition.description ?? name,
-          input: definition.args ?? { type: "object", properties: {}, additionalProperties: true },
+          input: definition.args ?? DEFAULT_TOOL_PARAMETERS,
           execute: async (input: unknown) => {
-            const result = await (execute as (args: unknown) => Promise<unknown>)(input)
+            const result = await definition.execute(input)
             return typeof result === "string" ? { content: result } : result
           },
         })
       }
     })
-    reporter.record("tool", "partial", `${Object.keys(toolMap).length} V1 tool(s) registered via ctx.tool.transform`)
+    reporter.record("tool", "partial", `${toolDefinitions.length} V1 tool(s) registered via ctx.tool.transform`)
   }
 
   /* ---------------- event ---------------- */

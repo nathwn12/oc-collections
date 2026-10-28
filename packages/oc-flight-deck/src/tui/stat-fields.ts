@@ -23,6 +23,14 @@ export interface StatSource {
   readonly agent?: unknown;
   readonly model?: unknown;
   readonly cost?: unknown;
+  /**
+   * How strong the `cost` figure's claim is: `"exact"` (the host's recorded
+   * aggregate), `"bounded"` (recorded charges over the history on hand) or
+   * `"estimated"` (at least one step priced from the catalog, not charged).
+   * The row marks the last two so an estimate never reads as a bill. Untrusted
+   * like every other field.
+   */
+  readonly costKind?: unknown;
   readonly tokens?: unknown;
   readonly branch?: unknown;
   /**

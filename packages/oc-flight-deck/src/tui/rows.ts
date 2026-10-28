@@ -26,6 +26,21 @@ import {
 /** Braille frames, advanced by the ticker, shown only while the session runs. */
 const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const;
 
+// How a money figure introduces itself. A bare figure is the host's recorded
+// charge. `~` says at least one part of it was priced from the model catalog
+// rather than charged, and the floor mark says it counts only the history the
+// host still holds. Built from code points so this file stays ASCII, the same
+// way the other non-ASCII glyphs here are.
+const ESTIMATE_MARK = "~";
+const FLOOR_MARK = String.fromCharCode(0x2265);
+
+/** The mark a money figure carries, from the strength of its claim. */
+function feeMark(kind: unknown): string {
+  if (kind === "estimated") return ESTIMATE_MARK;
+  if (kind === "bounded") return FLOOR_MARK;
+  return "";
+}
+
 /**
  * Value-column design budget for the `ses` row's preview, in cells.
  *
@@ -341,8 +356,11 @@ export function statLine(
         treeCost > cost;
 
       if (!merge) {
-        const value = layout.hasTotalRow === true ? (cost ?? treeCost) : (treeCost ?? cost);
-        return value === undefined ? undefined : row("cost", formatCost(value));
+        // `cost` is the current model's spend and nothing else: when it is not
+        // known the row stays absent rather than borrowing the family figure
+        // under a label that promises one model.
+        if (cost === undefined) return undefined;
+        return row("cost", `${feeMark(source.costKind)}${formatCost(cost)}`);
       }
 
       // The delta (`+$0.020`) used to be here and pushed the row to 40 columns,
@@ -350,7 +368,10 @@ export function statLine(
       // did not earn its width: the count already explains why the figure is
       // higher, and this form is the same width as the old `total` row.
       const plural = family === 1 ? "subagent" : "subagents";
-      return row("cost", `${formatCost(treeCost as number)} · ${family} ${plural}`);
+      return row(
+        "cost",
+        `${feeMark(tree?.kind)}${formatCost(treeCost as number)} · ${family} ${plural}`,
+      );
     }
     case "total": {
       // The family figure: this session plus its subagent sessions. Since 0.20.0
@@ -365,7 +386,7 @@ export function statLine(
       if (cost === undefined) return undefined;
       const count = asCount(tree.count) ?? 0;
       const plural = count === 1 ? "subagent" : "subagents";
-      return row("total", `${formatCost(cost)} · ${count} ${plural}`);
+      return row("total", `${feeMark(tree.kind)}${formatCost(cost)} · ${count} ${plural}`);
     }
     case "project": {
       const project = asRecord(source.project);
