@@ -80,11 +80,11 @@ try {
     }
 
     # 3b. The header row is skipped by label, in either spelling this index has
-    # used; any other label still becomes a phantom package. Same four rows.
+    # used; any other label still becomes a phantom package. Same five rows.
     $tableLines = @($realReadme -split "`r?`n" | Where-Object { $_ -match '^\|' })
     $headerCases = @(
-        [pscustomobject]@{ Label = 'Package'; Exit = 0; Summary = '^structural: rows=4 packages=4 omitted=0 missing=0 extra=0 failed=0$' }
-        [pscustomobject]@{ Label = 'Bogus'; Exit = 1; Summary = '^structural: rows=5 packages=4 omitted=0 missing=0 extra=1 failed=1$' }
+        [pscustomobject]@{ Label = 'Package'; Exit = 0; Summary = '^structural: rows=5 packages=5 omitted=0 missing=0 extra=0 failed=0$' }
+        [pscustomobject]@{ Label = 'Bogus'; Exit = 1; Summary = '^structural: rows=6 packages=5 omitted=0 missing=0 extra=1 failed=1$' }
     )
     foreach ($case in $headerCases) {
         $fixture = Join-Path $temp ('header-' + $case.Label + '.md')
@@ -120,7 +120,7 @@ try {
     $fakeCheck = Join-Path $fakeScripts 'check-index.ps1'
     Set-Content -LiteralPath (Join-Path $fakeRoot 'package.json') -Encoding utf8 -Value '{ "name": "oc-collections" }'
     $fakePackages = New-Object System.Collections.Generic.List[string]
-    $fakePackages.AddRange([string[]]@('oc-bifrost', 'oc-flight-deck', 'oc-harness-setup'))
+    $fakePackages.AddRange([string[]]@('oc-bifrost', 'oc-flight-deck', 'oc-harness-setup', 'rea-shim'))
     function Set-FakePackage([string]$name) {
         $dir = Join-Path $fakeRoot ('packages/' + $name)
         New-Item -ItemType Directory -Force -Path $dir | Out-Null

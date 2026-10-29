@@ -1,4 +1,4 @@
-# Tag-driven release for the three releasable npm packages.
+# Tag-driven release for the four releasable npm packages.
 #
 # Tag convention: <package-name>@<version>
 #   oc-flight-deck@0.20.2
@@ -29,6 +29,7 @@ on:
           - '@nathwn12/oc-bifrost'
           - oc-flight-deck
           - oc-harness-setup
+          - rea-shim
       dry_run:
         description: Validate and pack without publishing
         required: true

@@ -26,6 +26,7 @@ export const ALLOWED = [
   "@nathwn12/oc-bifrost",
   "oc-flight-deck",
   "oc-harness-setup",
+  "rea-shim",
 ]
 
 const ROOT = path.resolve(import.meta.dirname, "..")

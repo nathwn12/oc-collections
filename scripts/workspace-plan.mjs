@@ -20,16 +20,19 @@ export const PLAN = {
     "oc-bifrost": [["script", "check"]],
     "oc-flight-deck": [["script", "check"]],
     "oc-harness-setup": [["script", "test"], ["script", "check"]],
+    "rea-shim": [["script", "check"], ["script", "test"], ["pack", "--dry-run"]],
   },
   build: {
     "oc-bifrost": [["script", "compile"]],
     "oc-flight-deck": [["script", "compile"]],
     "oc-harness-setup": [],
+    "rea-shim": [],
   },
   test: {
     "oc-bifrost": [["script", "test"]],
     "oc-flight-deck": [["script", "test"]],
     "oc-harness-setup": [["script", "test"]],
+    "rea-shim": [["script", "test"]],
   },
 }
 
