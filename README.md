@@ -21,11 +21,12 @@ npx -y oc-harness-setup setup
 **MCP servers.** Run:
 
 ```sh
+npx -y rea-shim --doctor
 npx -y gladius-mcp
 npx -y puppet-mcp
 ```
 
-The gladius and puppet launchers download their engine binaries from the `gladius` and `puppet` repositories' release assets on first run. The rea MCP launcher, `rea-shim`, is not part of this repo; it lives in its own repository.
+The gladius and puppet launchers download their engine binaries from the `gladius` and `puppet` repositories' release assets on first run.
 
 ## Packages
 
@@ -34,6 +35,7 @@ The gladius and puppet launchers download their engine binaries from the `gladiu
 | oc-bifrost | Runs V1-era OpenCode plugins on the V2 runtime. | `1.6.13` | [repo](https://github.com/nathwn12/oc-collections) · [npm](https://www.npmjs.com/package/@nathwn12%2Foc-bifrost) |
 | oc-flight-deck | Live session telemetry in the OpenCode sidebar. | `0.20.6` | [repo](https://github.com/nathwn12/oc-collections) · [npm](https://www.npmjs.com/package/oc-flight-deck) |
 | oc-harness-setup | Installs and orchestrates the Windows harness. | `0.6.0` | [repo](https://github.com/nathwn12/oc-collections) · [npm](https://www.npmjs.com/package/oc-harness-setup) |
+| rea-shim | One-line MCP launcher and explicit bootstrapper for rea. | `0.2.2` | [repo](https://github.com/nathwn12/oc-collections) · [npm](https://www.npmjs.com/package/rea-shim) |
 | oc-collections | This index and npm-workspaces monorepo. | `this index` | [repo](https://github.com/nathwn12/oc-collections) |
 
 ## Development
@@ -49,7 +51,7 @@ npm run pack:check
 
 `npm run check` runs the documentation checker, its self-test, and the workspace checks — not the index checks, which are separate steps in `.github/workflows/check.yml` and can be run by hand with `pwsh -NoProfile -File scripts/check-index.ps1 --structural`. `pack:check` runs check and build, then verifies every tarball.
 
-Package releases use tags `<package>@<version>`. The `release` workflow is OIDC-only; `dry_run` defaults to true. The lane has run: all three packages are published through OIDC with provenance, and the post-publish verification retries npm propagation lag.
+Package releases use tags `<package>@<version>`. The `release` workflow is OIDC-only; `dry_run` defaults to true. The lane has run: all four packages are published through OIDC with provenance, and the post-publish verification retries npm propagation lag.
 
 ## Licence
 

@@ -1,5 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
+import path from "node:path"
 
 import { ALLOWED, compareVersions, guardRegistry, parseTag, resolvePackage } from "./release-target.mjs"
 
@@ -69,12 +70,15 @@ test("guardRegistry: a target below the newest is refused even if never publishe
   assert.throws(() => guardRegistry(["2.0.0"], "1.9.9"), /refusing to republish/)
 })
 
-test("allowlist: exactly the three releasable packages", () => {
-  assert.deepEqual(ALLOWED, ["@nathwn12/oc-bifrost", "oc-flight-deck", "oc-harness-setup"])
+test("allowlist: exactly the four releasable packages", () => {
+  assert.deepEqual(ALLOWED, ["@nathwn12/oc-bifrost", "oc-flight-deck", "oc-harness-setup", "rea-shim"])
 })
 
-test("allowlist: a package no longer in this repo is refused", () => {
-  assert.throws(() => resolvePackage("rea-shim"), /not a releasable package/)
+test("resolvePackage: rea-shim resolves to its workspace package", () => {
+  const target = resolvePackage("rea-shim")
+  assert.equal(target.name, "rea-shim")
+  assert.match(target.version, /^\d+\.\d+\.\d+/)
+  assert.equal(path.basename(target.dir), "rea-shim")
 })
 
 test("resolvePackage: a package outside the allowlist is refused", () => {
