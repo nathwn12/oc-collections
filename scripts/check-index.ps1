@@ -15,9 +15,10 @@
 #     version is published; a package declared omitted is never queried.
 #     Packages released from this monorepo (the table in
 #     scripts/index-registry.ps1) must also name `nathwn12/oc-collections` in
-#     their registry `repository` metadata; packages on other release lanes
-#     (gladius-mcp, puppet-mcp) are existence/version-only, because
-#     their published metadata names their original repos by design.
+#     their registry `repository` metadata; a package classified `external`
+#     (released from another repository) is existence/version-only, because
+#     its published metadata names that original repo by design. No package
+#     is external today; the scope stays for one released elsewhere later.
 #     This is the post-publish check: it cannot pass in the
 #     window between a version bump and its publish, so it must not gate a PR.
 #     --package <name> narrows it to one table row (used by the release
@@ -67,13 +68,13 @@ if ($packageFilter -and $mode -ne 'registry') {
 $readme = if ($Path) { $Path } else { Join-Path $PSScriptRoot '..' 'README.md' }
 $ua = @{ 'User-Agent' = 'oc-collections-index-check/1.0' }
 
-# Deliberately not shown in the public table: a stranger cannot install either.
+# Deliberately not shown in the public table: a stranger cannot install it.
 # This is a reasoned omission, not an allowlist of names to skip: each one must
 # still exist in the tree (a vanish is a failure), and a table row for one is a
 # failure too, so the table and this list can never both claim the same package.
-$Omitted = @{
-    'oc-unified' = 'private; never published'
-}
+# Empty since 2026-10-29: nothing in the tree is withheld from the table. The
+# guard stays for a future private package.
+$Omitted = @{}
 
 # The released/external scope table and the repository-metadata assertion.
 . (Join-Path $PSScriptRoot 'index-registry.ps1')

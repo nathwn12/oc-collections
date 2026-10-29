@@ -1,9 +1,11 @@
 ---
-name: goal
+name: loop
 description: Use when a frozen SPEC must become working code without rescoping — cut tracer-bullet tickets, loop one ticket at a time with TDD to a cited runnable check, then run the repo's full gate green.
 ---
 
-# goal
+# loop
+
+Distinct from the native `/goal` built-in session-continuation command (OpenCode v2.2.1); this skill is the custom end-to-end looper, invoked as `/loop`.
 
 End-to-end looper: `to-spec` → `to-tickets` → `implement` → `tdd` → repo gate → fresh verdict.
 

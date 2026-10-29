@@ -602,7 +602,10 @@ function retireStale(configDir, prior, files, manifest) {
       log('retire', `keep   ${rel} (unreadable — refusing)`);
       continue;
     }
-    if (entry.hash && sha256File(resolved) === entry.hash) {
+    let hashMatched = false;
+    try { hashMatched = entry.hash ? sha256File(resolved) === entry.hash : false; }
+    catch { log('retire', `keep   ${rel} (content read failed — refusing)`); continue; }
+    if (entry.hash && hashMatched) {
       rmSync(resolved, { force: true });
       manifest.files.push({ path: rel, hash: entry.hash, action: 'retired' });
       if (skillId) retiredSkills.add(skillId);

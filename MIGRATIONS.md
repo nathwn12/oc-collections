@@ -174,19 +174,19 @@ Not carried over: `.github/workflows/*` — repo-level; GitHub only runs the mon
 - `nathwn12/oc-bifrost` — its package lives at `packages/oc-bifrost/`.
 - `nathwn12/oc-flight-deck` — its package lives at `packages/oc-flight-deck/`.
 - `nathwn12/oc-harness-setup` — its package lives at `packages/oc-harness-setup/`.
-- `nathwn12/oc-unified` — its package lives at `packages/oc-unified/` (set `private`; source-only per the owner's ruling).
-- `nathwn12/rea-shim` — its package lives at `packages/rea-shim/`.
+- `nathwn12/oc-unified` — removed from this repo on 2026-10-29; git history retains the imported tree.
+- `nathwn12/rea-shim` - its package lived at `packages/rea-shim/`; removed from this repo on 2026-10-29 and back on its own release lane at 0.2.2.
 - `nathwn12/oc-todo` — EOL; deleted from npm and removed from this repo on 2026-10-23 (git history retains it).
-- `nathwn12/gladius` — its crate lives at `crates/gladius/`, its launcher at `packages/gladius-mcp/`.
-- `nathwn12/puppet` — its crate lives at `crates/puppet/`, its launcher at `packages/puppet-mcp/`.
+- `nathwn12/gladius` — crate and launcher were removed from this repo on 2026-10-29; the repo remains the release-asset source.
+- `nathwn12/puppet` — crate and launcher were removed from this repo on 2026-10-29; the repo remains the release-asset source.
 
 The mappings above are the import record; what became of each repository is recorded under "Retired repositories".
 
 ## Rust workspace
 
-- Root `Cargo.toml` is a virtual workspace: `resolver = "2"`, `members = ["crates/*"]`.
-- The imported crate manifests keep their own `[profile.dev]` / `[profile.test]` blocks. Cargo ignores profiles outside the workspace root and warns about it; the same intent is set in the root profile tables so workspace builds keep `debug = "line-tables-only"`.
-- Each crate keeps its own `Cargo.lock` and `rust-toolchain.toml` (gladius pins 1.88.0, puppet 1.85.0). A real build from the root uses the root lockfile and the invoking toolchain; `cargo metadata --no-deps` creates neither.
+- Root `Cargo.toml` is a virtual workspace: `resolver = "2"`, `members = []` since the two crates were removed on 2026-10-29. The list is explicit because a `crates/*` glob is an error when it matches nothing.
+- The removed crate manifests kept their own `[profile.dev]` / `[profile.test]` blocks. Cargo ignores profiles outside the workspace root and warns about it; the same intent stays in the root profile tables for any future member, and is inert while the workspace has none.
+- Each removed crate kept its own `Cargo.lock` and `rust-toolchain.toml` (gladius pinned 1.88.0, puppet 1.85.0); those files went with the crates. `cargo metadata --no-deps` still resolves the empty workspace.
 - `target/` is ignored at the root.
 
 ## Post-import version bumps (2026-10-22)
@@ -197,32 +197,56 @@ Git and local-clone install routes were removed from every package README and `I
 
 ## Release lane (exercised: four releases; the registry verify is still unproven)
 
-`.github/workflows/release.yml` releases the four releasable packages — `@nathwn12/oc-bifrost`, `oc-flight-deck`, `oc-harness-setup`, `rea-shim` — from a tag `<package>@<version>` or a manual dispatch (package plus `dry_run`, default true). No Changesets: npm 12 breaks Changesets 2's registry parsing, and these packages version independently.
+`.github/workflows/release.yml` releases the three releasable packages — `@nathwn12/oc-bifrost`, `oc-flight-deck`, `oc-harness-setup` — from a tag `<package>@<version>` or a manual dispatch (package plus `dry_run`, default true). `rea-shim` was a fourth until 2026-10-29, when it moved back to its own repository and left the allowlist and the dispatch choice list. No Changesets: npm 12 breaks Changesets 2's registry parsing, and these packages version independently.
 
-`gladius-mcp` and `puppet-mcp` are deliberately deferred: their `engine-manifest.json` carries `RELEASE_WORKFLOW_FILLS_THIS` placeholders that only their own release pipeline fills after building the Rust engine and uploading the archive. Publishing from this workflow would ship a launcher that fails closed at runtime, so they stay on their original repos' release lanes until that path is proven.
+`gladius-mcp` and `puppet-mcp` are deliberately deferred: their `engine-manifest.json` carries `RELEASE_WORKFLOW_FILLS_THIS` placeholders that only their own release pipeline fills after building the Rust engine and uploading the archive. Publishing from this workflow would ship a launcher that fails closed at runtime, so they stay on their original repos' release lanes until that path is proven. The launchers were removed from this repo on 2026-10-29.
 
-`oc-unified` is excluded as deprecated/private per the owner's 2026-10-22 ruling: it is `private: true` and has never been on npm, so it stays in the repo as source only (`packages/oc-unified/`) and is not releasable until the owner revisits the ruling; the single allowlist lives in `scripts/release-target.mjs`. `oc-todo` was end-of-life for the same reason and was deleted from npm and from this repo on 2026-10-23.
+`oc-unified` was excluded as deprecated/private per the owner's 2026-10-22 ruling: it was `private: true` and has never been on npm. It was removed from the repo on 2026-10-29; the single allowlist lives in `scripts/release-target.mjs`. `oc-todo` was end-of-life for the same reason and was deleted from npm and from this repo on 2026-10-23.
 
-Publishing is OIDC trusted publishing only (`id-token: write`, `--provenance`, no token). `publishConfig` audit of the four releasable packages: `@nathwn12/oc-bifrost` is scoped and declares `access: public`; `oc-flight-deck` and `oc-harness-setup` are unscoped and declare it too; `rea-shim` is unscoped and relies on the default public access. No manifest was changed.
+Publishing is OIDC trusted publishing only (`id-token: write`, `--provenance`, no token). `publishConfig` audit of the three releasable packages: `@nathwn12/oc-bifrost` is scoped and declares `access: public`; `oc-flight-deck` and `oc-harness-setup` are unscoped and declare it too. `rea-shim` was the fourth until 2026-10-29, unscoped and relying on the default public access; it left with its package. No manifest was changed.
 
 Exercised: the lane has released four packages — `@nathwn12/oc-bifrost@1.6.10`, `oc-flight-deck@0.20.2`, `oc-harness-setup@0.4.4` and `rea-shim@0.1.2` — each tagged `<package>@<version>`, each published by OIDC trusted publishing with provenance and carrying two attestations, with `latest` correct on all four; `npm audit signatures` verifies them and reports none invalid. One step is still unproven: `Verify the released package on the registry` ran seconds after publish and lost npm's propagation race, so all four runs concluded `failure` even though every publish step succeeded. The workflow now retries only the not-published shape (17 attempts, waiting 10/15/20 s then 30 s, capped near 7m15s); that retry has not yet been exercised by a real release.
 
 ## Gate changes after the phase-1 imports
 
-- **Vocabulary guard scope.** Both halves of the check now cover the index's own files only: `packages/` is excluded because imported package trees are their own published documents (oc-unified ships the retired names as product vocabulary; oc-harness-setup's shipped contract uses one), and `crates/` is excluded because the imported Rust sources and design docs use the guarded words as ordinary English (including one research note that names the retired term). This is a deliberate, owner-visible narrowing, not a silent drop.
+- **Vocabulary guard scope.** Both halves of the check cover the index's own files only: `packages/` is the sole exclusion, because imported package trees are their own published documents (oc-harness-setup's shipped contract uses one). The earlier `crates/` exclusion fell away with the frozen crate imports removed on 2026-10-29 — there are no imported Rust sources or design docs left to exempt. This is a deliberate, owner-visible narrowing, not a silent drop.
 - **Implementation-file assertion.** `.ts`/`.tsx` are allowed under `packages/`; a loose one at the root still fails.
-- **Bun in CI.** `check.yml` installs bun (pinned 1.4.2) because oc-flight-deck and oc-unified run their own checks with it.
-- **Root fan-out.** `scripts/workspace-plan.mjs` (imported by `workspace-run.mjs` and `pack-check.mjs`) names each package's own exact check/build/test commands instead of assuming one script name (oc-bifrost calls its build `compile`, oc-unified has no `check`, and at import rea-shim had no scripts). Both runners fail closed: zero workspaces or an unplanned workspace exits 1.
+- **Bun in CI.** `check.yml` installs bun (pinned 1.4.2) because oc-flight-deck runs its own checks with it.
+- **Root fan-out.** `scripts/workspace-plan.mjs` (imported by `workspace-run.mjs` and `pack-check.mjs`) names each package's own exact check/build/test commands instead of assuming one script name (oc-bifrost calls its build `compile`, and at import rea-shim had no scripts). Both runners fail closed: zero workspaces or an unplanned workspace exits 1.
 - **Pack guard.** `scripts/pack-check.mjs` packs every workspace package and verifies the tarball: no forbidden entries, byte-equal manifest, declared entry points present, and every `files` entry shipped. It exits 1 on zero workspaces or an unplanned workspace. `npm run pack:check` runs check + build first; a bare `npm pack` can still produce a dist-less tarball, which the guard reports but cannot intercept.
 - **Pack guard in CI.** `.github/workflows/check.yml` runs `npm run pack:check` after the workspace check, so the strongest guard runs on every push and pull request.
-- **Index check split.** `scripts/check-index.ps1` now has `--structural` (offline: table names against the repo's package inventory; runs on every PR) and `--registry` (network: published packages and claimed versions; post-publish only, scoped with `--package` in the release workflow). `scripts/index-registry.ps1` records which packages are released from here — the four npm packages assert `repository` names `nathwn12/oc-collections` — and which are not (`gladius-mcp`, `puppet-mcp` original release lanes), with a reason per entry; those are existence/version-only. The self-test proves the structural red path and both repository-assertion directions offline.
-- **Launcher checks and Cargo.** `scripts/check-launcher.mjs` validates each npx launcher offline (bin exists, every `files` entry exists, manifest names/versions agree, `runtime.source` is an immutable GitHub release URL, sha256 slots are placeholder-or-hex), and both launchers are in the workspace plan. `cargo metadata --no-deps` resolves the two crates; CI still runs only the npm checks (no Rust toolchain step).
+- **Index check split.** `scripts/check-index.ps1` now has `--structural` (offline: table names against the repo's package inventory; runs on every PR) and `--registry` (network: published packages and claimed versions; post-publish only, scoped with `--package` in the release workflow). `scripts/index-registry.ps1` records which packages are released from here — the three npm packages assert `repository` names `nathwn12/oc-collections` — and keeps an `external` scope for a package released from another repository, whose entry is existence/version-only and skipped by the repository assertion. No package is external today: the `gladius-mcp` and `puppet-mcp` entries were removed on 2026-10-29 along with their launchers, so that scope is future-facing and currently empty. The self-test proves the structural red path and both repository-assertion directions offline.
+- **Launcher checks and Cargo.** `scripts/check-launcher.mjs` validates an npx launcher offline (bin exists, every `files` entry exists, manifest names/versions agree, `runtime.source` is an immutable GitHub release URL, sha256 slots are placeholder-or-hex); it validated the two launchers while they were in the workspace plan, until both were removed on 2026-10-29. `cargo metadata --no-deps` resolves the now-empty workspace; CI still runs only the npm checks (no Rust toolchain step).
+
+## 2026-10-29 — removed: gladius/puppet MCP copies and oc-unified
+
+Removed the frozen in-repo MCP copies and the dead private package:
+
+| Removed path | What it was | Why |
+| --- | --- | --- |
+| `packages/gladius-mcp/` | npx launcher imported from `gladius@0.4.2` | frozen import; released only from the `gladius` lane |
+| `packages/puppet-mcp/` | npx launcher imported from `puppet@4.5.3` | frozen import; released only from the `puppet` lane |
+| `packages/oc-unified/` | private package, never published | deprecated/private per the 2026-10-22 ruling |
+| `crates/gladius/` | Rust engine source imported from `gladius@0.4.2` | same frozen import |
+| `crates/puppet/` | Rust engine source imported from `puppet@4.5.3` | same frozen import |
+
+Rewired with them: the root workspace plan (`scripts/workspace-plan.mjs`), `package-lock.json` (including the 11 dependency entries nested under the removed package), the root `Cargo.toml` (`members` is now an explicit empty list, because a `crates/*` glob is an error when it matches nothing), the README index table, and the structural index check's omission list. This removal itself changed no retained package file; the separate package-refresh work landing alongside it is what changed retained manifests, docs, and tests. The MCP servers stay on their original release lanes, where their engine binaries are built; this repo no longer carries a second copy. Git history retains every removed tree at the commits recorded above.
+
+## 2026-10-29 - removed: `packages/rea-shim`
+
+`rea-shim` moved back to its own repository (`nathwn12/rea-shim`, which now carries the 0.2.2 source), so this repo is plugins-only again.
+
+| Removed path | What it was | Why |
+| --- | --- | --- |
+| `packages/rea-shim/` | MCP launcher imported at 0.1.1 on 2026-10-22 | it has its own release lane in its own repository again |
+
+Rewired with it: the root workspace plan (`scripts/workspace-plan.mjs`), `package-lock.json` (its two workspace entry blocks, `node_modules/rea-shim` and `packages/rea-shim`), the release allowlist (`scripts/release-target.mjs`) with its test and the dispatch choice list in `.github/workflows/release.yml`, the index-registry scope table (`scripts/index-registry.ps1`), the README install text and index table, and the doc checker's scope and front-door map (`scripts/check-docs.mjs`) with its self-test. The structural index check's self-test now builds its synthetic tree from the three remaining packages and expects its four-row summary. Its migration record above and the release history below stay as history. Git history retains the removed tree.
 
 ## Retired repositories
 
-The four published packages — `@nathwn12/oc-bifrost`, `oc-flight-deck`, `oc-harness-setup`, `rea-shim` — now build, tag and publish from `oc-collections` only. Their former repositories — `nathwn12/oc-bifrost`, `nathwn12/oc-flight-deck`, `nathwn12/oc-harness-setup`, `nathwn12/rea-shim` — are archived and private. An archived repository stays readable, its npm metadata stays immutable, and nothing resolves it at install time.
+The three published packages - `@nathwn12/oc-bifrost`, `oc-flight-deck`, `oc-harness-setup` - build, tag and publish from `oc-collections` only. Their former repositories - `nathwn12/oc-bifrost`, `nathwn12/oc-flight-deck`, `nathwn12/oc-harness-setup` - are archived and private. `rea-shim` left this repo on 2026-10-29 and publishes from `nathwn12/rea-shim` again. An archived repository stays readable, its npm metadata stays immutable, and nothing resolves it at install time.
 
-`nathwn12/oc-unified` (archived, private, never published) is retained as history; `nathwn12/oc-todo` (end-of-life, archived, private) was deleted from npm and from this repo on 2026-10-23 and survives only in git history.
+`nathwn12/oc-unified` (archived, private, never published) was removed from this repo on 2026-10-29 and survives in git history; `nathwn12/oc-todo` (end-of-life, archived, private) was deleted from npm and from this repo on 2026-10-23 and survives only in git history.
 
 `nathwn12/gladius` and `nathwn12/puppet` stay public and unarchived: they are the release-asset source for the MCP engine binaries, and archiving either would disable the Actions lane that builds the next engine.
 

@@ -13,7 +13,7 @@ First run prints a manifest of everything it will touch and waits for you to typ
 ## What it does
 
 - Lays down a working OpenCode setup: 9 agents, 6 skills, and 12 on-demand references.
-- Closes the loop: goal, worker, verifier, historian, cleaner, close, with no self-verdicts.
+- Closes the loop: loop -> worker -> verifier -> historian -> cleaner -> close, with no self-verdicts.
 - Researches before it claims: a finding arrives sourced or marked unverified.
 - Keeps your model, provider, keys, and state across upgrades, and reverses cleanly on uninstall.
 - Grows with you: one skill, command, reference, seat, or config change at a time.

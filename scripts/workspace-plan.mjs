@@ -15,53 +15,21 @@ import path from "node:path"
 
 export const ROOT = path.resolve(import.meta.dirname, "..")
 
-/**
- * Honour a package's own declared `scripts.test` instead of pinning one file.
- * `fallback` is the exact command the plan ran before, used only when the
- * package manifest declares no test script.
- */
-function manifestTest(dir, fallback) {
-  const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, dir, "package.json"), "utf8"))
-  return pkg.scripts?.test ? ["script", "test"] : fallback
-}
-
 export const PLAN = {
   check: {
     "oc-bifrost": [["script", "check"]],
     "oc-flight-deck": [["script", "check"]],
     "oc-harness-setup": [["script", "test"], ["script", "check"]],
-    "oc-unified": [["script", "typecheck"], ["script", "test"]],
-    "rea-shim": [
-      ["node", "--check", "bin/rea-shim.js"],
-      ["node", "--check", "lib/support.js"],
-      ["node", "--check", "lib/discovery.js"],
-      ["node", "--check", "lib/sources.js"],
-      ["node", "--check", "lib/install.js"],
-      ["node", "--check", "lib/checks.js"],
-      ["node", "--check", "lib/bootstrap.js"],
-      manifestTest("packages/rea-shim", ["node", "--test", "test/bootstrap.test.js"]),
-      ["pack", "--dry-run"],
-    ],
-    "gladius-mcp": [["node", "--check", "bin/gladius-mcp.js"], ["node", "../../scripts/check-launcher.mjs"]],
-    "puppet-mcp": [["node", "--check", "bin/puppet-mcp.js"], ["node", "../../scripts/check-launcher.mjs"]],
   },
   build: {
     "oc-bifrost": [["script", "compile"]],
     "oc-flight-deck": [["script", "compile"]],
     "oc-harness-setup": [],
-    "oc-unified": [],
-    "rea-shim": [],
-    "gladius-mcp": [],
-    "puppet-mcp": [],
   },
   test: {
     "oc-bifrost": [["script", "test"]],
     "oc-flight-deck": [["script", "test"]],
     "oc-harness-setup": [["script", "test"]],
-    "oc-unified": [["script", "test"]],
-    "rea-shim": [manifestTest("packages/rea-shim", ["node", "--test", "test/bootstrap.test.js"])],
-    "gladius-mcp": [],
-    "puppet-mcp": [],
   },
 }
 

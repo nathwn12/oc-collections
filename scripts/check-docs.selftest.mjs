@@ -74,8 +74,8 @@ try {
   // 5. Front door with a relative link: npm has no repo tree to resolve it
   //    against, so it fails.
   const relativeLink = path.join(temp, "relative-link.md");
-  fs.writeFileSync(relativeLink, "# rea-shim\n\nSee [the guide](docs/GUIDE.md).\n");
-  const relativeRun = spawnSync(process.execPath, [checker, "--file", relativeLink, "--pkg", "rea-shim"], { encoding: "utf8" });
+  fs.writeFileSync(relativeLink, "# oc-flight-deck\n\nSee [the guide](docs/GUIDE.md).\n");
+  const relativeRun = spawnSync(process.execPath, [checker, "--file", relativeLink, "--pkg", "oc-flight-deck"], { encoding: "utf8" });
   console.log(`front door with a relative link: exit=${relativeRun.status}`);
   if (relativeRun.status === 0) {
     console.log("FAIL: a relative markdown link exited 0");

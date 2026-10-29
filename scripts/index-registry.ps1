@@ -1,13 +1,11 @@
 # index-registry.ps1 - which packages this monorepo releases, and the
 # repository-metadata assertion that follows from it.
 #
-# The index table includes packages this repository does not publish:
-#   * gladius-mcp and puppet-mcp stay on their original release lanes, where
-#     their engine provisioning lives.
-# Their published metadata names those original repositories by design, so a
-# repository assertion on them can never pass. They are checked for existence
-# and claimed version only. Every package must be classified here; an unknown
-# package fails the registry check instead of being guessed.
+# Every package in the index must be classified here; an unknown package fails
+# the registry check instead of being guessed. A package released from another
+# repository is classified 'external': its published metadata names that
+# repository by design, so the repository assertion is skipped and only its
+# existence and claimed version are checked. No package is external today.
 $script:RegistryScope = [ordered]@{
     '@nathwn12/oc-bifrost' = [pscustomobject]@{
         Scope  = 'released'
@@ -20,18 +18,6 @@ $script:RegistryScope = [ordered]@{
     'oc-harness-setup' = [pscustomobject]@{
         Scope  = 'released'
         Reason = 'packages/oc-harness-setup; published by this repo''s release workflow.'
-    }
-    'rea-shim' = [pscustomobject]@{
-        Scope  = 'released'
-        Reason = 'packages/rea-shim; published by this repo''s release workflow.'
-    }
-    'gladius-mcp' = [pscustomobject]@{
-        Scope  = 'external'
-        Reason = 'original release lane; engine provisioning stays in its own repo.'
-    }
-    'puppet-mcp' = [pscustomobject]@{
-        Scope  = 'external'
-        Reason = 'original release lane; engine provisioning stays in its own repo.'
     }
 }
 

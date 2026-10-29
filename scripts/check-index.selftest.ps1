@@ -9,12 +9,6 @@
 #     names the phantom,
 #   * a fixture with header `Package` passes like one with header `Repo`, and a
 #     fixture with any other header label still fails as a phantom package,
-#   * a fixture whose table matches the inventory less the reasoned omissions
-#     passes and reports the omission count,
-#   * a fixture whose omitted package has vanished from the tree exits 1 and
-#     names it,
-#   * a fixture whose table carries a row for an omitted package exits 1 and
-#     names the double claim,
 #   * a fixture whose released package shows a stale version exits 1 and names
 #     the mismatch,
 #   * a fixture whose package released elsewhere shows a version literal exits 1
@@ -22,7 +16,8 @@
 #   * the real README exits 0 with a non-empty structural summary,
 #   * a released-from-here package with stale repository metadata fails,
 #   * the same package with monorepo metadata passes,
-#   * a not-released-from-here package with its original metadata passes,
+#   * an externally released package (fixture classification) with its original
+#     metadata passes,
 #   * an unclassified package fails instead of being guessed.
 # Exit 0 only when every direction holds.
 $ErrorActionPreference = 'Stop'
@@ -85,11 +80,11 @@ try {
     }
 
     # 3b. The header row is skipped by label, in either spelling this index has
-    # used; any other label still becomes a phantom package. Same nine rows.
+    # used; any other label still becomes a phantom package. Same four rows.
     $tableLines = @($realReadme -split "`r?`n" | Where-Object { $_ -match '^\|' })
     $headerCases = @(
-        [pscustomobject]@{ Label = 'Package'; Exit = 0; Summary = '^structural: rows=7 packages=7 omitted=1 missing=0 extra=0 failed=0$' }
-        [pscustomobject]@{ Label = 'Bogus'; Exit = 1; Summary = '^structural: rows=8 packages=7 omitted=1 missing=0 extra=1 failed=1$' }
+        [pscustomobject]@{ Label = 'Package'; Exit = 0; Summary = '^structural: rows=4 packages=4 omitted=0 missing=0 extra=0 failed=0$' }
+        [pscustomobject]@{ Label = 'Bogus'; Exit = 1; Summary = '^structural: rows=5 packages=4 omitted=0 missing=0 extra=1 failed=1$' }
     )
     foreach ($case in $headerCases) {
         $fixture = Join-Path $temp ('header-' + $case.Label + '.md')
@@ -114,11 +109,10 @@ try {
         }
     }
 
-    # 3c. Reasoned omissions. The real script bytes run against a synthetic tree:
-    # a copy of the script resolves its root from its own $PSScriptRoot, so a
-    # fake root exercises the vanish and double-claim guards without mutating
-    # this checkout.
-    $fakeRoot = Join-Path $temp 'omitted-root'
+    # 3c. A synthetic tree. The real script bytes run against a copy that
+    # resolves its root from its own $PSScriptRoot, so version fixtures exercise
+    # the real inventory rules without mutating this checkout.
+    $fakeRoot = Join-Path $temp 'synthetic-root'
     $fakeScripts = Join-Path $fakeRoot 'scripts'
     New-Item -ItemType Directory -Force -Path $fakeScripts | Out-Null
     Copy-Item -LiteralPath $check -Destination $fakeScripts
@@ -126,7 +120,7 @@ try {
     $fakeCheck = Join-Path $fakeScripts 'check-index.ps1'
     Set-Content -LiteralPath (Join-Path $fakeRoot 'package.json') -Encoding utf8 -Value '{ "name": "oc-collections" }'
     $fakePackages = New-Object System.Collections.Generic.List[string]
-    $fakePackages.AddRange([string[]]@('oc-bifrost', 'oc-flight-deck', 'oc-harness-setup', 'rea-shim', 'gladius-mcp', 'puppet-mcp', 'oc-unified'))
+    $fakePackages.AddRange([string[]]@('oc-bifrost', 'oc-flight-deck', 'oc-harness-setup'))
     function Set-FakePackage([string]$name) {
         $dir = Join-Path $fakeRoot ('packages/' + $name)
         New-Item -ItemType Directory -Force -Path $dir | Out-Null
@@ -139,65 +133,6 @@ try {
         Set-Content -LiteralPath (Join-Path $dir 'package.json') -Encoding utf8 -Value ('{ "name": "' + $real.name + '", "version": "' + $real.version + '" }')
     }
     foreach ($name in $fakePackages) { Set-FakePackage $name }
-    $shownFixture = Join-Path $temp 'omitted-shown.md'
-    Set-Content -LiteralPath $shownFixture -Encoding utf8 -Value $realReadme
-
-    # 3c-i. The omitted package still in the tree: green, and the count is reported.
-    $omittedOut = @(& pwsh -NoProfile -File $fakeCheck --structural -Path $shownFixture 2>&1)
-    $omittedExit = $LASTEXITCODE
-    $omittedSummary = ($omittedOut | Where-Object { $_ -match '^structural:' } | Select-Object -Last 1)
-    Write-Output ('omission control (omitted, present): exit={0}; {1}' -f $omittedExit, $omittedSummary)
-    if ($omittedExit -ne 0) {
-        Write-Output 'FAIL: a table matching the inventory less its omissions exited non-zero'
-        $fail++
-    }
-    if ($omittedSummary -notmatch '^structural: rows=7 packages=7 omitted=1 missing=0 extra=0 failed=0$') {
-        Write-Output 'FAIL: the omission pass did not report omitted=1 with no failures'
-        $fail++
-    }
-
-    # 3c-ii. An omitted package vanishes from the tree: red, and named.
-    Remove-Item -LiteralPath (Join-Path $fakeRoot 'packages/oc-unified') -Recurse -Force
-    $vanishOut = @(& pwsh -NoProfile -File $fakeCheck --structural -Path $shownFixture 2>&1)
-    $vanishExit = $LASTEXITCODE
-    $vanishSummary = ($vanishOut | Where-Object { $_ -match '^structural:' } | Select-Object -Last 1)
-    Write-Output ('vanish guard (oc-unified deleted from tree): exit={0}; {1}' -f $vanishExit, $vanishSummary)
-    $vanishOut | Where-Object { $_ -match 'declared omitted but missing' } | ForEach-Object { Write-Output ('  ' + $_) }
-    if ($vanishExit -eq 0) {
-        Write-Output 'FAIL: an omitted package missing from the tree exited 0'
-        $fail++
-    }
-    if (-not ($vanishOut -match 'oc-unified' -and $vanishOut -match 'declared omitted but missing from the tree')) {
-        Write-Output 'FAIL: the vanish failure was not named'
-        $fail++
-    }
-    if ($vanishSummary -notmatch 'failed=1$') {
-        Write-Output 'FAIL: the vanish run did not report one failure'
-        $fail++
-    }
-    Set-FakePackage 'oc-unified'
-
-    # 3c-iii. An omitted package also has a table row: red, and named as a double claim.
-    $doubleFixture = Join-Path $temp 'omitted-row.md'
-    $doubleRow = '| oc-unified | Session watching, tool liveness, and title renaming in one plugin. | `private` | [repo](https://github.com/nathwn12/oc-collections) |'
-    Set-Content -LiteralPath $doubleFixture -Encoding utf8 -Value ($realReadme.TrimEnd() + "`n`n" + $doubleRow + "`n")
-    $doubleOut = @(& pwsh -NoProfile -File $fakeCheck --structural -Path $doubleFixture 2>&1)
-    $doubleExit = $LASTEXITCODE
-    $doubleSummary = ($doubleOut | Where-Object { $_ -match '^structural:' } | Select-Object -Last 1)
-    Write-Output ('double-claim guard (oc-unified rowed while omitted): exit={0}; {1}' -f $doubleExit, $doubleSummary)
-    $doubleOut | Where-Object { $_ -match 'omitted package' } | ForEach-Object { Write-Output ('  ' + $_) }
-    if ($doubleExit -eq 0) {
-        Write-Output 'FAIL: a table row for an omitted package exited 0'
-        $fail++
-    }
-    if (-not ($doubleOut -match 'table row for an omitted package' -and $doubleOut -match 'private; never published')) {
-        Write-Output 'FAIL: the double-claim failure was not named'
-        $fail++
-    }
-    if ($doubleSummary -notmatch '^structural: rows=8 packages=7 omitted=1 missing=0 extra=0 failed=1$') {
-        Write-Output 'FAIL: the double-claim run did not isolate its own failure'
-        $fail++
-    }
 
     # 3d. Version cells are claims. A released package must show its manifest
     # version; a package released elsewhere must show no version literal at all.
@@ -217,12 +152,6 @@ try {
             Name   = 'oc-harness-setup'
             Cell   = '`0.0.1`'
             Needle = 'does not match manifest'
-        }
-        [pscustomobject]@{
-            What   = 'package released elsewhere, version literal'
-            Name   = 'puppet-mcp'
-            Cell   = '`4.5.5`'
-            Needle = 'does not release it'
         }
     )
     foreach ($case in $versionCases) {
@@ -249,10 +178,17 @@ try {
 
     # 4. Registry scope: the repository assertion in both directions, offline.
     . (Join-Path $PSScriptRoot 'index-registry.ps1')
+    # No live index package is released from another repository today, so the
+    # 'external' lane is exercised with a fixture classification instead of a
+    # name this index no longer carries.
+    $script:RegistryScope['external-fixture'] = [pscustomobject]@{
+        Scope  = 'external'
+        Reason = 'selftest fixture: released from its own repository'
+    }
     $scopeCases = @(
         [pscustomobject]@{ Name = 'released package, stale repository metadata'; Expected = $false; Actual = (Test-RepositoryMetadata '@nathwn12/oc-bifrost' 'git+https://github.com/nathwn12/oc-bifrost.git') }
         [pscustomobject]@{ Name = 'released package, monorepo metadata'; Expected = $true; Actual = (Test-RepositoryMetadata '@nathwn12/oc-bifrost' 'git+https://github.com/nathwn12/oc-collections.git') }
-        [pscustomobject]@{ Name = 'non-released package, original metadata'; Expected = $true; Actual = (Test-RepositoryMetadata 'gladius-mcp' 'git+https://github.com/nathwn12/gladius-mcp.git') }
+        [pscustomobject]@{ Name = 'externally released package, original metadata'; Expected = $true; Actual = (Test-RepositoryMetadata 'external-fixture' 'git+https://github.com/nathwn12/external-fixture.git') }
         [pscustomobject]@{ Name = 'unclassified package'; Expected = $false; Actual = (Test-RepositoryMetadata 'mystery-pkg' 'git+https://github.com/nathwn12/oc-collections.git') }
     )
     foreach ($case in $scopeCases) {

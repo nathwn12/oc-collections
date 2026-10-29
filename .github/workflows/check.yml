@@ -34,18 +34,17 @@ jobs:
         # literally, so this file itself stays clean.
         shell: bash
         run: |
-          # Imported trees are their own published documents: oc-unified ships
-          # those names as product vocabulary, oc-harness-setup's shipped
-          # contract uses one, vendor/rtk-LICENSE is third-party text kept
-          # byte-identical to upstream, and the imported Rust sources and
-          # design docs use the words as ordinary English. Both guards cover
-          # the index's own files (root docs, workflows, scripts), not
-          # packages/ or crates/.
-          if git grep -I -n -i -E 'fl[e]et|l[i]feline|m[a]sthead' -- . ':(exclude)packages' ':(exclude)crates'; then
+          # Imported trees are their own published documents: oc-harness-setup's
+          # shipped contract uses one of those names, oc-bifrost keeps
+          # vendor/rtk-LICENSE byte-identical to upstream, and the imported
+          # sources and design docs use the words as ordinary English. Both
+          # guards cover the index's own files (root docs, workflows, scripts),
+          # not packages/.
+          if git grep -I -n -i -E 'fl[e]et|l[i]feline|m[a]sthead' -- . ':(exclude)packages'; then
             echo "internal name found in this repo's own files" >&2
             exit 1
           fi
-          if git grep -I -n -i -E 'mod[u]le host|supers[e]d|unpubl[i]sh|noth[i]ng mounts' -- . ':(exclude)packages' ':(exclude)crates'; then
+          if git grep -I -n -i -E 'mod[u]le host|supers[e]d|unpubl[i]sh|noth[i]ng mounts' -- . ':(exclude)packages'; then
             echo "internal history found in this repo's own files" >&2
             exit 1
           fi

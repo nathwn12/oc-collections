@@ -12,7 +12,7 @@ test("parseTag: scoped name keeps both @ characters correctly", () => {
 })
 
 test("parseTag: prerelease version", () => {
-  assert.deepEqual(parseTag("rea-shim@0.2.0-beta.1"), { name: "rea-shim", version: "0.2.0-beta.1" })
+  assert.deepEqual(parseTag("oc-harness-setup@0.6.0-beta.1"), { name: "oc-harness-setup", version: "0.6.0-beta.1" })
 })
 
 test("parseTag: malformed tags are rejected", () => {
@@ -69,10 +69,14 @@ test("guardRegistry: a target below the newest is refused even if never publishe
   assert.throws(() => guardRegistry(["2.0.0"], "1.9.9"), /refusing to republish/)
 })
 
-test("allowlist: exactly the four releasable packages", () => {
-  assert.deepEqual(ALLOWED, ["@nathwn12/oc-bifrost", "oc-flight-deck", "oc-harness-setup", "rea-shim"])
+test("allowlist: exactly the three releasable packages", () => {
+  assert.deepEqual(ALLOWED, ["@nathwn12/oc-bifrost", "oc-flight-deck", "oc-harness-setup"])
 })
 
-test("resolvePackage: oc-unified is not releasable (deprecated/private ruling)", () => {
-  assert.throws(() => resolvePackage("oc-unified"), /not a releasable package/)
+test("allowlist: a package no longer in this repo is refused", () => {
+  assert.throws(() => resolvePackage("rea-shim"), /not a releasable package/)
+})
+
+test("resolvePackage: a package outside the allowlist is refused", () => {
+  assert.throws(() => resolvePackage("oc-collections"), /not a releasable package/)
 })
