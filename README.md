@@ -31,9 +31,9 @@ The gladius and puppet launchers download their engine binaries from the `gladiu
 
 | Package | What it does | Version | Links |
 | --- | --- | --- | --- |
-| oc-bifrost | Runs V1-era OpenCode plugins on the V2 runtime. | `1.6.12` | [repo](https://github.com/nathwn12/oc-collections) · [npm](https://www.npmjs.com/package/@nathwn12%2Foc-bifrost) |
-| oc-flight-deck | Live session telemetry in the OpenCode sidebar. | `0.20.5` | [repo](https://github.com/nathwn12/oc-collections) · [npm](https://www.npmjs.com/package/oc-flight-deck) |
-| oc-harness-setup | Installs and orchestrates the Windows harness. | `0.5.0` | [repo](https://github.com/nathwn12/oc-collections) · [npm](https://www.npmjs.com/package/oc-harness-setup) |
+| oc-bifrost | Runs V1-era OpenCode plugins on the V2 runtime. | `1.6.13` | [repo](https://github.com/nathwn12/oc-collections) · [npm](https://www.npmjs.com/package/@nathwn12%2Foc-bifrost) |
+| oc-flight-deck | Live session telemetry in the OpenCode sidebar. | `0.20.6` | [repo](https://github.com/nathwn12/oc-collections) · [npm](https://www.npmjs.com/package/oc-flight-deck) |
+| oc-harness-setup | Installs and orchestrates the Windows harness. | `0.6.0` | [repo](https://github.com/nathwn12/oc-collections) · [npm](https://www.npmjs.com/package/oc-harness-setup) |
 | oc-collections | This index and npm-workspaces monorepo. | `this index` | [repo](https://github.com/nathwn12/oc-collections) |
 
 ## Development

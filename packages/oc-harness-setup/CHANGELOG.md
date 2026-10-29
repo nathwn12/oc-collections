@@ -2,7 +2,9 @@
 
 ## [Unreleased]
 
-### Changed
+## [0.6.0] - 2026-10-29
+
+### Added
 
 - The custom end-to-end looper ships as `/loop` (`commands/loop.md` +
   `skills/loop/SKILL.md`) instead of `/goal`. OpenCode 2.2.1 ships a
@@ -12,6 +14,8 @@
   the pack ships neither file — and its `skill` allow names `loop`. The
   command and skill bodies name the native built-in so the distinction is
   explicit.
+
+### Changed
 
 Upgrades decide per prior-manifest entry, not per file name (`bin/cli.js`
 `retireStale`; the allow prune lives in `mergeJsonc`):

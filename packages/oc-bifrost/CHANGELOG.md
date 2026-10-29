@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.6.13] - 2026-10-29
+
 ### Changed
 
 - **The dev pin tracks the installed host: `@opencode/plugin` `2.2.0` ->

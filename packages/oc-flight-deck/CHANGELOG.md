@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.6] - 2026-10-29
+
 ### Changed
 
 - Dependency pins move to the host's current line: `@opencode/plugin` 2.2.0 → 2.2.1 for types and build, and the `@opentui/core` / `@opentui/solid` dev pins 0.6.6 → 0.7.0 to match the renderer the host ships. No source change and no peer-range change: `@opencode/plugin` stays `>=2.1.1 <3` and `@opentui/core` / `@opentui/solid` stay `>=0.6.6`, so a host on the 2.1.x line or on the 0.6.x renderer still loads the same build. `@opencode/theme` is not declared by this package.
