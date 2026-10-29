@@ -2,6 +2,67 @@
 
 ## [Unreleased]
 
+### Changed
+
+- The custom end-to-end looper ships as `/loop` (`commands/loop.md` +
+  `skills/loop/SKILL.md`) instead of `/goal`. OpenCode 2.2.1 ships a
+  first-party `/goal` session-continuation command
+  (`Usage: /goal <objective> | pause | resume | clear`), so a custom
+  `commands/goal.md` collided with it. A fresh install writes no `/goal` —
+  the pack ships neither file — and its `skill` allow names `loop`. The
+  command and skill bodies name the native built-in so the distinction is
+  explicit.
+
+Upgrades decide per prior-manifest entry, not per file name (`bin/cli.js`
+`retireStale`; the allow prune lives in `mergeJsonc`):
+
+| Prior-manifest entry | Path kind | Hash vs disk | Action | Adds a skill ID |
+| --- | --- | --- | --- | --- |
+| absent — fresh install, no `/goal` on disk | any | — | nothing selected; nothing removed | no |
+| absent — installed tree with no prior manifest | any | — | nothing selected; any `/goal` file on disk is untouched | no |
+| present; this version still ships the same path | any | — | not stale; the sweep ignores it | no |
+| present with `action: merged` | `opencode.jsonc` | — | ignored | no |
+| present, already `retired`/`archived` by an earlier run | `skills/<id>/...` | — | not re-examined; the earlier outcome stands | yes — `<id>` |
+| present, already `retired`/`archived` by an earlier run | other | — | not re-examined | no |
+| present, path absent from disk | `skills/<id>/...` | — | nothing to retire | yes — `<id>` |
+| present, path absent from disk | other | — | nothing to retire | no |
+| present, path is not a regular file | any | — | kept (refused) | no |
+| present, path unreadable | any | — | kept (refused) | no |
+| present, path escapes the config dir | any | — | skipped (refused) | no |
+| present, regular file | `skills/<id>/...` | matches | deleted, journaled `retired` | yes — `<id>` |
+| present, regular file | `skills/<id>/...` | differs | moved under `state/archive/legacy-0.3.x/`, journaled `archived` | yes — `<id>` |
+| present, regular file | `skills/<id>/...` | not recorded | kept; the adopter owns the bytes | no |
+| present, regular file | `commands/goal.md` or other | matches | deleted, journaled `retired` | no |
+| present, regular file | `commands/goal.md` or other | differs | moved under `state/archive/legacy-0.3.x/`, journaled `archived` | no |
+| present, regular file | `commands/goal.md` or other | not recorded | kept; the adopter owns the bytes | no |
+
+Only a `skills/<id>/...` path (three or more segments, first segment
+`skills`) can contribute `<id>`, and only where its row above says yes —
+a kept file with no recorded hash does not; `commands/goal.md` and a bare
+`skills/goal` never do. A row that adds no skill ID therefore never prunes
+an allow, while an earlier run's retired or archived entry keeps
+contributing its skill on every later run.
+
+The merge applies the run's final set (`retiredSkills`) to the adopter's
+own rules:
+
+| `retiredSkills` | Adopter rule naming `goal` | Prune result |
+| --- | --- | --- |
+| contains `goal` | `{"action": "skill", "resource": "goal", "effect": "allow"}` | dropped from the merged config and logged |
+| contains `goal` | a `goal` rule with any other effect, or a `skill *` rule | not eligible for the prune |
+| does not contain `goal` | any | kept |
+
+So a concrete `goal` allow is pruned if and only if a `skills/goal/...`
+entry put `goal` in the run's final retired-skill set; retiring or
+archiving only `commands/goal.md` leaves the allow alone, and a `goal`
+allow with no supporting manifest entry survives as adopter-owned.
+Unknown files are preserved throughout: anything the manifest does not
+list, any entry with no recorded hash, and any refused entry stay on disk.
+An emptied `skills/goal/` directory is pruned once its last file leaves,
+while a `/goal` file the manifest never listed is not removed by this
+upgrade. Rules identical to a shipped harness rule are deduped by the
+permissions union on any run; that is separate from the prune.
+
 ## [0.5.0] - 2026-10-28
 
 ### Fixed

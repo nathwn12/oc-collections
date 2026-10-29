@@ -78,7 +78,7 @@ npm run test        # node test runner over test/*.test.js
 
 ## Host contract
 
-- Targets the OpenCode V2 runtime: the host provides plugin loading, the `plugins` array config surface, and the `@opencode/plugin` API the bridge registers against (peer `2.1.1`, so the host supplies it). The host needs Node 22 or later.
+- Targets the OpenCode V2 runtime: the host provides plugin loading, the `plugins` array config surface, and the `@opencode/plugin` API the bridge registers against (peer `>=2.1.1 <3`, so the host supplies it). The host needs Node 22 or later.
 - What the host provides versus what the repo ships, as `package.json` states it: the peer above comes from the host; the repo ships zero runtime dependencies (no `dependencies` field) and bundles the vendored preset plus its docs in the published file list.
 - What the bridge translates between API versions: V1 hook keys become V2 registration calls (`src/hooks.ts`); the V1 `PluginInput` facade (`src/context.ts`); the shell facade (`src/shell.ts`). Modules route by shape — V1 factory / V1 module bridges hook by hook at the matrix level (`full` = bridged with write-back, `partial` = bridged with a stated loss, `unsupported` = refused out loud, never faked); a V2 `{ id, setup }` definition mounts as-is exactly as the host would mount it; an Effect-only `{ id, effect }` definition is refused out loud. Anything unmapped warns at load and `strict: true` aborts instead.
 

@@ -13,26 +13,19 @@
  * release-target.test.mjs). The registry guard reads a file the workflow
  * fetched with `npm view <pkg> versions --json`, so its comparison is testable
  * without the network.
- *
- * gladius-mcp and puppet-mcp are not releasable here: their engine manifests
- * carry RELEASE_WORKFLOW_FILLS_THIS placeholders that only their own release
- * pipeline fills after building the Rust engine and uploading the archive.
  */
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
-// Releasable packages. Everything else is source-only.
-//
-// Deprecated/private packages are excluded per the owner's 2026-10-22 ruling:
-// oc-unified (private: true, never published). Re-admitting it is a one-line
+// Releasable packages. Everything else is source-only: a package the owner has
+// not admitted here cannot be tagged or dispatched. Admitting one is a one-line
 // change here; the dispatch choice list in .github/workflows/release.yml must
 // match.
 export const ALLOWED = [
   "@nathwn12/oc-bifrost",
   "oc-flight-deck",
   "oc-harness-setup",
-  "rea-shim",
 ]
 
 const ROOT = path.resolve(import.meta.dirname, "..")
@@ -117,7 +110,7 @@ export function resolvePackage(name, root = ROOT) {
   if (typeof pkg.version !== "string" || pkg.version.length === 0) throw new Error(`${name} has no version`)
   if (pkg.private === true) {
     throw new Error(
-      `${name} is marked private: true and cannot be published; the owner call is still open (see MIGRATIONS.md)`,
+      `${name} is marked private: true and cannot be published; drop the private flag only after a recorded owner ruling`,
     )
   }
   if (name.startsWith("@") && pkg.publishConfig?.access !== "public") {

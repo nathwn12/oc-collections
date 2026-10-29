@@ -1,19 +1,17 @@
 # Root Cargo workspace for the Rust MCP servers.
 #
-# The crates were imported from their release tags (see MIGRATIONS.md); each
-# keeps its own Cargo.toml, build.rs, src/, tests/, and rust-toolchain.toml
-# under crates/<name>/. resolver = "2" is explicit because both packages are
-# edition 2021 (which implies resolver 2 when built standalone); a virtual
-# workspace would otherwise default to resolver 1 and change feature
-# unification.
+# The imported crates (crates/gladius, crates/puppet) were removed on
+# 2026-10-29; those MCP servers stay on their own release lanes (see
+# MIGRATIONS.md). This stays a valid virtual workspace with no members: a
+# `crates/*` glob is an error when it matches nothing, so members is explicit.
+# resolver = "2" is kept for any future member.
 [workspace]
 resolver = "2"
-members = ["crates/*"]
+members = []
 
-# The imported crates carry their own [profile.dev]/[profile.test] blocks, but
+# The removed crates carried their own [profile.dev]/[profile.test] blocks, but
 # Cargo ignores profiles outside the workspace root (and warns). These root
-# profiles are the crates' identical intent, so workspace builds keep the
-# intended debug info. The crate manifests stay byte-identical to the tags.
+# profiles are their intent; they are inert while the workspace has no members.
 [profile.dev]
 debug = "line-tables-only"
 

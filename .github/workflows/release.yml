@@ -1,4 +1,4 @@
-# Tag-driven release for the four releasable npm packages.
+# Tag-driven release for the three releasable npm packages.
 #
 # Tag convention: <package-name>@<version>
 #   oc-flight-deck@0.20.2
@@ -7,15 +7,9 @@
 # No Changesets: npm 12 breaks Changesets 2's `npm info --json` parsing, and
 # these packages version independently.
 #
-# NOT published here:
-#   gladius-mcp, puppet-mcp - their engine-manifest.json carries
-#     RELEASE_WORKFLOW_FILLS_THIS placeholders that only their own release
-#     pipeline fills after building the Rust engine and uploading the archive.
-#     Publishing from this workflow would ship a launcher that fails closed at
-#     runtime. They remain on their original repos' release lanes.
-#   oc-unified - private per the owner's 2026-10-22 ruling (private: true).
-#     It stays in the repo as source only and is not releasable until the
-#     owner revisits the ruling.
+# The releasable set is the ALLOWED list in scripts/release-target.mjs; the
+# dispatch choice list below must match it, and every other workspace is
+# source-only.
 #
 # OIDC trusted publishing only: id-token: write, --provenance; no auth-token
 # variable, no secrets, no OTP.
@@ -35,7 +29,6 @@ on:
           - '@nathwn12/oc-bifrost'
           - oc-flight-deck
           - oc-harness-setup
-          - rea-shim
       dry_run:
         description: Validate and pack without publishing
         required: true

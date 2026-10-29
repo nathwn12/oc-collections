@@ -2,7 +2,9 @@
 
 ## [Unreleased]
 
-- `rea-shim`: `--bootstrap` now follows the exact upstream release's Ghidra policy and official release data instead of a shim version table; the JDK minimum comes from the installed Ghidra; extraction, download-preservation and exact-version gates were hardened; docs and an offline contract suite were updated. Ships as `rea-shim@0.2.0`; the root version is unchanged. See [packages/rea-shim/CHANGELOG.md](packages/rea-shim/CHANGELOG.md).
+- Removed the frozen in-repo MCP copies and the dead private package: `packages/gladius-mcp`, `packages/puppet-mcp`, `packages/oc-unified`, `crates/gladius`, and `crates/puppet`. The root workspace plan, lockfile, Cargo workspace, and index table no longer reference them; no retained package file was changed by this removal.
+- Removed `packages/rea-shim`: the package now lives in its own `rea-shim` repository at 0.2.2. The root workspace plan, lockfile, release allowlist, dispatch choice list, index table, registry scope table, doc checker, and index self-test no longer reference it; the repo releases three packages. Historical migration and release records are unchanged.
+- `rea-shim` left this repo with its own instructions: the `--bootstrap` work (upstream Ghidra policy, JDK minimum from the installed Ghidra, hardened extraction and version gates, offline contract suite) shipped from its own repository, where the package now lives at 0.2.2. Its changelog travels with it; this repo no longer carries a copy.
 
 ## [0.2.6] - 2026-10-22
 

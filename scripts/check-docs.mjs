@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 // check-docs.mjs - mechanical truth check for maintainer docs.
 //
-// Scope: the docs this repo owns and can edit. The byte-identical imports
-// (crates/, the two MCP launchers) are audited separately and excluded here;
-// --all includes them for a one-off report.
+// Scope: the docs this repo owns and can edit: the root index documents and
+// the three workspace package trees. Imports are audited by their own repos.
 //
 // A backticked token is treated as a path claim when it looks like a path:
 // it is not absolute, not a URL/anchor, contains no glob or placeholder
@@ -13,7 +12,7 @@
 // prose claims, and are skipped.
 //
 // Four package READMEs are also npm's front door: npm renders
-// packages/<pkg>/README.md and GitHub shows that same file, so those four must
+// packages/<pkg>/README.md and GitHub shows that same file, so those three must
 // stay slim and self-contained. They fail on a version literal beside their own
 // package name (the stale pin that shipped twice) and on a relative link or
 // <img src> (npm has no repo tree to resolve one against). The full document
@@ -22,7 +21,6 @@
 //
 // Usage:
 //   node scripts/check-docs.mjs            # in-scope docs
-//   node scripts/check-docs.mjs --all      # include report-only imports
 //   node scripts/check-docs.mjs --file X   # one file (used by the self-test)
 //   node scripts/check-docs.mjs --file X --pkg NAME  # front-door rule as NAME
 import fs from "node:fs";
@@ -31,8 +29,7 @@ import { spawnSync } from "node:child_process";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const NAMES = new Set(["AGENTS.md", "CONTRIBUTING.md", "INSTALL.md", "PUBLISHING.md", "README.md", "SKILL.md"]);
-const IN_SCOPE = ["README.md", "AGENTS.md", "packages/oc-bifrost", "packages/oc-flight-deck", "packages/oc-harness-setup", "packages/oc-unified", "packages/rea-shim"];
-const REPORT_ONLY = ["crates", "packages/gladius-mcp", "packages/puppet-mcp"];
+const IN_SCOPE = ["README.md", "AGENTS.md", "packages/oc-bifrost", "packages/oc-flight-deck", "packages/oc-harness-setup"];
 // Bare filenames are only claims when they name a maintainer document or a
 // manifest. Config examples such as `opencode.jsonc` are not repo paths.
 const BARE_CLAIMS = new Set([
@@ -56,7 +53,6 @@ const SKIPS = [
 ];
 
 const args = process.argv.slice(2);
-const all = args.includes("--all");
 const files = [];
 let forcedPkg = null;
 for (let i = 0; i < args.length; i++) {
@@ -64,13 +60,12 @@ for (let i = 0; i < args.length; i++) {
   if (args[i] === "--pkg" && args[i + 1]) { forcedPkg = args[i + 1]; i++; }
 }
 
-// The four npm front doors, keyed by package directory, valued by the exact
+// The three npm front doors, keyed by package directory, valued by the exact
 // name npm and the README use for that package.
 const FRONT_DOOR = new Map([
   ["packages/oc-bifrost", "@nathwn12/oc-bifrost"],
   ["packages/oc-flight-deck", "oc-flight-deck"],
   ["packages/oc-harness-setup", "oc-harness-setup"],
-  ["packages/rea-shim", "rea-shim"],
 ]);
 // Absolute targets: a scheme (https:, mailto:, ...), a root path, or an anchor.
 const ABSOLUTE = /^(?:[a-z][a-z0-9+.-]*:|\/|#)/i;
@@ -91,7 +86,7 @@ function walk(target, out = []) {
 
 const targets = files.length > 0
   ? files
-  : [...IN_SCOPE, ...(all ? REPORT_ONLY : [])].flatMap((p) => walk(path.join(ROOT, p)));
+  : IN_SCOPE.flatMap((p) => walk(path.join(ROOT, p)));
 
 function tokensIn(file) {
   const found = [];
@@ -148,7 +143,7 @@ function isGitIgnored(absPath) {
   return false;
 }
 
-// The front-door identity of a file: one of the four package READMEs (or a
+// The front-door identity of a file: one of the three package READMEs (or a
 // fixture told which package it stands for). Null for everything else.
 function frontDoorName(file, forced) {
   if (forced) return forced;

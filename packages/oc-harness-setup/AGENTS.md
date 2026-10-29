@@ -102,6 +102,6 @@ Working on this pack is `CONTRIBUTING.md`; this file is the shipped starter cont
 - `close`: load at the end of a session — "all green, all cleaned, done or parked".
 - `evolve`: load when adding a skill, adopting upstream, or improving the harness.
 - `fast`: load when shortcutting safely — "what is the shortest safe route".
-- `goal`: load when looping to done — "take this ticket to green with TDD".
+- `loop`: load when looping to done — "take this ticket to green with TDD".
 - `search`: load when researching — "research this from primary sources with citations".
 - `swarm`: load when splitting work — "split this across workers with seams".

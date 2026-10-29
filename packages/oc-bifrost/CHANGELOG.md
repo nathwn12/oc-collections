@@ -1,15 +1,24 @@
 # Changelog
 
-## [1.6.11] - 2026-10-23
-
-- npm front door split into a short `README.md`; full documentation moved to `docs/GUIDE.md`; no functional change.
-
-## [1.6.10] - 2026-10-22
-
-- Version bump for the monorepo release; no runtime change.
-- npm is the only documented install route; the git and local-clone routes were removed from the docs.
-
 ## [Unreleased]
+
+### Changed
+
+- **The dev pin tracks the installed host: `@opencode/plugin` `2.2.0` ->
+  `2.2.1`** (`package.json`), in lockstep with the OpenCode `2.2.1` host. The
+  peer stays the range `>=2.1.1 <3`: an exact peer pin is what once made the
+  bridge mountable on a single patch. No runtime change and no new dependency -
+  the package imports `Plugin` and nothing else from `@opencode/plugin`. It makes
+  no `client.experimental` call sites, so 2.2.1's breaking scope (direct
+  `@opencode/ai` imports) and its deferred `client.experimental` deprecations
+  both miss this package; the `experimental.*` names in `src/compat-matrix.ts`
+  are V1 hook keys the bridge translates, not V2 client calls, and are unchanged.
+- Changelog sections are back in Keep-a-Changelog order: `[Unreleased]` first,
+  then releases newest to oldest (`1.6.12`, `1.6.11`, `1.6.10`).
+- Docs follow the manifest: `AGENTS.md` now states the peer as the range it
+  actually is (`>=2.1.1 <3`; it read the bare `2.1.1`), and `docs/GUIDE.md`
+  describes the peer line as typechecked against the `2.2.x` line instead of
+  naming one patch the pin has since moved past.
 
 ## [1.6.12] - 2026-10-28
 
@@ -49,6 +58,15 @@
   numbers - held by compile-time assertions in `test/types/` and by
   `test/v1-contract.test.js` (six new checks: the three refusals, a valid-tool
   control, the generation-setting write-back, and the type contract).
+
+## [1.6.11] - 2026-10-23
+
+- npm front door split into a short `README.md`; full documentation moved to `docs/GUIDE.md`; no functional change.
+
+## [1.6.10] - 2026-10-22
+
+- Version bump for the monorepo release; no runtime change.
+- npm is the only documented install route; the git and local-clone routes were removed from the docs.
 
 ## [1.6.9] - 2026-10-21
 

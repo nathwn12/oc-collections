@@ -3,12 +3,11 @@
  * Root fan-out runner.
  *
  * Workspace packages do not share script names: oc-bifrost and oc-flight-deck
- * call their build `compile`, oc-harness-setup's check is a pack dry-run,
- * oc-unified has no `check`, and rea-shim is plain JS with no scripts at all.
- * So each package's own exact command is named in the shared plan
+ * call their build `compile`, and oc-harness-setup runs its tests before its
+ * pack dry-run. So each package's own exact command is named in the shared plan
  * (scripts/workspace-plan.mjs) instead of assuming one script name. Discovery
- * is fail-closed: a workspace missing from the plan is an error, never a
- * silent skip.
+ * is fail-closed: a workspace missing from the plan is an error, never a silent
+ * skip.
  *
  * Usage: node scripts/workspace-run.mjs <check|build|test>
  */
