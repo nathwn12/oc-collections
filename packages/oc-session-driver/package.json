@@ -1,0 +1,49 @@
+{
+  "name": "oc-session-driver",
+  "version": "0.1.0",
+  "description": "Cross-session talk for any OpenCode harness: list live sessions, send one message to a peer, and read its reply back.",
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "plugin",
+    "session",
+    "sessions",
+    "agent",
+    "messaging"
+  ],
+  "license": "MIT",
+  "author": "nathwn12",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nathwn12/oc-collections.git",
+    "directory": "packages/oc-session-driver"
+  },
+  "homepage": "https://github.com/nathwn12/oc-collections/tree/main/packages/oc-session-driver",
+  "bugs": "https://github.com/nathwn12/oc-collections/issues",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": {
+      "import": "./src/index.js",
+      "default": "./src/index.js"
+    }
+  },
+  "files": [
+    "src",
+    "assets",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "check": "node --check src/index.js",
+    "test": "node --test \"test/**/*.test.js\"",
+    "prepublishOnly": "npm run check && npm run test"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
