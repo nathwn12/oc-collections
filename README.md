@@ -12,18 +12,20 @@ Every package is a folder with its own README. Open the one you want; its README
 
 ## What's in it
 
-| Package | Kind | What it does | Install |
-| --- | --- | --- | --- |
-| oc-bifrost | plugin | Runs older OpenCode plugins on the current runtime. | Add `@nathwn12/oc-bifrost` to your `plugins`. |
-| oc-flight-deck | plugin | Live session telemetry in the OpenCode sidebar. | Add `oc-flight-deck` to your `plugins`. |
-| oc-harness-setup | CLI | Installs the Windows agent harness. | `npx -y oc-harness-setup setup` |
-| rea-shim | MCP | Launcher for the rea reverse-engineering server. | `npx -y rea-shim --doctor` |
+| Package | Kind | Version | What it does | Install |
+| --- | --- | --- | --- | --- |
+| oc-bifrost | plugin | `1.6.13` | Runs older OpenCode plugins on the current runtime. | Add `@nathwn12/oc-bifrost` to your `plugins`. |
+| oc-flight-deck | plugin | `0.20.7` | Live session telemetry in the OpenCode sidebar. | Add `oc-flight-deck` to your `plugins`. |
+| oc-harness-setup | CLI | `1.0.0` | Installs the Windows agent harness. | `npx -y oc-harness-setup setup` |
+| oc-session-driver | plugin | not published | Cross-session talk: list live sessions, send one message to a peer, read its reply. | Not published yet, so nothing installs it. |
+| rea-shim | MCP | `0.2.2` | Launcher for the rea reverse-engineering server. | `npx -y rea-shim --doctor` |
+| oc-collections | repo | — | This index and npm-workspaces monorepo. | — |
 
 Each package's own README has the full steps, options and requirements. This page only tells you which folder to open.
 
 The `gladius` and `puppet` MCP servers are not in this repo — they live in their own repositories. Their launchers fetch engine binaries from those repositories' release assets on first run.
 
-Two packages are in the tree but not published: `oc-session-driver` and the docs tooling. They are not install targets yet.
+`oc-session-driver` is in the tree but not published, so it is not an install target yet.
 
 ## Requirements
 
