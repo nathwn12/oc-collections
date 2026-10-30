@@ -18,8 +18,8 @@ on:
   pull_request:
   workflow_dispatch:
 
-# Runs used to queue on one branch instead of superseding: the newest commit is
-# the only one worth gating.
+# A new push cancels its own queued runs on that branch instead of stacking
+# them behind older ones: the newest commit is the only one worth gating.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
