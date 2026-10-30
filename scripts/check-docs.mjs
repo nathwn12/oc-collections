@@ -15,9 +15,13 @@
 // packages/<pkg>/README.md and GitHub shows that same file, so those four must
 // stay slim and self-contained. They fail on a version literal beside their own
 // package name (the stale pin that shipped twice) and on a relative link or
-// <img src> (npm has no repo tree to resolve one against). The full document
-// lives beside them in docs/GUIDE.md. Prerequisites such as a Node floor are
-// not pins and do not trip the version rule.
+// <img src> (npm has no repo tree to resolve one against). The one exception is
+// the house footer's canonical image: a relative image passes when it resolves
+// to a real file inside the package that the `files` manifest ships, so the
+// footer stays byte-identical without a raw.githubusercontent URL. A missing or
+// unshipped relative image still fails. The full document lives beside them in
+// docs/GUIDE.md. Prerequisites such as a Node floor are not pins and do not trip
+// the version rule.
 //
 // Usage:
 //   node scripts/check-docs.mjs            # in-scope docs
@@ -154,11 +158,50 @@ function frontDoorName(file, forced) {
   return FRONT_DOOR.get(`${parts[0]}/${parts[1]}`) ?? null;
 }
 
+// One npm `files` entry as a predicate over a package-relative posix path.
+// npm ships a bare directory entry with everything under it, and matches a
+// glob entry against the path; this keeps the same two shapes.
+function filesEntryMatches(entry, relPath) {
+  const pattern = entry.replace(/^\.\//, "").replace(/\/+$/, "");
+  if (!pattern) return false;
+  if (!/[*?[\]]/.test(pattern)) return relPath === pattern || relPath.startsWith(`${pattern}/`);
+  const re = pattern
+    .split("**")
+    .map((part) => part.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*").replace(/\?/g, "[^/]"))
+    .join(".*");
+  return new RegExp(`^${re}$`).test(relPath) || new RegExp(`^${re}/`).test(relPath);
+}
+
+// The house footer's canonical asset, package-relative. This one file is the
+// whole relative-image exception; nothing else may be carried relatively.
+const HOUSE_FOOTER_ASSET = "assets/signature.svg";
+
+// The one relative reference a front door may carry: the house footer asset.
+// npm renders the README out of the published tarball, so that relative <img src>
+// works only when the file is real and the `files` manifest ships it. Anything
+// else -- another image that happens to exist, a missing file, a file outside
+// `files`, a relative markdown link -- still fails. Returns the package-relative
+// path when the asset qualifies.
+function shippedAsset(src, dir, pkgRoot) {
+  const abs = path.resolve(dir, src);
+  const rel = path.relative(pkgRoot, abs).split(path.sep).join("/");
+  if (rel !== HOUSE_FOOTER_ASSET) return null;
+  if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) return null;
+  let manifest;
+  try {
+    manifest = JSON.parse(fs.readFileSync(path.join(pkgRoot, "package.json"), "utf8"));
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(manifest.files)) return null;
+  return manifest.files.some((entry) => filesEntryMatches(String(entry), rel)) ? rel : null;
+}
+
 // A version literal beside the package's own name breaks npm consumers two
 // ways: it ships a pin that goes stale on the next release, and it reads as the
 // current version after the manifest has moved. Prerequisites (`Node 22.14.0`,
 // `OpenCode 2.1.1`) name no package and pass.
-function frontDoorProblems(text, name) {
+function frontDoorProblems(text, name, dir, pkgRoot) {
   const problems = [];
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const versionRe = new RegExp(`${escaped}["'\`\\s:@]+\\d+\\.\\d+\\.\\d+`, "i");
@@ -170,11 +213,16 @@ function frontDoorProblems(text, name) {
     const pin = versionRe.exec(line);
     if (pin) problems.push({ line: lineNo, what: `version literal beside the package name: ${pin[0]}` });
     if (fenced) continue;
-    for (const m of line.matchAll(/\[[^\]]*\]\(\s*<?([^)\s>]+)/g)) {
-      if (!ABSOLUTE.test(m[1])) problems.push({ line: lineNo, what: `relative markdown link: ${m[1]}` });
+    for (const m of line.matchAll(/(!?)\[[^\]]*\]\(\s*<?([^)\s>]+)/g)) {
+      const target = m[2];
+      if (ABSOLUTE.test(target)) continue;
+      if (m[1] === "!" && shippedAsset(target, dir, pkgRoot)) continue;
+      problems.push({ line: lineNo, what: `${m[1] === "!" ? "relative image source" : "relative markdown link"}: ${target}` });
     }
     for (const m of line.matchAll(/<img\b[^>]*?\bsrc\s*=\s*["']([^"']+)["']/gi)) {
-      if (!ABSOLUTE.test(m[1])) problems.push({ line: lineNo, what: `relative image source: ${m[1]}` });
+      if (ABSOLUTE.test(m[1])) continue;
+      if (shippedAsset(m[1], dir, pkgRoot)) continue;
+      problems.push({ line: lineNo, what: `relative image source: ${m[1]}` });
     }
   }
   return problems;
@@ -191,7 +239,8 @@ for (const file of targets) {
   const door = frontDoorName(file, forcedPkg);
   if (door) {
     frontDoors++;
-    for (const { line, what } of frontDoorProblems(fs.readFileSync(file, "utf8"), door)) {
+    const problems = frontDoorProblems(fs.readFileSync(file, "utf8"), door, path.dirname(file), nearestPackageRoot(file));
+    for (const { line, what } of problems) {
       failed++;
       console.log(`FAIL ${rel}:${line}: ${what}`);
     }
