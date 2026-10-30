@@ -9,7 +9,7 @@ Unofficial, personal-use wrapper around [rea](https://github.com/morluto/rea) by
 npx -y rea-shim@latest --doctor
 ```
 
-You need Node matching the current upstream `rea-agents` release on Windows x64, plus a Ghidra installation and a full JDK satisfying that Ghidra's declared bounds. The first `--doctor` run resolves both, then prints the Ghidra dir, the declared Java requirement, the JDK home and major, the upstream version, and the exact child command, and exits 0.
+You need Node matching the current upstream `rea-agents` release on Windows x64, plus a Ghidra installation and a full JDK satisfying that Ghidra's declared bounds. `--doctor` resolves both and prints the Ghidra dir, the declared Java requirement, the JDK home and major, the upstream version, and the exact child command. It exits 0 only when the Ghidra dir, the declared requirement and a matching JDK were all found; when one is missing it prints the same report with the row marked missing, names the exact override to set, and exits 2.
 
 ### Bootstrap a missing JDK and Ghidra
 
@@ -90,8 +90,9 @@ Wire the server into your MCP client config:
 
 `--print-config` prints exactly this block. The `mcp.servers` nesting is the
 shape OpenCode 2.2 reads and writes itself (`opencode mcp add` writes there;
-verified through 2.2.1, whose only breaking scope is direct `@opencode/ai`
-imports, which this package does not use).
+verified through 2.2.2: 2.2.1's only breaking scope is direct `@opencode/ai`
+imports, which this package does not use, and 2.2.2's `mcp add` writes this
+same block).
 
 ### Offline or pinned
 
@@ -139,7 +140,7 @@ You run the shim with no arguments to serve, or with one flag:
 - `(no args)` - resolve the Ghidra-declared JDK requirement and Ghidra, then serve upstream over stdio. This is the default run path.
 - `--bootstrap [--dry-run]` - install the exact upstream release, the latest official Ghidra in the line that release accepts, and the latest official Temurin JDK at the Ghidra-declared minimum; verify every official hash; then run the upstream doctor, MCP tool inventory, and a Ghidra analysis. Windows x64 only. Default: off, you pass it per run.
 - `--dry-run` - with `--bootstrap`: print the plan and write nothing to the install root. Default: off.
-- `--doctor` - print the Ghidra dir, the declared Java requirement, the JDK home and major, the upstream version, and the exact child command, then exit 0. Read-only: it never installs and never creates the bootstrap root. Default: off, you pass it per run.
+- `--doctor` - print the Ghidra dir, the declared Java requirement, the JDK home and major, the upstream version, and the exact child command; exit 0 only when the Ghidra dir, the declared requirement and a matching JDK were all found, otherwise exit 2 with the same report and the exact override to set. Read-only: it never installs and never creates the bootstrap root. Default: off, you pass it per run.
 - `--version` - print the shim version, then exit 0. Default: off, you pass it per run.
 - `--print-config` - print the opencode.jsonc block for this machine, then exit 0. Default: off, you pass it per run.
 - `--help, -h` - print usage, then exit 0. Default: off, you pass it per run.
