@@ -35,6 +35,7 @@ The gladius and puppet launchers download their engine binaries from the `gladiu
 | oc-bifrost | Runs V1-era OpenCode plugins on the V2 runtime. | `1.6.13` | [repo](https://github.com/nathwn12/oc-collections) · [npm](https://www.npmjs.com/package/@nathwn12%2Foc-bifrost) |
 | oc-flight-deck | Live session telemetry in the OpenCode sidebar. | `0.20.7` | [repo](https://github.com/nathwn12/oc-collections) · [npm](https://www.npmjs.com/package/oc-flight-deck) |
 | oc-harness-setup | Installs and orchestrates the Windows harness. | `1.0.0` | [repo](https://github.com/nathwn12/oc-collections) · [npm](https://www.npmjs.com/package/oc-harness-setup) |
+| oc-session-driver | Cross-session talk for any OpenCode harness: list live sessions, send one message to a peer, read its reply back. In the tree at 0.1.0 and not published yet, so nothing installs it. | not published | — |
 | rea-shim | One-line MCP launcher and explicit bootstrapper for rea. | `0.2.2` | [repo](https://github.com/nathwn12/oc-collections) · [npm](https://www.npmjs.com/package/rea-shim) |
 | oc-collections | This index and npm-workspaces monorepo. | `this index` | [repo](https://github.com/nathwn12/oc-collections) |
 
