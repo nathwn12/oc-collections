@@ -49,7 +49,11 @@ const FILE_ALIASES = { 'gitignore.template': '.gitignore' };
 const DIR_ALIASES = { 'state-seed': 'state' };
 // Ownership table for the opencode.jsonc merge. Every top-level key falls into
 // exactly one bucket; there is no "known merge key" list to drift out of date.
-//   INSTALL_OWNED — the distro's value wins outright (runtime policy).
+//   INSTALL_OWNED — the distro supplies a default; on a collision the adopter's
+//                   value wins and the collided key is reported by name.
+//   DENY_OWNED    — the hard tool.use deny block. Unioned with the adopter's
+//                   entries, distro denies last, so a user rule can be added but
+//                   can never shadow a shipped deny.
 //   UNION_KEYS    — arrays unioned + deduped (distro entries first).
 //   'references'  — object union: distro keys + user-only keys.
 //   'permissions' — ordered union: harness allow/ask rules first, then the
@@ -60,7 +64,8 @@ const DIR_ALIASES = { 'state-seed': 'state' };
 //                   allowlist is deny-then-allows; see mergeJsonc).
 //   everything else (known or unknown) — the adopter's value wins; the distro
 //                   value stays when the adopter does not define the key.
-const INSTALL_OWNED = ['$schema', 'default_agent', 'formatter', 'compaction', 'tool_output', 'media', 'watcher', 'policies'];
+const INSTALL_OWNED = ['$schema', 'default_agent', 'formatter', 'compaction', 'tool_output', 'media', 'watcher'];
+const DENY_OWNED = ['policies'];
 const UNION_KEYS = ['plugins'];
 const DISTRO_PLUGIN_IDS = ['oc-flight-deck'];
 
@@ -111,16 +116,11 @@ function normalizePluginEntries(entries) {
   return out;
 }
 
-// Adopter-owned files: a shipped skeleton that the adopter genuinely edited
-// MUST survive an upgrade — overwriting it destroys their data. Genuineness
-// is proven against the prior manifest (see stageFiles): a destination that
-// still matches the prior installed hash is unmodified pack content and IS
-// updated, so a stock 0.3.3 AGENTS.md is replaced by the V9 contract while a
-// genuinely adopter-edited one is kept. The template is a controlled copy
-// graded by the doctor, so adopter edits are archived then overwritten.
-const PRESERVE_IF_EXISTS = new Set(['reference/models.md', 'AGENTS.md', '.gitignore', 'state/lessons.md']);
-// Keyed on forward slashes; matched through norm() because rel is platform-native
-// (path.join yields backslashes on Windows).
+// Every shipped file follows one decision table (classifyDest): new bytes land
+// in place only where the destination still matches what we installed. A
+// destination that cannot be proven package-owned is the adopter's file, so it
+// is never overwritten — the new version lands beside it as `<name>.new`.
+//
 // Leak markers — generic shapes, never a concrete machine. They catch the
 // maintainer's workstation leaking into the shipped tree (an absolute
 // user-profile path, a session id). They are linted against the package
@@ -177,6 +177,15 @@ function atomicInstall(tmp, dest) {
     throw err;
   }
   rmSync(aside, { force: true });
+}
+
+// Write bytes through the atomic replace, so a crash never leaves the
+// destination deleted with the new copy orphaned as tmp.
+function installBytes(dest, buf) {
+  mkdirSync(path.dirname(dest), { recursive: true });
+  const tmp = `${dest}.oc-harness-setup-tmp-${process.pid}`;
+  writeFileSync(tmp, buf);
+  atomicInstall(tmp, dest);
 }
 
 function usage() {
@@ -427,7 +436,7 @@ function nextBackupPath(configDir) {
 
 /* ------------------------------ staged copy -------------------------------- */
 
-function stageFiles(files, manifest, prior, configDir) {
+function stageFiles(files, manifest, prior) {
   // Prior manifests spell paths with either separator; incoming rels use the
   // platform join. Compare on normalized slashes so a prior entry still
   // matches its incoming path (journaling keeps each entry's own spelling).
@@ -435,85 +444,81 @@ function stageFiles(files, manifest, prior, configDir) {
   const priorByPath = new Map(
     (prior && Array.isArray(prior.files) ? prior.files : []).map((f) => [norm(f.path), f])
   );
-  let written = 0;
+  const counts = { added: 0, updated: 0, kept: 0, skipped: 0 };
   for (const f of files) {
     const srcHash = sha256File(f.src);
-    let action = 'written';
-    let prevHash = null;
-    let archivedTo = null;
-    if (existsSync(f.dest)) {
-      const destHash = sha256File(f.dest);
-      if (destHash === srcHash) {
-        action = 'skip';
-        log('staging', `skip   ${f.rel} (already identical — rerun-safe)`);
-      } else if (PRESERVE_IF_EXISTS.has(norm(f.rel))) {
-        // Upgrade rule: preserve only a GENUINELY adopter-edited file, i.e.
-        // one that differs from the prior manifest hash. A destination that
-        // still matches the prior installed hash is unmodified pack content —
-        // update it, so a stock 0.3.3 AGENTS.md is replaced by the V9 contract
-        // while an adopter-edited AGENTS.md is kept. No prior record means we
-        // cannot prove it is stock, so preserve (never destroy unknown data).
-        const p = priorByPath.get(norm(f.rel));
-        if (p && p.hash && destHash === p.hash) {
-          action = 'overwritten';
-          prevHash = destHash;
-          log('staging', `update ${f.rel} (matches the prior installed hash — unmodified pack content, overwriting; backup + manifest protect you)`);
-        } else {
-          action = 'preserved';
-          log('staging', `preserve ${f.rel} (exists and differs from the prior install — kept; harness will not overwrite adopter-owned files)`);
-        }
-      } else {
-        // Safe-upgrade rule: a destination the user edited since install
-        // (its bytes differ from the prior manifest hash) is archived before
-        // the overwrite, so a user-modified 0.3.x file that the new distro
-        // still ships — e.g. agents/orchestrator.md — is never silently
-        // destroyed. Unmodified pack content (or no prior record) overwrites
-        // normally; the pre-install backup still protects it. Files in
-        // PRESERVE_IF_EXISTS never reach this branch (kept above, never
-        // archived). Same archive root and nextFreePath as retireStale.
-        const p = priorByPath.get(norm(f.rel));
-        // state/template.md is pack-owned but graded: an existing copy that
-        // differs from the shipped bytes is ALWAYS archived before the
-        // overwrite, with or without a prior manifest entry.
-        const isTemplate = norm(f.rel) === 'state/template.md';
-        if ((p && p.hash && destHash !== p.hash) || (isTemplate && destHash !== srcHash)) {
-          const dest2 = nextFreePath(path.join(configDir, 'state', 'archive', 'legacy-0.3.x', f.rel));
-          mkdirSync(path.dirname(dest2), { recursive: true });
-          renameSync(f.dest, dest2);
-          archivedTo = path.relative(configDir, dest2);
-          action = 'overwritten';
-          prevHash = destHash;
-          log('staging', `archive ${f.rel} → ${archivedTo} (you edited the old file — pre-upgrade bytes moved aside; writing the new file)`);
-        } else {
-          // A genuine overwrite: journal it so --uninstall can put the original
-          // back from the pre-install backup instead of deleting the harness copy.
-          action = 'overwritten';
-          prevHash = destHash;
-          log('staging', `update ${f.rel} (destination differs — overwriting; backup + manifest protect you)`);
-        }
-      }
-    } else {
+    const verdict = classifyDest(f, srcHash, priorByPath, norm);
+    if (verdict.action === 'skip') {
+      counts.skipped += 1;
+      log('staging', `skip   ${f.rel} (already identical — rerun-safe)`);
+      manifest.files.push({ path: f.rel, hash: srcHash, action: 'skip' });
+      continue;
+    }
+    if (verdict.action === 'written') {
+      installBytes(f.dest, readFileSync(f.src));
+      counts.added += 1;
       log('staging', `copy   ${f.rel}`);
+      manifest.files.push({ path: f.rel, hash: srcHash, action: 'written' });
+      continue;
     }
-    if (action === 'written' || action === 'overwritten') {
-      mkdirSync(path.dirname(f.dest), { recursive: true });
-      const tmp = `${f.dest}.oc-harness-setup-tmp-${process.pid}`;
-      writeFileSync(tmp, readFileSync(f.src));
-      atomicInstall(tmp, f.dest);
-      written += 1;
+    if (verdict.action === 'kept') {
+      // The destination is the adopter's file: leave it byte-identical and put
+      // the new pack bytes beside it. `newPath` is journaled so --uninstall can
+      // sweep the `.new` and so a later run can see the adopter's adoption.
+      const newRel = `${norm(f.rel)}.new`;
+      const newPath = `${f.dest}.new`;
+      if (!(existsSync(newPath) && sha256File(newPath) === srcHash)) {
+        installBytes(newPath, readFileSync(f.src));
+      }
+      counts.kept += 1;
+      log('staging', `kept user file ${norm(f.rel)}, wrote ${newRel} (differs from what we installed — your bytes are untouched)`);
+      manifest.files.push({ path: f.rel, hash: srcHash, prevHash: verdict.prevHash, action: 'kept', newPath: newRel });
+      continue;
     }
-    // Preserved entries journal the SRC hash on purpose: --uninstall deletes
-    // only on an exact match, so a preserved destination (bytes differ from
-    // src) reads as modified → kept, not deleted.
-    if (archivedTo) {
-      manifest.files.push({ path: f.rel, hash: srcHash, prevHash, action, archivedTo });
-    } else if (prevHash) {
-      manifest.files.push({ path: f.rel, hash: srcHash, prevHash, action });
-    } else {
-      manifest.files.push({ path: f.rel, hash: srcHash, action });
-    }
+    // `overwritten`: the destination still matches the prior installed hash, so
+    // it is package-owned content and replacing it IS the upgrade.
+    installBytes(f.dest, readFileSync(f.src));
+    counts.updated += 1;
+    log('staging', `update ${f.rel} (unmodified package content — updated in place; backup + manifest protect you)`);
+    manifest.files.push({ path: f.rel, hash: srcHash, prevHash: verdict.prevHash, action: 'overwritten' });
   }
-  return written;
+  return counts;
+}
+
+// The whole install policy in one place: a destination is only replaced when it
+// still carries the bytes we installed. Silence about a path (no prior record)
+// proves no ownership, so the adopter keeps it.
+//   absent                          → written    (nothing to respect)
+//   identical to the pack           → skip       (rerun-safe)
+//   identical to the prior install  → overwritten (package-owned; this is the upgrade)
+//   anything else                   → kept       (adopter-owned; `.new` lands beside it)
+function classifyDest(f, srcHash, priorByPath, norm) {
+  if (!existsSync(f.dest)) return { action: 'written' };
+  const destHash = sha256File(f.dest);
+  if (destHash === srcHash) return { action: 'skip' };
+  const prior = priorByPath.get(norm(f.rel));
+  if (prior && prior.hash && destHash === prior.hash) {
+    return { action: 'overwritten', prevHash: destHash };
+  }
+  return { action: 'kept', prevHash: destHash };
+}
+
+// Read-only twin of stageFiles for the pre-gate manifest: the same decision
+// table, counted and never written.
+function planCounts(files, prior) {
+  const norm = (p) => String(p).replace(/\\/g, '/');
+  const priorByPath = new Map(
+    (prior && Array.isArray(prior.files) ? prior.files : []).map((f) => [norm(f.path), f])
+  );
+  const counts = { added: 0, updated: 0, kept: 0, skipped: 0 };
+  for (const f of files) {
+    const v = classifyDest(f, sha256File(f.src), priorByPath, norm);
+    if (v.action === 'written') counts.added += 1;
+    else if (v.action === 'overwritten') counts.updated += 1;
+    else if (v.action === 'kept') counts.kept += 1;
+    else counts.skipped += 1;
+  }
+  return counts;
 }
 
 // A prior `skills/<id>/...` path belongs to skill <id>; anything else is not
@@ -580,6 +585,26 @@ function retireStale(configDir, prior, files, manifest) {
       // An earlier run already settled this path; its skill stays pruned.
       const settled = skillIdOf(rel);
       if (settled) retiredSkills.add(settled);
+      continue;
+    }
+    if (entry.action === 'kept') {
+      // The live path holds the adopter's bytes, not ours — an upgrade must not
+      // move it anywhere. Only our own `.new` beside it is retired.
+      log('retire', `keep   ${rel} (your file from an earlier install — left in place)`);
+      const newRel = entry.newPath ? String(entry.newPath) : `${norm(rel)}.new`;
+      const newResolved = path.resolve(base, newRel);
+      if (newResolved.startsWith(base + path.sep) && existsSync(newResolved)) {
+        try {
+          if (entry.hash && sha256File(newResolved) === entry.hash) {
+            rmSync(newResolved, { force: true });
+            log('retire', `removed ${newRel} (our copy beside your file — this version no longer ships it)`);
+          } else {
+            log('retire', `keep   ${newRel} (you edited it — left in place)`);
+          }
+        } catch {
+          log('retire', `keep   ${newRel} (unreadable — refusing)`);
+        }
+      }
       continue;
     }
     const resolved = path.resolve(base, rel);
@@ -700,6 +725,33 @@ function parseJsonc(text, what) {
   }
 }
 
+const isPlainObject = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+
+// Additive merge for an install-owned key: the distro value is a default the
+// adopter may adopt, never a replacement for their own. Plain objects merge, so
+// a subkey the adopter never set still arrives; every collided leaf keeps the
+// adopter's value and is named in `collisions` so the report can cite it.
+function adoptInstallOwned(distro, user, key, pathParts, collisions) {
+  const d = distro[key];
+  const u = user[key];
+  if (isPlainObject(d) && isPlainObject(u)) {
+    for (const sub of Object.keys(u)) adoptInstallOwned(d, u, sub, [...pathParts, sub], collisions);
+    return;
+  }
+  if (JSON.stringify(d) !== JSON.stringify(u)) collisions.push(pathParts.join('.'));
+  distro[key] = u;
+}
+
+// Deny-owning blocks are additive without being softenable: the adopter's own
+// entries ride along, every shipped entry stays, and the shipped entries land
+// last so a user allow can never shadow a shipped deny under last-match-wins.
+function unionDenyLast(distro, user) {
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const d = Array.isArray(distro) ? distro : [];
+  const u = Array.isArray(user) ? user : [];
+  return [...u.filter((r) => !d.some((x) => same(x, r))), ...d];
+}
+
 function mergeJsonc(configDir, backupPath, manifest, retiredSkills = new Set(), prior = null) {
   const distroPath = path.join(PKG_ROOT, 'opencode.jsonc');
   if (!existsSync(distroPath)) {
@@ -734,8 +786,22 @@ function mergeJsonc(configDir, backupPath, manifest, retiredSkills = new Set(), 
     if (user.permissions !== undefined && !userPerms) {
       console.warn('[warn] merge: your "permissions" is not an array (v2 expects an array of {action,resource,effect}) — harness denies kept; fix your rules manually.');
     }
+    const ownedCollisions = [];
     for (const k of Object.keys(user)) {
-      if (INSTALL_OWNED.includes(k)) continue; // distro value wins outright
+      if (DENY_OWNED.includes(k)) {
+        if (!Array.isArray(user[k])) {
+          console.warn(`[warn] merge: your "${k}" is not an array — the shipped deny entries are kept and yours cannot be merged; fix your rules manually.`);
+        } else {
+          merged[k] = unionDenyLast(merged[k], user[k]);
+        }
+        preserved.push(k);
+        continue;
+      }
+      if (INSTALL_OWNED.includes(k)) {
+        adoptInstallOwned(merged, user, k, [k], ownedCollisions);
+        preserved.push(k);
+        continue;
+      }
       if (k === 'permissions') {
         if (!userPerms) continue;
         // Ordered union, deny-last. Under last-match-wins an adopter's rule must
@@ -803,6 +869,9 @@ function mergeJsonc(configDir, backupPath, manifest, retiredSkills = new Set(), 
       }
       preserved.push(k);
     }
+    if (ownedCollisions.length) {
+      log('merge', `kept your value(s) for install-owned key(s): ${ownedCollisions.join(', ')} — the shipped default is not applied to them (delete the key to adopt it)`);
+    }
   } else {
     log('merge', 'no existing opencode.jsonc/opencode.json — writing the harness base');
   }
@@ -844,7 +913,7 @@ function mergeJsonc(configDir, backupPath, manifest, retiredSkills = new Set(), 
   manifest.files.push({ path: 'opencode.jsonc', hash: sha256Text(out), action: 'merged' });
   log(
     'merge',
-    `ownership — install-owned (distro wins): ${INSTALL_OWNED.join(', ')} · union: ${[...UNION_KEYS, 'references'].join(', ')} · your keys preserved: ${preserved.length}${preserved.length ? ` (${preserved.join(', ')})` : ''}`
+    `ownership — your value wins on a collision for: ${INSTALL_OWNED.join(', ')} · deny block unioned, shipped denies last: ${DENY_OWNED.join(', ')} · union: ${[...UNION_KEYS, 'references'].join(', ')} · your keys preserved: ${preserved.length}${preserved.length ? ` (${preserved.join(', ')})` : ''}`
   );
   log('merge', `rewrote ${targetPath} (distro base + your keys; permissions = harness allows, yours, harness denies last)`);
 }
@@ -910,18 +979,19 @@ function runDoctor(configDir, probe) {
 
 /* --------------------------- manifest print (gate) ------------------------- */
 
-function printManifest(configDir, files, backupPath, doctor) {
+function printManifest(configDir, files, backupPath, doctor, prior = null) {
   const newCount = files.filter((f) => !existsSync(f.dest)).length;
   const sameCount = files.length - newCount;
+  const plan = planCounts(files, prior);
   console.log('----------------------------- install manifest -----------------------------');
   console.log(`  destination config dir : ${configDir}`);
   console.log(`  incoming files         : ${files.length} (${newCount} new, ${sameCount} already identical — rerun-safe)`);
+  console.log(`  policy                 : ${plan.updated} updated in place (unmodified package files) · ${plan.kept} kept + .new written (your files) · ${plan.added} added · ${plan.skipped} skipped (identical)`);
   console.log(`  backup path            : ${backupPath}`);
   console.log('  opencode.jsonc merge   : distro base (permissions/deny block, policies block, skill allowlist,');
   console.log('                            default_agent: "orchestrator", references registry)');
-  console.log('                            + your keys kept · permissions: harness allows, yours, harness denies last');
-  console.log('  state-seed/ -> state/   : shipped seed maps to live state/ (state/lessons.md is preserved;');
-  console.log('                            state/template.md is pack-owned, and an edited copy is archived under state/archive/ then replaced)');
+  console.log('                            + your keys kept, your value wins on a collision · permissions: harness allows, yours, harness denies last');
+  console.log('  state-seed/ -> state/   : shipped seed maps to live state/ (an edited state file is kept, the seeded copy lands as <name>.new)');
   console.log(`  doctor plan            : harness-doctor, 18 laws — ${doctor}`);
   console.log('----------------------------------------------------------------------------');
 }
@@ -1027,6 +1097,32 @@ function uninstall(configDir, opts = {}) {
       } else {
         kept += 1;
         log('uninstall', `kept   ${rel} (you recreated it after the upgrade archived it — keeping)${archiveNote}`);
+      }
+      continue;
+    }
+    if (entry.action === 'kept') {
+      // The live path is the adopter's file — uninstall never removes it. The
+      // `.new` beside it is our bytes, so that one goes when it is unmodified.
+      kept += 1;
+      const newRel = entry.newPath ? String(entry.newPath) : null;
+      const newResolved = newRel ? path.resolve(base, newRel) : null;
+      const insideBase = newResolved && newResolved.startsWith(base + path.sep);
+      if (!insideBase || !existsSync(newResolved)) {
+        log('uninstall', `kept   ${rel} (your file — never removed)`);
+        continue;
+      }
+      if (entry.hash && sha256File(newResolved) === entry.hash) {
+        if (preview) {
+          removed += 1;
+          log('uninstall', `would remove ${newRel} (our copy beside your kept file)`);
+        } else {
+          rmSync(newResolved, { force: true });
+          removed += 1;
+          log('uninstall', `removed ${newRel} (our copy beside your kept file)`);
+        }
+      } else {
+        kept += 1;
+        log('uninstall', `kept   ${newRel} (you edited the new version — keeping it)`);
       }
       continue;
     }
@@ -1142,17 +1238,26 @@ function carryForwardJournal(manifest, prior) {
     if (p.action === 'overwritten') {
       e.action = 'overwritten';
       e.prevHash = p.prevHash || e.prevHash;
-    } else if (p.action === 'preserved' && e.action !== 'overwritten') {
+    } else if (p.action === 'kept' && e.action !== 'overwritten') {
+      // The adopter's file was never ours; an identical destination (they may
+      // have adopted the old `.new`) must not be downgraded to `skip`, or
+      // --uninstall would delete a file the harness never wrote.
+      e.action = 'kept';
+      e.prevHash = p.prevHash || e.prevHash;
+      e.newPath = p.newPath || e.newPath;
+    } else if (p.action === 'preserved' && e.action !== 'overwritten' && e.action !== 'kept') {
       e.action = 'preserved';
     }
   }
   // A re-run must not forget what an earlier run settled: those paths are
   // already deleted or archived and absent from this run's staging, but
   // --uninstall still needs them to restore the pre-install originals from
-  // the backup chain.
+  // the backup chain. A kept adopter path the pack no longer ships is carried
+  // for the same reason: its `.new` may still be beside it.
   const now = new Set(manifest.files.map((f) => norm(f.path)));
   for (const p of prior.files) {
-    if ((p.action === 'retired' || p.action === 'archived') && !now.has(norm(p.path))) {
+    const settled = p.action === 'retired' || p.action === 'archived' || p.action === 'kept';
+    if (settled && !now.has(norm(p.path))) {
       manifest.files.push(p);
       now.add(norm(p.path));
     }
@@ -1265,7 +1370,7 @@ async function setup(opts) {
     const prior = readManifest(configDir); // read-only
     const newBackupPath = nextBackupPath(configDir);
     const backupPath = prior && prior.backupPath ? prior.backupPath : newBackupPath;
-    printManifest(configDir, files, backupPath, doctorPlan());
+    printManifest(configDir, files, backupPath, doctorPlan(), prior);
     if (opts.dryRun) {
       console.log('[dry-run] manifest only — nothing was touched.');
       return 0;
@@ -1299,7 +1404,7 @@ async function setup(opts) {
   // a lie. Keep the original pointer; chain the new snapshot as priorBackup.
   const backupPath = prior && prior.backupPath ? prior.backupPath : newBackupPath;
   const doctorProbe = pwshProbe(); // read-only probe
-  printManifest(configDir, files, backupPath, doctorPlan());
+  printManifest(configDir, files, backupPath, doctorPlan(), prior);
 
   // (F2: --dry-run / --ci already returned print-only before preflight.)
   if (!(await confirmProceed())) {
@@ -1329,7 +1434,7 @@ async function setup(opts) {
 
   const retiredSkills = retireStale(configDir, prior, files, manifest);
   if (retiredSkills.size) log('retire', `${retiredSkills.size} stale skill id(s) retired — their allowlist entries are pruned from the merge (${[...retiredSkills].join(', ')})`);
-  stageFiles(files, manifest, prior, configDir);
+  const staged = stageFiles(files, manifest, prior);
   carryForwardJournal(manifest, prior);
   // An adopter's own plugins[] entries survive the merge via UNION_KEYS; the
   // distro ships no plugins of its own, so there is nothing to register here.
@@ -1346,6 +1451,10 @@ async function setup(opts) {
   console.log();
   console.log('-------------------------------- summary ---------------------------------');
   console.log('  installed: agents/, commands/, skills/, reference/, scripts/, .docs/, state/ (from state-seed/), AGENTS.md, GLOSSARY.md + merged opencode.jsonc');
+  console.log(`  policy   : ${staged.updated} updated in place (unmodified package files) · ${staged.kept} kept + .new written (your files) · ${staged.added} added · ${staged.skipped} skipped (identical)`);
+  if (staged.kept > 0) {
+    console.log('  adopt    : the new version of each kept file sits beside it as <name>.new — diff it and move it over when you want it');
+  }
   console.log(`  backup   : ${manifest.backupPath}${manifest.priorBackup ? `\n  snapshot : ${manifest.priorBackup} (chained — backup() pointer above is the original)` : ''}`);
   if (manifest.doctorSkipped) {
     console.log('  doctor   : ⚠ SKIPPED — the 18 laws were NOT verified (journaled as doctorSkipped; install PowerShell 7 and re-run to verify)');

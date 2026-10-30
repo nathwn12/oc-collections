@@ -31,7 +31,10 @@ const CLI = path.join(PKG_ROOT, 'bin', 'cli.js');
 // Derived, never typed: a patch bump used to leave this literal behind and
 // fail the suite on every release for no product reason.
 const EXPECTED_VERSION = JSON.parse(readFileSync(path.join(PKG_ROOT, 'package.json'), 'utf8')).version;
-const EXPECTED_AGENTS = ['orchestrator', 'worker', 'verifier', 'researcher', 'ops', 'critic', 'historian', 'cleaner', 'maintainer'];
+const EXPECTED_AGENTS = [
+  'code-agent', 'git-agent', 'harness-agent', 'host-agent', 'memory-agent',
+  'release-agent', 'research-agent', 'secret-agent', 'surface-agent', 'verify-agent',
+];
 const EXPECTED_SKILLS = ['close', 'evolve', 'fast', 'loop', 'search', 'swarm'];
 
 const sha256Text = (s) => createHash('sha256').update(Buffer.from(s, 'utf8')).digest('hex');
@@ -366,11 +369,13 @@ test('real install upgrades a prior 0.3.3 tree (fake opencode, real pwsh)', { sk
   const oldSkill = '---\nname: old\ndescription: old skill\n---\n';
   const editedX = '---\nname: edited\ndescription: edited skill v1\n---\n';
   const editedY = '---\nname: edited\ndescription: edited skill v2, adopter-modified\n---\n';
-  const orchX = '# old orchestrator primary v1\n';
-  const orchZ = '# old orchestrator primary, adopter-modified\n';
+  const priorAgent = '# old verify agent v1\n';
+  // Adopter-edited but still a legal agent (description+steps), so the doctor
+  // grades the harness rather than this fixture's own file.
+  const userAgent = '---\ndescription: my own verifier\nsteps: 12\n---\n# my verifier, adopter-modified\n';
   const priorTree = {
     'agents/build.md': '# old build agent\n',
-    'agents/orchestrator.md': orchZ, // on disk: user-edited (differs from manifest hash X)
+    'agents/verify-agent.md': userAgent, // on disk: user-edited (differs from manifest hash)
     'commands/build.md': '# old build command\n',
     'commands/goal.md': '# old custom /goal command\n',
     'skills/goal/SKILL.md': '---\nname: goal\ndescription: old goal skill\n---\n',
@@ -386,9 +391,9 @@ test('real install upgrades a prior 0.3.3 tree (fake opencode, real pwsh)', { sk
     mkdirSync(path.dirname(p), { recursive: true });
     writeFileSync(p, text);
     // The edited skill journals hash X while the disk holds Y; the edited
-    // orchestrator journals hash X while the disk holds Z.
+    // agent journals the prior installed bytes while the disk holds the user's.
     const hash = rel === 'skills/edited/SKILL.md' ? sha256Text(editedX)
-      : rel === 'agents/orchestrator.md' ? sha256Text(orchX)
+      : rel === 'agents/verify-agent.md' ? sha256Text(priorAgent)
       : sha256Text(text);
     // Prior manifests may spell paths with either separator; pin forward slashes here.
     priorFiles.push({ path: rel.split(path.sep).join('/'), hash, action: 'written' });
@@ -423,12 +428,12 @@ test('real install upgrades a prior 0.3.3 tree (fake opencode, real pwsh)', { sk
   const r = runCli(['setup'], { env, input: 'y\n', cwd: cfg });
   assert.equal(r.status, 0, `setup exit was ${r.status}\nSTDOUT:\n${r.stdout}\nSTDERR:\n${r.stderr}`);
 
-  // 9 agents ship; orchestrator carries steps: 40 and no model pin.
+  // The shipped agent roster lands; a freshly copied agent is the pack bytes.
   const agentIds = readdirSync(path.join(cfg, 'agents')).filter((f) => f.endsWith('.md')).map((f) => f.slice(0, -3));
-  assert.deepEqual([...agentIds].sort(), [...EXPECTED_AGENTS].sort(), '9 agents installed');
-  const orch = readFileSync(path.join(cfg, 'agents', 'orchestrator.md'), 'utf8');
-  assert.ok(orch.includes('steps: 40'), 'orchestrator carries steps: 40');
-  assert.ok(!/^model:/m.test(orch), 'orchestrator carries no model: line');
+  assert.deepEqual([...agentIds].sort(), [...EXPECTED_AGENTS].sort(), `${EXPECTED_AGENTS.length} agents installed`);
+  const freshAgent = readFileSync(path.join(cfg, 'agents', 'code-agent.md'), 'utf8');
+  assert.equal(freshAgent, readFileSync(path.join(PKG_ROOT, 'agents', 'code-agent.md'), 'utf8'), 'a fresh agent carries the shipped bytes');
+  assert.ok(!/^model:/m.test(freshAgent), 'a shipped agent carries no model: line');
 
   // 6 skills + 6 commands land, 12 refs, state files, GLOSSARY.
   const skillDirs = readdirSync(path.join(cfg, 'skills'), { withFileTypes: true })
@@ -460,13 +465,13 @@ test('real install upgrades a prior 0.3.3 tree (fake opencode, real pwsh)', { sk
   const agents = readFileSync(path.join(cfg, 'AGENTS.md'), 'utf8');
   assert.ok(!agents.includes('old AGENTS'), 'old AGENTS.md bytes are gone');
 
-  // User-edited incoming file: the active orchestrator is the new public
-  // content, and the adopter's bytes survive in the runtime archive.
-  const publicOrch = readFileSync(path.join(PKG_ROOT, 'agents', 'orchestrator.md'), 'utf8');
-  assert.equal(readFileSync(path.join(cfg, 'agents', 'orchestrator.md'), 'utf8'), publicOrch, 'active orchestrator is the new public content');
-  const orchArchived = path.join(cfg, 'state', 'archive', 'legacy-0.3.x', 'agents', 'orchestrator.md');
-  assert.ok(existsSync(orchArchived), 'edited orchestrator archived under state/archive/legacy-0.3.x/');
-  assert.equal(readFileSync(orchArchived, 'utf8'), orchZ, 'orchestrator archive holds the user-edited bytes');
+  // Adopter-edited incoming file: their bytes stay untouched and the new
+  // version lands beside the file as `.new` — never archived, never replaced.
+  const publicAgent = readFileSync(path.join(PKG_ROOT, 'agents', 'verify-agent.md'), 'utf8');
+  assert.equal(readFileSync(path.join(cfg, 'agents', 'verify-agent.md'), 'utf8'), userAgent, 'the adopter-edited agent is byte-identical');
+  assert.equal(readFileSync(path.join(cfg, 'agents', 'verify-agent.md.new'), 'utf8'), publicAgent, 'the new agent version landed beside it as .new');
+  assert.ok(!existsSync(path.join(cfg, 'state', 'archive', 'legacy-0.3.x', 'agents', 'verify-agent.md')), 'a kept file is never archived');
+  assert.match(r.stdout || '', /kept user file agents\/verify-agent\.md, wrote agents\/verify-agent\.md\.new/, 'the keep is reported with the .new path');
 
   // Merged opencode.jsonc: adopter keys kept, stale skill allows pruned, distro policy wins.
   const merged = JSON.parse(stripLineComments(readFileSync(path.join(cfg, 'opencode.jsonc'), 'utf8')));
@@ -493,16 +498,16 @@ test('real install upgrades a prior 0.3.3 tree (fake opencode, real pwsh)', { sk
   assert.equal(archivedEntries.length, 1, 'one archived journal entry');
   assert.equal(archivedEntries[0].path, 'skills/edited/SKILL.md', 'archived entry names the edited skill');
   assert.ok(String(archivedEntries[0].archivedTo || '').length > 0, 'archived entry records archivedTo');
-  const orchEntry = manifest.files.find((f) => String(f.path).replace(/\\/g, '/') === 'agents/orchestrator.md');
-  assert.ok(orchEntry, 'orchestrator has a journal entry');
-  assert.equal(orchEntry.action, 'overwritten', 'edited incoming file journals overwritten');
-  assert.ok(String(orchEntry.archivedTo || '').length > 0, 'orchestrator entry records archivedTo');
+  const agentEntry = manifest.files.find((f) => String(f.path).replace(/\\/g, '/') === 'agents/verify-agent.md');
+  assert.ok(agentEntry, 'the edited agent has a journal entry');
+  assert.equal(agentEntry.action, 'kept', 'an adopter-edited incoming file journals kept');
+  assert.equal(posix(agentEntry.newPath || ''), 'agents/verify-agent.md.new', 'the kept entry records the .new beside it');
+  assert.equal(agentEntry.prevHash, sha256Text(userAgent), 'the kept entry records the adopter bytes it found');
 
-  // Separator-normalization pin: a second run sees orchestrator as identical
-  // (skip) but must carry forward the earlier overwritten truth, even though
-  // the prior manifest spelled paths with forward slashes. Otherwise
-  // --uninstall would delete the file instead of restoring the pre-install
-  // original from backup.
+  // Separator-normalization pin: a second run sees the agent still held by
+  // the adopter and must carry forward the earlier kept truth, even though the
+  // prior manifest spelled paths with forward slashes. Otherwise --uninstall
+  // would treat a file the harness never wrote as its own.
   // Simulate a prior manifest written with the other separator: rewrite every
   // journal path to forward slashes before the second run reads it.
   const manifestPath = path.join(cfg, 'oc-harness-setup.manifest.json');
@@ -514,25 +519,39 @@ test('real install upgrades a prior 0.3.3 tree (fake opencode, real pwsh)', { sk
   const r2 = runCli(['setup'], { env, input: 'y\n', cwd: cfg });
   assert.equal(r2.status, 0, `second setup exit was ${r2.status}\nSTDOUT:\n${r2.stdout}\nSTDERR:\n${r2.stderr}`);
   const manifest2 = JSON.parse(readFileSync(path.join(cfg, 'oc-harness-setup.manifest.json'), 'utf8'));
-  const orchEntry2 = manifest2.files.find((f) => String(f.path).replace(/\\/g, '/') === 'agents/orchestrator.md');
-  assert.ok(orchEntry2, 'orchestrator still has a journal entry after a second run');
-  assert.equal(orchEntry2.action, 'overwritten', 'second run did not downgrade overwritten to skip');
-  assert.ok(String(orchEntry2.prevHash || orchEntry2.archivedTo || '').length > 0, 'second run kept prevHash or archivedTo');
+  const agentEntry2 = manifest2.files.find((f) => String(f.path).replace(/\\/g, '/') === 'agents/verify-agent.md');
+  assert.ok(agentEntry2, 'the edited agent still has a journal entry after a second run');
+  assert.equal(agentEntry2.action, 'kept', 'second run did not downgrade kept to skip');
+  assert.ok(String(agentEntry2.prevHash || '').length > 0, 'second run kept the adopter prevHash');
+  assert.equal(readFileSync(path.join(cfg, 'agents', 'verify-agent.md'), 'utf8'), userAgent, 'the adopter file is still byte-identical after the second run');
 
   shared.cfg = cfg;
   shared.env = env;
   shared.oldAgents = oldAgents;
   shared.oldBuildAgent = priorTree['agents/build.md'];
   shared.editedY = editedY;
-  shared.orchZ = orchZ;
+  shared.userAgent = userAgent;
 });
 
-/* ---------------- 0.4.x plugin residue + template archive + same-version re-run ---------------- */
+/* ---------------- 0.4.x plugin residue + kept template + same-version re-run ---------------- */
 
-test('0.4.x upgrade drops plugin residue, archives an edited template, and keeps a re-added plugin on a same-version re-run', { skip: WIN_SKIP, timeout: 300000 }, () => {
+test('0.4.x upgrade drops plugin residue, keeps an edited template with the new one beside it, and keeps a re-added plugin on a same-version re-run', { skip: WIN_SKIP, timeout: 300000 }, () => {
   const shippedTemplate = readFileSync(path.join(PKG_ROOT, 'state-seed', 'template.md'), 'utf8');
   const originalBytes = '# original template v0.4.1\n';
-  const editedBytes = '# adopter-edited template — must be archived, not lost\n';
+  // Adopter-edited yet still legal under the doctor's fixed key order, so the
+  // run grades the install policy rather than this fixture's own file.
+  const editedBytes = [
+    '# adopter-edited template — my own copy',
+    'id: <session-id>',
+    'title: <status> <work>',
+    'status: <active|parked|done>',
+    'goal: <one line>',
+    'next: <the single next action>',
+    'artifacts: <path — what it is>',
+    'decisions: <gap -> call -> evidence>',
+    'open: <question still unanswered>',
+    '',
+  ].join('\n');
   assert.ok(editedBytes !== shippedTemplate, 'edited bytes differ from the shipped template');
   assert.ok(originalBytes !== shippedTemplate, 'original bytes differ from the shipped template');
   assert.ok(editedBytes !== originalBytes, 'edited bytes differ from the prior hash');
@@ -568,10 +587,9 @@ test('0.4.x upgrade drops plugin residue, archives an edited template, and keeps
     assert.equal(rA.status, 0, `fixture A setup exit was ${rA.status}\nSTDOUT:\n${rA.stdout}\nSTDERR:\n${rA.stderr}`);
     const mergedA = JSON.parse(stripLineComments(readFileSync(path.join(cfgA, 'opencode.jsonc'), 'utf8')));
     assert.ok(!(mergedA.plugins || []).includes('oc-flight-deck'), 'older-prior run drops the retired distro plugin');
-    assert.equal(readFileSync(path.join(cfgA, 'state', 'template.md'), 'utf8'), shippedTemplate, 'template is replaced by the shipped bytes');
-    const archivedA = path.join(cfgA, 'state', 'archive', 'legacy-0.3.x', 'state', 'template.md');
-    assert.ok(existsSync(archivedA), 'edited template archived under state/archive/legacy-0.3.x/state/template.md');
-    assert.equal(readFileSync(archivedA, 'utf8'), editedBytes, 'archive holds the EDITED bytes');
+    assert.equal(readFileSync(path.join(cfgA, 'state', 'template.md'), 'utf8'), editedBytes, 'the edited template is byte-identical');
+    assert.equal(readFileSync(path.join(cfgA, 'state', 'template.md.new'), 'utf8'), shippedTemplate, 'the shipped template landed beside it as state/template.md.new');
+    assert.ok(!existsSync(path.join(cfgA, 'state', 'archive')), 'a kept template is never archived');
   } finally {
     rmSync(baseA, { recursive: true, force: true });
   }
@@ -619,6 +637,99 @@ test('0.4.x upgrade drops plugin residue, archives an edited template, and keeps
     assert.ok(!(rB.stdout || '').includes('legacy-tuple System.'), 'the doctor never saw an unresolved tuple entry');
   } finally {
     rmSync(baseB, { recursive: true, force: true });
+  }
+});
+
+/* ---------------- additive policy: keep the adopter's bytes, update our own ---------------- */
+
+// The install policy is per destination state, never per file name:
+//   package-owned (still matches what we installed) → updated in place
+//   adopter-owned (matches nothing we recorded)     → kept byte-identical,
+//                                                     new bytes beside it as .new
+test('an edited file is kept byte-identical with a .new beside it; an unmodified package file updates in place', { skip: WIN_SKIP, timeout: 300000 }, () => {
+  const { base, cfg, run } = makeGoalFixture('oc-additive-');
+  try {
+    const shippedCommand = readFileSync(path.join(PKG_ROOT, 'commands', 'loop.md'), 'utf8');
+    const shippedSkill = readFileSync(path.join(PKG_ROOT, 'skills', 'loop', 'SKILL.md'), 'utf8');
+    const adopterCommand = `${shippedCommand}\n<!-- my own note in this command -->\n`;
+    const priorSkill = `${shippedSkill}\n<!-- the previous release of this skill -->\n`;
+    mkdirSync(path.join(cfg, 'commands'), { recursive: true });
+    mkdirSync(path.join(cfg, 'skills', 'loop'), { recursive: true });
+    writeFileSync(path.join(cfg, 'commands', 'loop.md'), adopterCommand);
+    writeFileSync(path.join(cfg, 'skills', 'loop', 'SKILL.md'), priorSkill);
+    writePriorJournal(cfg, [
+      { path: 'commands/loop.md', hash: sha256Text(shippedCommand), action: 'written' },
+      { path: 'skills/loop/SKILL.md', hash: sha256Text(priorSkill), action: 'written' },
+    ]);
+
+    const r = run();
+    assert.equal(r.status, 0, `setup exit was ${r.status}\nSTDOUT:\n${r.stdout}\nSTDERR:\n${r.stderr}`);
+
+    assert.equal(readFileSync(path.join(cfg, 'commands', 'loop.md'), 'utf8'), adopterCommand, 'the adopter-edited file is byte-identical');
+    assert.equal(
+      readFileSync(path.join(cfg, 'commands', 'loop.md.new'), 'utf8'),
+      shippedCommand,
+      'the new version landed beside it as commands/loop.md.new'
+    );
+    assert.ok(!existsSync(path.join(cfg, 'state', 'archive')), 'a kept file is never archived');
+
+    assert.equal(readFileSync(path.join(cfg, 'skills', 'loop', 'SKILL.md'), 'utf8'), shippedSkill, 'the unmodified package file was updated in place');
+    assert.ok(!existsSync(path.join(cfg, 'skills', 'loop', 'SKILL.md.new')), 'no .new is written beside an updated package file');
+
+    const keptEntry = journalFor(cfg, 'commands/loop.md')[0];
+    assert.equal(keptEntry?.action, 'kept', 'the kept file journals kept');
+    assert.equal(posix(keptEntry?.newPath || ''), 'commands/loop.md.new', 'the kept entry records the .new path');
+    assert.equal(journalFor(cfg, 'skills/loop/SKILL.md')[0]?.action, 'overwritten', 'the updated file journals overwritten');
+
+    assert.match(r.stdout || '', /kept user file commands\/loop\.md, wrote commands\/loop\.md\.new/, 'the keep is reported with its .new path');
+    assert.match(
+      r.stdout || '',
+      /policy\s+:\s+1 updated in place \(unmodified package files\) · 1 kept \+ \.new written \(your files\)/,
+      'the summary counts each policy'
+    );
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+/* ---------------- additive merge: the adopter's key value wins, and says so ---------------- */
+
+test('a user-set install-owned key survives the merge, is reported, and the shipped deny block still lands', { skip: WIN_SKIP, timeout: 300000 }, () => {
+  const { base, cfg, run } = makeGoalFixture('oc-additive-merge-');
+  try {
+    const ownDeny = { action: 'tool.use', resource: 'read:*my-own-secret*', effect: 'deny' };
+    mkdirSync(cfg, { recursive: true });
+    writeFileSync(
+      path.join(cfg, 'opencode.jsonc'),
+      JSON.stringify(
+        { default_agent: 'my-own-agent', tool_output: { max_lines: 500 }, policies: [ownDeny] },
+        null,
+        2
+      )
+    );
+
+    const r = run();
+    assert.equal(r.status, 0, `setup exit was ${r.status}\nSTDOUT:\n${r.stdout}\nSTDERR:\n${r.stderr}`);
+    const merged = parseJsoncForTest(readFileSync(path.join(cfg, 'opencode.jsonc'), 'utf8'));
+
+    assert.equal(merged.default_agent, 'my-own-agent', 'the user value for an install-owned key wins');
+    assert.equal(merged.tool_output?.max_lines, 500, 'a collided subkey keeps the user value');
+    assert.equal(merged.tool_output?.max_bytes, 51200, 'a subkey the user never set still arrives from the distro');
+    assert.match(
+      r.stdout || '',
+      /kept your value\(s\) for install-owned key\(s\): default_agent, tool_output\.max_lines/,
+      'each collided key is reported by name'
+    );
+
+    const shippedPolicies = parseJsoncForTest(readFileSync(path.join(PKG_ROOT, 'opencode.jsonc'), 'utf8')).policies;
+    const policies = merged.policies || [];
+    assert.equal(policies.length, shippedPolicies.length + 1, 'the shipped deny block is kept and the user entry is added');
+    assert.equal(policies[0]?.resource, ownDeny.resource, 'the user rule leads, so a shipped deny can never be shadowed');
+    for (const rule of shippedPolicies) {
+      assert.ok(policies.some((p) => JSON.stringify(p) === JSON.stringify(rule)), `shipped deny survives: ${rule.resource}`);
+    }
+  } finally {
+    rmSync(base, { recursive: true, force: true });
   }
 });
 
@@ -714,17 +825,18 @@ test('uninstall keeps adopter edits, removes harness files, restores originals',
   const lessons = readFileSync(path.join(shared.cfg, 'state', 'lessons.md'), 'utf8');
   assert.ok(lessons.includes('adopter note'), 'modified state/lessons.md kept');
 
-  // Harness files are gone (orchestrator is an overwritten entry, so it is
-  // restored from backup below — not removed).
+  // Harness files are gone. The adopter-edited orchestrator was never ours, so
+  // it stays byte-identical and only the `.new` beside it is swept.
   for (const rel of ['skills/loop/SKILL.md', 'commands/loop.md']) {
     assert.ok(!existsSync(path.join(shared.cfg, rel)), `${rel} removed`);
   }
+  assert.ok(!existsSync(path.join(shared.cfg, 'agents', 'verify-agent.md.new')), 'agents/verify-agent.md.new swept');
 
   // Pre-install originals come back from the backup.
   assert.equal(readFileSync(path.join(shared.cfg, 'AGENTS.md'), 'utf8'), shared.oldAgents, 'original AGENTS.md restored');
   assert.equal(readFileSync(path.join(shared.cfg, 'agents', 'build.md'), 'utf8'), shared.oldBuildAgent, 'retired file restored from backup');
   assert.equal(readFileSync(path.join(shared.cfg, 'skills', 'edited', 'SKILL.md'), 'utf8'), shared.editedY, 'archived file restored from backup (pre-install bytes Y)');
-  assert.equal(readFileSync(path.join(shared.cfg, 'agents', 'orchestrator.md'), 'utf8'), shared.orchZ, 'edited incoming file restored from backup (pre-install bytes Z)');
+  assert.equal(readFileSync(path.join(shared.cfg, 'agents', 'verify-agent.md'), 'utf8'), shared.userAgent, 'the adopter-edited agent was never written over');
   const restoredConfig = JSON.parse(stripLineComments(readFileSync(path.join(shared.cfg, 'opencode.jsonc'), 'utf8')));
   assert.equal(restoredConfig.model, 'keeper-model', 'adopter opencode.jsonc restored');
   assert.ok(!('default_agent' in restoredConfig), 'harness default_agent gone after restore');
@@ -1269,7 +1381,7 @@ test('goal retirement keeps the adopter skill * wildcard allow', { skip: WIN_SKI
 
 /* ---------------- test 6: package audit ---------------- */
 
-test('package audit: files list exists, no leaks, 9/6/6 with 1:1 seam', { skip: WIN_SKIP }, () => {
+test('package audit: files list exists, no leaks, 10/6/6 with 1:1 seam', { skip: WIN_SKIP }, () => {
   const pkg = JSON.parse(readFileSync(path.join(PKG_ROOT, 'package.json'), 'utf8'));
   assert.ok(Array.isArray(pkg.files) && pkg.files.length > 0, 'files list present');
 
@@ -1307,7 +1419,7 @@ test('package audit: files list exists, no leaks, 9/6/6 with 1:1 seam', { skip: 
   assert.deepEqual(hits, [], `leak markers in shipped content: ${hits.join('; ')}`);
 
   const agentIds = readdirSync(path.join(PKG_ROOT, 'agents')).filter((f) => f.endsWith('.md')).map((f) => f.slice(0, -3));
-  assert.deepEqual([...agentIds].sort(), [...EXPECTED_AGENTS].sort(), '9 agents with public names');
+  assert.deepEqual([...agentIds].sort(), [...EXPECTED_AGENTS].sort(), `${EXPECTED_AGENTS.length} agents with public names`);
   const skillDirs = readdirSync(path.join(PKG_ROOT, 'skills'), { withFileTypes: true })
     .filter((e) => e.isDirectory() && existsSync(path.join(PKG_ROOT, 'skills', e.name, 'SKILL.md')))
     .map((e) => e.name);

@@ -2,6 +2,45 @@
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-31
+
+### Breaking
+
+- The V9 agent roster is removed: `cleaner`, `critic`, `historian`,
+  `maintainer`, `ops`, `orchestrator`, `researcher`, `verifier`, and
+  `worker` no longer ship. Ten V11 seats take their place: `code-agent`,
+  `verify-agent`, `research-agent`, `host-agent`, `surface-agent`,
+  `harness-agent`, `git-agent`, `secret-agent`, `release-agent`, and
+  `memory-agent`.
+- The memory model is replaced: per-session state files are retired
+  entirely. What persists is `state/lessons.md` (one dated line per
+  lesson, written by `memory-agent` only) plus `state/archive/`, with
+  architecture decisions living in each repository's own ADR.
+- Permission semantics changed: `opencode.jsonc` still merges with the
+  adopter's value winning on a collision, but the shipped deny policies
+  now union in last so they cannot be softened.
+- Routing tables collapsed: several tables become the one ten-row seat
+  table in `reference/flow.md`; `AGENTS.md` points at it instead of
+  duplicating it.
+- Upgrade safety: no existing file on a user's machine is modified or
+  deleted by the upgrade; the old mechanism is simply no longer used.
+  An adopter-edited or adopter-owned file stays byte-identical in place
+  (the new version lands beside it as `<name>.new`), an unmodified
+  package file updates in place, and stale unmodified pack paths retire
+  to the install journal (restorable on uninstall) instead of being
+  destroyed.
+
+### Added
+
+- Every seat ships in the same seven-section shape with a `SEAM` line, a
+  `SEAT ... | ACCEPT` declaration line, a `SEAT ... | REJECT` line, a
+  named seam, an owned path set, and a retirement condition.
+- The installer is additive by file class: absent paths are written,
+  identical paths are skipped, unmodified package files update in place,
+  and adopter-owned bytes are kept with the new version beside them as
+  `<name>.new`. The package ships zero MCP servers and zero plugins —
+  bare harness only, no hardcoded paths.
+
 ## [0.6.0] - 2026-10-29
 
 ### Added

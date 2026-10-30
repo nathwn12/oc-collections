@@ -1,15 +1,13 @@
 # Harness: who writes what, what ships, how it versions
-- Let `maintainer` write harness content, `cleaner` sweep scratch, and `historian` write memory; the outward act stays with the owner.
-- Split the two seats by object: `maintainer` changes what the harness is, `cleaner` removes what it left behind — content versus residue.
-- Route every harness change to `maintainer`; route every scratch file to `cleaner`.
+- Let `harness-agent` write harness content, `host-agent` sweep scratch, and `memory-agent` write memory; the outward act stays with the owner.
+- Split the seats by object: `harness-agent` changes what the harness is, `host-agent` removes what it left behind — content versus residue.
+- Route every harness change to `harness-agent`; route every scratch file to `host-agent`.
 - Package publish set: `AGENTS.md`, `README.md`, `GLOSSARY.md`, `agents/`, `skills/`, `commands/`, `reference/`, plus the sanitized `opencode.jsonc` and `state-seed/`; `.docs/` records decisions like unwired routing.
 - Publish never: live `state/`, personal notes, `tools/`, secrets (`*.env`, `*secrets*`, credential files), or `.git/`.
-- Tag package releases as `vMAJOR.MINOR.PATCH`.
-- Write one `CHANGELOG.md` line per tag naming what changed and why; create it on the first tag if absent.
+- Tag package releases as `vMAJOR.MINOR.PATCH`, and write one `CHANGELOG.md` line per tag naming what changed and why; create it on the first tag if absent.
 - Keep `AGENTS.md` to 200 lines hard, 120 target; keep every reference to 50 lines target, 80 hard.
 - Keep commands and skills 1:1; create no command without a skill and no skill without a command.
-- Grant a new agent its seat only for a new reach class, never for a new craft.
-- Add each new seat as one roster line, never as a new section.
+- Grant a new seat only for a new reach class, never for a new craft; add it as one table row in `reference/flow.md`, never as a new section.
 - Write paths with home and temp variables, never a literal home directory; the user repo root is defined once in `reference/repos.md`.
-- How it grows: `evolve` decides reference vs skill vs agent vs config; one extension at a time; commands and skills stay 1:1; a new seat needs a new reach class, never a new craft.
+- How it grows: `evolve` decides reference vs skill vs seat vs config; one extension at a time; a new seat needs a new reach class, never a new craft.
 - Windows 10/11 only: resolve the user via `%USERPROFILE%` and `%TEMP%`, never a literal path or username.

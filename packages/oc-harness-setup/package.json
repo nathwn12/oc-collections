@@ -1,6 +1,6 @@
 {
   "name": "oc-harness-setup",
-  "version": "0.6.0",
+  "version": "1.0.0",
   "type": "module",
   "bin": {
     "oc-harness-setup": "bin/cli.js"
@@ -42,7 +42,7 @@
     "url": "git+https://github.com/nathwn12/oc-collections.git",
     "directory": "packages/oc-harness-setup"
   },
-  "description": "A general OpenCode starter for Windows: 9 agents on a dispatch loop, 6 skills, fresh-verdict research, state memory, cleanup crew, and self-extension tooling - installed by one explicit command.",
+  "description": "A general OpenCode starter for Windows: 10 seats on a dispatch loop, 6 skills, fresh-verdict research, lesson memory, leave-no-trail hygiene, and self-extension tooling - installed by one explicit command.",
   "keywords": [
     "opencode",
     "agents",

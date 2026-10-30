@@ -4,7 +4,7 @@ No model pins ship. Every seat inherits the session model until the user binds o
 
 ## Tiers
 
-- **Bulk tier (cheap).** Drafting, workers, research, audits, iteration. Fan out freely; never trade speed for token anxiety here.
+- **Bulk tier (cheap).** Drafting, build lanes, research, audits, iteration. Fan out freely; never trade speed for token anxiety here.
 - **Verdict tier (costly).** Judgement only: verdicts, reviews, design audits, anything where being wrong is expensive. Never use it for bulk reading or drafting.
 
 ## How to bind
