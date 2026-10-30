@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **The dev pin moves to `@opencode/plugin` `2.2.1` -> `2.2.2`**
+  (`package.json`). The pin stays exact rather than a caret or `latest` on
+  purpose: `2.2.3` requires `@opentui` `>=0.8.0` and breaks TUI plugins, so
+  tracking latest is not safe. No runtime change - the package imports `Plugin`
+  and nothing else from it, and the peer stays the range `>=2.1.1 <3`.
+
 ## [1.6.13] - 2026-10-29
 
 ### Changed
