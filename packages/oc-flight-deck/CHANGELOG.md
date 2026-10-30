@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The `@opencode/plugin` dev pin moves 2.2.1 → 2.2.2 for types and build. The pin stays exact rather than a caret or `latest`: `2.2.3` requires `@opentui` `>=0.8.0` and breaks TUI plugins, so tracking latest is not safe. No source change and no peer-range change: `@opencode/plugin` stays `>=2.1.1 <3`.
+
 ## [0.20.7] - 2026-10-30
 
 ### Changed
