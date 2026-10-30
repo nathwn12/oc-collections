@@ -108,7 +108,7 @@ describe("probe 4: child-only pricing", () => {
     expect(tree?.kind).toBe("estimated");
     // 1M input at $3/M plus the step's single output token at $15/M.
     expect(tree?.cost).toBeCloseTo(3.000015, 6);
-    expect(statLine("total", { tree })).toBe("total     ~$3.00 · 1 subagent");
+    expect(statLine("total", { tree })).toBe("total     $3.00 · 1 subagent");
   });
 });
 

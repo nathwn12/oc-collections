@@ -27,16 +27,15 @@ import {
 const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const;
 
 // How a money figure introduces itself. A bare figure is the host's recorded
-// charge. `~` says at least one part of it was priced from the model catalog
-// rather than charged, and the floor mark says it counts only the history the
-// host still holds. Built from code points so this file stays ASCII, the same
-// way the other non-ASCII glyphs here are.
-const ESTIMATE_MARK = "~";
+// charge or a catalog price — the rail does not mark an estimate, because the
+// mark cost more width than the distinction earned. The floor mark stays: it
+// says the figure counts only the history the host still holds. Built from a
+// code point so this file stays ASCII, the same way the other non-ASCII glyphs
+// here are.
 const FLOOR_MARK = String.fromCharCode(0x2265);
 
 /** The mark a money figure carries, from the strength of its claim. */
 function feeMark(kind: unknown): string {
-  if (kind === "estimated") return ESTIMATE_MARK;
   if (kind === "bounded") return FLOOR_MARK;
   return "";
 }
