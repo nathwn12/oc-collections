@@ -1,12 +1,66 @@
+# The gate. One Windows job that installs the workspaces and runs the real
+# per-workspace checks through the root wrapper.
+#
+# `npm run check` is the documented root gate: scripts/check-docs.mjs, then its
+# selftest, then scripts/workspace-run.mjs check, which runs each workspace's
+# own `check` exactly as named in scripts/workspace-plan.mjs (fail-closed: a
+# workspace missing from the plan is an error, never a skip). The wrapper is
+# used rather than the raw fan-out so a doc claim that no longer matches the
+# tree fails here too.
+#
+# The previous gate ran on ubuntu-latest and only proved four root files were
+# tracked. Every package here is Windows-only, so Ubuntu could never exercise
+# them.
 name: ci
+
 on:
   push:
   pull_request:
   workflow_dispatch:
+
+# A new push cancels its own queued runs on that branch instead of stacking
+# them behind older ones: the newest commit is the only one worth gating.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
   index:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
+    # A local cold `npm run check` takes ~73s, and oc-harness-setup alone is
+    # ~51s of it (real npm installs plus a packed-tarball install). A Windows
+    # runner is slower than this box and pays a cold npm cache, so 20 minutes
+    # is roughly 10x the observed run while still failing far sooner than the
+    # 360-minute default.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+
+      # Cheap guard first: a missing licence, README, changelog or signature is
+      # a tracked-file fact, answered in about a second with no install.
       - name: Index files present
         run: git ls-files --error-unmatch README.md LICENSE CHANGELOG.md assets/signature.svg
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # oc-flight-deck's check is `bun run typecheck && bun test`, so bun is a
+      # gate dependency, not a convenience. Pinned to the version the release
+      # workflow already runs on windows-latest.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      # Required: the root manifest declares no dependencies, and each
+      # workspace's check resolves its bins through the hoisted root
+      # node_modules that `npm ci` builds from package-lock.json.
+      - name: Install workspaces
+        run: npm ci
+
+      - name: Workspace check
+        run: npm run check
