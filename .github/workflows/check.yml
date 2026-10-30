@@ -63,15 +63,12 @@ jobs:
       - name: Install workspace dependencies
         shell: pwsh
         run: npm ci
-      - name: Workspace check
+      - name: Workspace typecheck and compile
+        # PR gate stays static: no package test suites and no pack verification.
+        # release.yml runs the full check and pack check before publishing.
+        # flight-deck's compile is a bun bundle that never typechecks, so its
+        # tsc pass is named explicitly; bifrost's compile is tsc and covers both.
         shell: pwsh
-        run: npm run check
-      - name: Release tooling checks
-        shell: pwsh
-        run: node --test scripts/release-target.test.mjs
-      - name: Workspace pack verification
-        # The sanctioned path: check + build run first, then every workspace
-        # tarball is inspected (forbidden entries, byte-equal manifest, entry
-        # points, files entries). A dist-less pack cannot pass this step.
-        shell: pwsh
-        run: npm run pack:check
+        run: |
+          npm run typecheck -w packages/oc-flight-deck
+          node scripts/workspace-run.mjs build
