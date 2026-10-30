@@ -11,17 +11,17 @@ First run prints a manifest of everything it will touch and waits for you to typ
 
 ## Why this starter
 
-- Small on purpose: 9 agents, 6 skills, 12 on-demand references; the primary loads one, the rest wait for a trigger.
-- A loop that closes: loop -> worker -> verifier -> historian -> cleaner -> close; no self-verdicts.
-- Research that cites: researcher + search + canon; claims arrive sourced or `UNVERIFIED`.
-- Memory that survives: historian writes session state; `state/` is seeded and preserved on upgrade.
-- Cleanup that ships: cleaner removes this session's scratch; hygiene proves the tree clean.
+- Small on purpose: 10 seats, 6 skills, 12 on-demand references; the primary loads one, the rest wait for a trigger.
+- A loop that closes: brief -> seat -> skill -> evidence -> verify -> memory; no self-verdicts.
+- Research that cites: research-agent + search + canon; claims arrive sourced or `UNVERIFIED`.
+- Memory that survives: memory-agent writes dated lessons to `state/lessons.md` (superseded ones move to `state/archive/`); your `state/` is seeded and preserved on upgrade.
+- Cleanup that ships: leave-no-trail hygiene removes this session's scratch and proves the tree clean at close.
 - Grows with you: `evolve` turns a repeated workflow, a user request, or an upstream feature into a skill, command, reference, seat, or config change — 1:1 and doctor-checked.
 - Reversible and fail-closed: manifest first, SHA-256 journal, uninstall restores originals, hard denies last.
 
 ## What you get
 
-- 9 agents with bounded reach: one coordinator, one verdict, and seven specialists that each own exactly one surface.
+- 10 seats with named seams: one routing table in `reference/flow.md` gives each seat its trigger, owned paths, and check; the verdict never comes from the author.
 - 6 skills behind 6 commands: close, evolve, fast, loop, search, and swarm.
 - 12 on-demand references behind a single index; load only the file a rule names.
 - 18-law doctor gate: every setup run ends on it, and failures name the check and the fix.
@@ -45,8 +45,8 @@ Set `OPENCODE_CONFIG_DIR` to override the config dir when the OpenCode CLI canno
 
 - Your `opencode.jsonc` settings, providers, MCP servers, plugins, and state survive.
 - `default_agent` stays `orchestrator`, so an existing 0.3.x config keeps resolving.
-- Unmodified 0.3.x agents, commands, skills, references, and scripts are retired.
-- Files you edited are archived under `state/archive/legacy-0.3.x/` instead of deleted, and reported.
+- The installer is additive: an unmodified package file updates in place, while a file you edited or own is kept byte-identical and the new version lands beside it as `<name>.new`.
+- Stale pack paths the new distro no longer ships are retired only when still byte-identical to the prior install (journaled, restorable on uninstall); anything you modified moves to `state/archive/legacy-0.3.x/` instead of being deleted, and is reported.
 - Stale `skill` allow entries for retired skills are pruned; custom skills are left alone.
 - The custom `/goal` looper ships as `/loop` (`commands/loop.md` + `skills/loop/SKILL.md`); a fresh install writes neither `commands/goal.md` nor `skills/goal`, and both `/loop` bodies name the host's native `/goal` session-continuation command (OpenCode 2.2.1) so the distinction is explicit.
 - An upgrade settles a tracked `/goal` path only when a prior manifest entry lists it with a recorded hash, per file: matching bytes are retired, differing bytes are archived under `state/archive/legacy-0.3.x/`.
