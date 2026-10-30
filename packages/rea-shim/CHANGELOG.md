@@ -12,7 +12,7 @@
 
 - The package lives in the `nathwn12/oc-collections` monorepo at `packages/rea-shim`; `repository` names that monorepo with `directory: "packages/rea-shim"`, the guide and README links point there, and `docs/PUBLISHING.md` describes that repo's `rea-shim@<version>` release tag. No runtime change.
 - Compatibility re-check; no runtime change. Upstream `rea-agents` 6.8.0 still declares `^22.23.4 || ^24.22.1 || >=26.12.1`, so `engines` is unchanged and the package still carries no dependency of any kind.
-- `--print-config` is documented against the OpenCode 2.2 line, verified through 2.2.1, instead of one 2.2.0 binary. 2.2.1's only breaking scope is direct `@opencode/ai` imports, which this package does not use, and the `mcp.servers` shape is unchanged, so the printed block and its assertion are unchanged.
+- `--print-config` is documented against the OpenCode 2.2 line, verified through 2.2.2, instead of one 2.2.0 binary. 2.2.1's only breaking scope is direct `@opencode/ai` imports, which this package does not use, and 2.2.2's `mcp add` writes the same `mcp.servers` block, so the printed block and its assertion are unchanged.
 - The README requirement no longer carries a verification date that goes stale; it names the upstream release whose `engines` field is the thing to re-check.
 - `docs/PUBLISHING.md` no longer names sibling packages released from their own repositories, and its "no monthly bump workflow" note no longer leans on a workflow outside this repo.
 

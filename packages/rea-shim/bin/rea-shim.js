@@ -251,7 +251,7 @@ function printVersion() {
 
 function printConfig() {
   // Emitted in the shape the installed client writes itself: OpenCode 2.2
-  // (verified through 2.2.1) `mcp add` produces
+  // (verified through 2.2.2) `mcp add` produces
   // { mcp: { servers: { <name>: { type, command } } } }.
   // A flat `mcp.<name>` entry (the pre-2.2 layout this used to print) is not
   // what 2.2 reads, and an unverified `timeout` key is not a knob the client
