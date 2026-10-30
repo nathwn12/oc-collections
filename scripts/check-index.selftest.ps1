@@ -80,11 +80,20 @@ try {
     }
 
     # 3b. The header row is skipped by label, in either spelling this index has
-    # used; any other label still becomes a phantom package. Same five rows.
+    # used; any other label still becomes a phantom package, so the same table
+    # gains exactly one row, one phantom, one failure. Counts are read back from
+    # the positive control just run rather than frozen here, so this stays a
+    # test of header handling and not of how many packages happen to exist.
     $tableLines = @($realReadme -split "`r?`n" | Where-Object { $_ -match '^\|' })
+    $readmeRows = 0
+    $readmePackages = 0
+    if ($summary -match '^structural: rows=(\d+) packages=(\d+) ') {
+        $readmeRows = [int]$Matches[1]
+        $readmePackages = [int]$Matches[2]
+    }
     $headerCases = @(
-        [pscustomobject]@{ Label = 'Package'; Exit = 0; Summary = '^structural: rows=5 packages=5 omitted=0 missing=0 extra=0 failed=0$' }
-        [pscustomobject]@{ Label = 'Bogus'; Exit = 1; Summary = '^structural: rows=6 packages=5 omitted=0 missing=0 extra=1 failed=1$' }
+        [pscustomobject]@{ Label = 'Package'; Exit = 0; Rows = $readmeRows; Packages = $readmePackages; Extra = 0; Failed = 0 }
+        [pscustomobject]@{ Label = 'Bogus'; Exit = 1; Rows = $readmeRows + 1; Packages = $readmePackages; Extra = 1; Failed = 1 }
     )
     foreach ($case in $headerCases) {
         $fixture = Join-Path $temp ('header-' + $case.Label + '.md')
@@ -99,7 +108,7 @@ try {
             Write-Output ('FAIL: header {0} exited {1}, expected {2}' -f $case.Label, $headerExit, $case.Exit)
             $fail++
         }
-        if ($headerSummary -notmatch $case.Summary) {
+        if ($headerSummary -notmatch ('^structural: rows={0} packages={1} omitted=0 missing=0 extra={2} failed={3}$' -f $case.Rows, $case.Packages, $case.Extra, $case.Failed)) {
             Write-Output ('FAIL: header {0} did not produce the expected summary' -f $case.Label)
             $fail++
         }
@@ -118,9 +127,16 @@ try {
     Copy-Item -LiteralPath $check -Destination $fakeScripts
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'index-registry.ps1') -Destination $fakeScripts
     $fakeCheck = Join-Path $fakeScripts 'check-index.ps1'
-    Set-Content -LiteralPath (Join-Path $fakeRoot 'package.json') -Encoding utf8 -Value '{ "name": "oc-collections" }'
-    $fakePackages = New-Object System.Collections.Generic.List[string]
-    $fakePackages.AddRange([string[]]@('oc-bifrost', 'oc-flight-deck', 'oc-harness-setup', 'rea-shim'))
+    # The fixture tree mirrors the real inventory by the same rule the checker
+    # uses -- the root manifest plus every packages/*/package.json -- so a
+    # package added to the repo needs no edit here and the version fixtures
+    # below, built from the real README, always line up with it.
+    $realRootManifest = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..' 'package.json') -Raw | ConvertFrom-Json
+    Set-Content -LiteralPath (Join-Path $fakeRoot 'package.json') -Encoding utf8 -Value ('{ "name": "' + $realRootManifest.name + '", "version": "' + $realRootManifest.version + '" }')
+    $fakePackages = @(Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot '..' 'packages') -Directory |
+        Where-Object { Test-Path (Join-Path $_.FullName 'package.json') } |
+        Sort-Object Name |
+        ForEach-Object { $_.Name })
     function Set-FakePackage([string]$name) {
         $dir = Join-Path $fakeRoot ('packages/' + $name)
         New-Item -ItemType Directory -Force -Path $dir | Out-Null
