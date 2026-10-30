@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `cost` and `total` no longer prefix an estimated figure with `~`. An estimated figure is still catalog-priced rather than a recorded charge; only its mark is gone, because the mark cost more width than the distinction earned. The `≥` floor mark stays: it says the figure counts only the history the host still holds.
+
 ## [0.20.6] - 2026-10-29
 
 ### Changed
