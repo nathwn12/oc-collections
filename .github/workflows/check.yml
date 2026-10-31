@@ -14,6 +14,11 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      # Node before the index steps: the vocabulary guard below is a Node script,
+      # so the LTS this workflow pins is the one it must run under.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
       - name: Index integrity
         shell: bash
         run: |
@@ -30,30 +35,13 @@ jobs:
           pwsh -NoProfile -File scripts/check-index.ps1 --structural
           pwsh -NoProfile -File scripts/check-index.selftest.ps1
       - name: No internal vocabulary in the index's own files
-        # Bracketed patterns match the retired names without writing them
-        # literally, so this file itself stays clean.
-        shell: bash
-        run: |
-          # Imported trees are their own published documents: oc-harness-setup's
-          # shipped contract uses one of those names, oc-bifrost keeps
-          # vendor/rtk-LICENSE byte-identical to upstream, and the imported
-          # sources and design docs use the words as ordinary English. Both
-          # guards cover the index's own files (root docs, workflows, scripts),
-          # not packages/.
-          if git grep -I -n -i -E 'fl[e]et|l[i]feline|m[a]sthead' -- . ':(exclude)packages'; then
-            echo "internal name found in this repo's own files" >&2
-            exit 1
-          fi
-          if git grep -I -n -i -E 'mod[u]le host|supers[e]d|unpubl[i]sh|noth[i]ng mounts' -- . ':(exclude)packages'; then
-            echo "internal history found in this repo's own files" >&2
-            exit 1
-          fi
+        # One definition, shared with `npm run check`: the patterns, the excluded
+        # path and the "a grep error is never clean" rule live in the script.
+        shell: pwsh
+        run: node scripts/check-vocabulary.mjs
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
-      - uses: actions/setup-node@v4
-        with:
-          node-version: lts/*
       - name: Documentation truth (offline)
         # Path claims in maintainer docs, plus the checker's own red/green proof.
         shell: pwsh
