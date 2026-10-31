@@ -1,41 +1,23 @@
 <p align="center">
   <img src="../assets/icon.svg" width="120" height="120" alt="oc-flight-deck icon" />
 </p>
-<h1 align="center">oc-flight-deck</h1>
-<p align="center"><strong>See live cost, tokens, and context for every OpenCode session, right in your sidebar.</strong></p>
+<h1 align="center">oc-flight-deck guide</h1>
 
-## Install
+## How it works
 
-Add the entry to the `plugins` array in your `opencode.jsonc`, then restart OpenCode:
+The plugin registers one sidebar rail and one ticker. On every tick it reads what the host already recorded and redraws the rows that changed; it never writes to the session and never blocks a turn.
 
-```json
-{ "plugins": ["oc-flight-deck"] }
-```
+**Three scopes decide which numbers you see.** `cost`, `tokens`, `cache`, `reasoning` and `tps` roll up the open conversation plus the subagent sessions the host links to it by `parentID`. `project` covers every session in the project. `elapsed` counts active turn time, not wall clock. The link is the host's own: an independently spawned top-level session is not counted as a child, and `project` is the surface for that.
 
-The panel renders beside your next open session with defaults and no config file.
-You need OpenCode `2.1.1` or newer (2.x) already installed, on Node 22+ or Bun 1.4+.
+**Refresh behaviour.** The rail ticks every `refresh` milliseconds (default `100`, allowed range 0–60000; values 1–15 clamp up to 16). While nothing is happening the tick backs off to about one second, so an idle session costs almost nothing. `refresh: 0` turns the ticker off entirely: clock-derived rows then move only when the host fires an event, and a row that needs a tick to change its number simply stops moving. Host events always redraw immediately, whatever the interval.
 
-### Or let your AI install it
+**Restart safety.** Elapsed time and speed are recomputed from the assistant-turn spans the host recorded, not accumulated in memory, so a restart does not reset the clock and elapsed time never steps backwards while the host still reports those turns.
 
-```text
-Install the oc-flight-deck plugin: add "oc-flight-deck" to the plugins array in my opencode.jsonc, restart OpenCode, then open a session and confirm the telemetry panel renders in the sidebar. Report which of the default rows you see: status, agent, model, cost, project, tokens, cache, context, perms, elapsed, tps.
-```
+**Config precedence.** Host plugin options beat `flight-deck.jsonc`, which beats the defaults, merged key by key. A bad value restores its default and raises a one-time toast naming the key.
 
-### Offline or pinned
+## Panels
 
-The registry is the only install route: tagged releases only.
-
-```json
-{ "plugins": ["oc-flight-deck"] }
-```
-
-The bare name tracks the newest release and never names a version that does not exist between a bump and its publish. To pin an exact published version, append `@<version>`; the pin then stays put.
-
-## Use it
-
-Open a session and read the rail. Three scopes shape the numbers you see. `cost`, `tokens`, `cache`, and `reasoning` roll up this conversation plus the subagent sessions linked by the host's parentID. `project` covers every session in the project. `elapsed` counts active turn time, not wall clock.
-
-A session with subagents, defaults, 200k window:
+One rail, in the order you list the rows, dimmed under any fixed lines. A session with subagents, defaults, a 200k window:
 
 ```text
 status    ⠙ running
@@ -51,21 +33,15 @@ elapsed   2h 14m 07s
 tps       41 tok/s
 ```
 
-Add `"ses"` to `sidebar.rows`, then click the `session` row to copy the full id. Add `"go"` to `sidebar.rows` for quota.
+Which rows draw is `sidebar.rows`; what each row's number means is the Rows table under Configure it.
 
-## What you get
+**The footer.** `sidebar.footer.lines` puts fixed text in the host footer slot, outside the rail cap; the documented branding pair is `["▸ FLIGHT DECK","─────────────────"]`.
 
-- One money row that rolls up this conversation plus its subagent tree
-- A stable rail: every named row draws its zero skeleton until data arrives
-- Elapsed time that survives a restart, recomputed from recorded turn spans
-- Speed as a settled-turn average, a realtime estimate, or both with ttft
-- An opt-in watchdog row that stays silent until something stops moving
-- One `notifications` section that silences every toast, together or by kind
-- One global config file, and nothing per project
+**The Go panel.** `sidebar.footer.go` adds the live Go usage panel: three fixed-width lines above the host location row, sharing one account-wide poll with the `go` row.
 
 ## Configure it
 
-You configure one global file: `~/.config/opencode/flight-deck.jsonc`. The `.json` name is also read, and `.jsonc` is tried first. When `$XDG_CONFIG_HOME` holds an absolute path, the file lives at `$XDG_CONFIG_HOME/opencode/flight-deck.jsonc` instead. There is no per-project lookup, so a copy left in a project root configures nothing. A missing file is normal and silent: you get the defaults below. If the file does not exist, create it; the snippet below is a complete file. Where the host forwards plugin options, those win key by key. Comments and trailing commas are accepted by the Bun-hosted TUI. A bad value restores its default with a one-time toast naming the key; silence that toast with `notifications.config: false`.
+One global file: `~/.config/opencode/flight-deck.jsonc`. The `.json` name is also read, and `.jsonc` is tried first. When `$XDG_CONFIG_HOME` holds an absolute path, the file lives at `$XDG_CONFIG_HOME/opencode/flight-deck.jsonc` instead. There is no per-project lookup, so a copy left in a project root configures nothing. A missing file is normal and silent: you get the defaults. Comments and trailing commas are accepted by the Bun-hosted TUI.
 
 ```jsonc
 {
@@ -73,7 +49,96 @@ You configure one global file: `~/.config/opencode/flight-deck.jsonc`. The `.jso
 }
 ```
 
-### What each row shows
+### Settings
+
+**Refresh**
+
+| Key | Default | Effect |
+| --- | --- | --- |
+| **`refresh`** | `100` | Milliseconds between ticks, 0–60000. Values 1–15 clamp to 16; `0` turns the ticker off, so clock-derived rows move only on host events. While idle the tick backs off to about 1s. |
+
+**Sidebar**
+
+| Key | Default | Effect |
+| --- | --- | --- |
+| **`sidebar.enabled`** | `true` | `false` leaves the plugin loaded but invisible. |
+| **`sidebar.rows`** | `["status","agent","model","cost","project","tokens","cache","context","perms","elapsed","tps"]` | Live rows, top to bottom, any subset in any order. Max 24 names; unknown names are ignored with a one-time warning. |
+| **`sidebar.lines`** | `[]` | Fixed lines above the rows. Max 24. These plus rows share the rail cap (`maxLines`); fixed lines render at full brightness while live rows are dimmed. |
+| **`sidebar.footer.lines`** | `[]` | Fixed lines in the host footer slot, outside the rail cap; max 24. |
+| **`sidebar.footer.go`** | `false` | `true` or an object draws the live Go usage panel. Object keys: `header` (`false`), `barWidth` (`10`, 1–40), `labelWidth` (`6`, 5–24, auto-widens), `percent` (`true`), `reset` (`true`), `align` (`"right"`, left, right, or center), `sweep` (`false`), `labels` (`{rolling,weekly,monthly}`, each 1–24 chars), `blink` (`true`), `blinkMs` (`700`, 200–5000). |
+| **`sidebar.persist`** | `true` | Every named row renders, drawing its zero skeleton until data arrives; `false` omits rows with no data. |
+| **`sidebar.placeholder`** | `"—"` | Non-empty string; only for a data-less row with no skeleton. `caution` never draws it, and `updated` draws it until the host records an action. |
+| **`sidebar.maxLines`** | `24` | Whole rail, fixed lines plus rows, 1–24. |
+| **`sidebar.tps.scope`** | `"family"` | `"family"` paces the open session plus subagents; `"session"` paces the open session alone. |
+| **`sidebar.tps.display`** | `"avg"` | `"avg"` settled-turn average, `"rt"` realtime estimate, `"both"` both figures plus ttft. |
+
+**Footer**
+
+| Key | Default | Effect |
+| --- | --- | --- |
+| **`footer.enabled`** | `true` when any other footer key is present, `false` when the section is absent | Writing any footer key turns it on. |
+| **`footer.text`** | `"Flight Deck"` | Max 120 chars; control chars become spaces. |
+
+**Caution**
+
+| Key | Default | Effect |
+| --- | --- | --- |
+| **`caution.enabled`** | `false` | Run the annunciator; off means no row and no timer. |
+| **`caution.toolWatchSeconds`** | `180` | A tool running longer draws `▲`. |
+| **`caution.toolCautionSeconds`** | `420` | A tool running longer becomes `●`; raised to the watch value if lower. |
+| **`caution.turnWatchSeconds`** | `600` | A running session producing nothing draws `▲`; suppressed while a tool or shell runs. |
+| **`caution.turnCautionSeconds`** | `1200` | Quiet session becomes `●`; same raise rule. All four thresholds take 0 or more. |
+| **`caution.repeatThreshold`** | `3` (min 2) | Identical consecutive calls before a loop is reported; applies to successes and failures. |
+| **`caution.exemptTools`** | `["question","task","subagent","agent","delegate","delegate_many","delegate_task","tools.delegate","tools.delegate_many","tools.subagent","tools.task"]` | Matched by exact name. Calibrated against 54,218 settled calls: 307 exceed 180s and 200 of those are these tools; `subagent` alone crossed 152 times, p99 14.7 min. |
+| **`caution.toast`** | `false` | Toast once per distinct problem, re-arming when the session goes quiet. |
+
+**Notifications**
+
+| Key | Default | Effect |
+| --- | --- | --- |
+| **`notifications.enabled`** | `true` | The one-key off switch; `false` silences every toast. |
+| **`notifications.config`** | `true` | The one-time toast naming a bad config key. |
+| **`notifications.copy`** | `true` | The toast for an unverified copy. |
+| **`notifications.caution`** | `true` | The opt-in caution toast. Every flag only silences. |
+
+**Layout**
+
+| Key | Default | Effect |
+| --- | --- | --- |
+| **`layout.labelWidth`** | `10` (6–24) | Label column width. |
+| **`layout.barWidth`** | `10` (1–40) | Context gauge cells. |
+| **`layout.sparkWidth`** | `12` (2–64) | Sparkline samples. |
+| **`layout.labels`** | `{}` | Rename any row by its canonical key, for example `{ "cost": "session", "total": "lifetime" }`. A label wider than the column still gets a space before its value. |
+
+**Format**
+
+| Key | Default | Effect |
+| --- | --- | --- |
+| **`format.duration`** | `"spaced"` (`2h 14m 37s`) | Or `"compact"` (`2h14m37s`). Zero-padding is the same either way (`14m 07s`, never `14m 7s`). |
+| **`format.timestamp.locale`** | the host locale | BCP-47 locale for the `updated` row, for example `"en-GB"`. A malformed locale is reported and the host locale is used. |
+| **`format.timestamp.dateStyle`** | `"short"` | `"short"` (locale numeric date), `"medium"` (spelled month, wider), or `"none"` (time only). |
+| **`format.timestamp.timeStyle`** | `"medium"` | `"medium"` keeps seconds, `"short"` drops them, `"none"` leaves a date-only row. Both halves cannot be `"none"`: the pair falls back to the defaults with a warning. |
+| **`format.timestamp.hour12`** | the locale's own clock | `true` forces `2:32:07 PM`, `false` forces `14:32:07`. |
+| **`format.timestamp.timeZone`** | the host zone | An IANA name (`"Asia/Tokyo"`) or UTC offset (`"+05:30"`). Omit it to follow the host through daylight-saving changes; a Windows zone id is not valid and is reported, with the host zone used. |
+
+**Glyphs**
+
+| Key | Default | Effect |
+| --- | --- | --- |
+| **`glyphs.watch`** | `"▲"` | The watch glyph, 1–2 chars. |
+| **`glyphs.caution`** | `"●"` | The caution glyph, 1–2 chars. |
+| **`glyphs.clear`** | `"○"` | Reserved, not drawn today. |
+
+**Style**
+
+| Key | Default | Effect |
+| --- | --- | --- |
+| **`style.lines`** | `{color:"default", attributes:[]}` | Fixed-line look. |
+| **`style.rows`** | wildcard `"*": {color:"subdued", attributes:[]}` plus per-row overrides | Colors are theme roles: default, subdued, warning, error, success, info. Attributes: bold, dim, italic, underline, blink, inverse, hidden, strikethrough. |
+
+### Rows
+
+Every name `sidebar.rows` accepts, what its number means, and whether it draws by default.
 
 | Row | What it shows | Default |
 | --- | --- | --- |
@@ -82,7 +147,7 @@ You configure one global file: `~/.config/opencode/flight-deck.jsonc`. The `.jso
 | `agent` | Active agent name. | yes |
 | `model` | Model id, plus ` · variant` when one is present. | yes |
 | `branch` | Current git branch. Costs a VCS call. | opt-in |
-| `cost` | Money for this conversation plus its subagent tree. With `total` on the rail, this row shows the session's own figure. Merged shape `$1.84 · 3 subagents`; childless shows `$1.84`. Follows the host's parentID link only: an independently spawned top-level session is not counted, and `project` is the surface for that. | yes |
+| `cost` | Money for this conversation plus its subagent tree. With `total` on the rail, this row shows the session's own figure. Merged shape `$1.84 · 3 subagents`; childless shows `$1.84`. | yes |
 | `total` | Family total plus subagent count, `$1.84 · 0 subagents` when childless. | opt-in |
 | `project` | Every session in the project: `$12.40 · 21 sessions` when more than one, else just the figure. | yes |
 | `tokens` | `1.2M in · 84k out`, same family scope as `cost`. | yes |
@@ -102,75 +167,6 @@ You configure one global file: `~/.config/opencode/flight-deck.jsonc`. The `.jso
 
 With `sidebar.persist` (the default) every named row renders, drawing its zero skeleton until data arrives: `$0.000` money rows, `0 in · 0 out`, `0 read`, empty gauge plus `~0%`, `0 waiting`, `0s`, `0 tok/s` (`0 rt · 0 avg` in both), flat `▁` spark, `0` reasoning and turns, `○ 0 ○ 0 ○ 0` go, `○ idle`, `none` agent, model, and ses, `no branch`, `unknown` guard. `caution` never draws a skeleton, and `updated` has none either: it draws `sidebar.placeholder` (`—`) until the host records an action, because there is no honest zero timestamp. Set `persist: false` to omit rows with no data instead.
 
-### Settings
-
-**Refresh**
-
-- **`refresh`** (default `100`) — ms between ticks, 0–60000. Values 1–15 clamp to 16; `0` turns the ticker off, so clock-derived rows move only on host events. While idle the tick backs off to about 1s.
-
-**Sidebar**
-
-- **`sidebar.enabled`** (default `true`) — `false` leaves the plugin loaded but invisible.
-- **`sidebar.rows`** (default `["status","agent","model","cost","project","tokens","cache","context","perms","elapsed","tps"]`) — live rows, top to bottom, any subset in any order. Max 24 names; unknown names are ignored with a one-time warning.
-- **`sidebar.lines`** (default `[]`) — fixed lines above the rows. Max 24. These plus rows share the rail cap (`maxLines`, default 24); fixed lines render at full brightness while live rows are dimmed.
-- **`sidebar.footer.lines`** (default `[]`) — fixed lines in the host footer slot, outside the rail cap; max 24. The documented branding pair is `["▸ FLIGHT DECK","─────────────────"]`.
-- **`sidebar.footer.go`** (default `false`) — `true` or an object draws the live Go usage panel: three fixed-width lines above the host location row, sharing one account-wide poll with the `go` row. Object keys: `header` (`false`), `barWidth` (`10`, 1–40), `labelWidth` (`6`, 5–24, auto-widens), `percent` (`true`), `reset` (`true`), `align` (`"right"`, left, right, or center), `sweep` (`false`), `labels` (`{rolling,weekly,monthly}`, each 1–24 chars), `blink` (`true`), `blinkMs` (`700`, 200–5000).
-- **`sidebar.persist`** (default `true`) — every named row renders, drawing its zero skeleton until data arrives; `false` omits rows with no data.
-- **`sidebar.placeholder`** (default `"—"`) — non-empty string; only for a data-less row with no skeleton. `caution` never draws it, and `updated` draws it until the host records an action.
-- **`sidebar.maxLines`** (default `24`) — whole rail, fixed lines plus rows, 1–24.
-- **`sidebar.tps.scope`** (default `"family"`) — `"family"` paces the open session plus subagents; `"session"` paces the open session alone.
-- **`sidebar.tps.display`** (default `"avg"`) — `"avg"` settled-turn average, `"rt"` realtime estimate, `"both"` both figures plus ttft.
-
-**Footer**
-
-- **`footer.enabled`** (default `true` when any other footer key is present, `false` when the section is absent) — writing any footer key turns it on.
-- **`footer.text`** (default `"Flight Deck"`) — max 120 chars; control chars become spaces.
-
-**Caution**
-
-- **`caution.enabled`** (default `false`) — run the annunciator; off means no row and no timer.
-- **`caution.toolWatchSeconds`** (default `180`) — a tool running longer draws `▲`.
-- **`caution.toolCautionSeconds`** (default `420`) — a tool running longer becomes `●`; raised to the watch value if lower.
-- **`caution.turnWatchSeconds`** (default `600`) — a running session producing nothing draws `▲`; suppressed while a tool or shell runs.
-- **`caution.turnCautionSeconds`** (default `1200`) — quiet session becomes `●`; same raise rule. All four thresholds take 0 or more.
-- **`caution.repeatThreshold`** (default `3`, min 2) — identical consecutive calls before a loop is reported; applies to successes and failures.
-- **`caution.exemptTools`** (default `["question","task","subagent","agent","delegate","delegate_many","delegate_task","tools.delegate","tools.delegate_many","tools.subagent","tools.task"]`) — matched by exact name. Calibrated against 54,218 settled calls: 307 exceed 180s and 200 of those are these tools; `subagent` alone crossed 152 times, p99 14.7 min.
-- **`caution.toast`** (default `false`) — toast once per distinct problem, re-arming when the session goes quiet.
-
-**Notifications**
-
-- **`notifications.enabled`** (default `true`) — the one-key off switch; `false` silences every toast.
-- **`notifications.config`** (default `true`) — the one-time toast naming a bad config key.
-- **`notifications.copy`** (default `true`) — the toast for an unverified copy.
-- **`notifications.caution`** (default `true`) — the opt-in caution toast. Every flag only silences.
-
-**Layout**
-
-- **`layout.labelWidth`** (default `10`, 6–24) — label column width.
-- **`layout.barWidth`** (default `10`, 1–40) — context gauge cells.
-- **`layout.sparkWidth`** (default `12`, 2–64) — sparkline samples.
-- **`layout.labels`** (default `{}`) — rename any row by its canonical key, for example `{ "cost": "session", "total": "lifetime" }`. A label wider than the column still gets a space before its value.
-
-**Format**
-
-- **`format.duration`** (default `"spaced"`, `2h 14m 37s`) — or `"compact"` (`2h14m37s`). Zero-padding is the same either way (`14m 07s`, never `14m 7s`).
-- **`format.timestamp.locale`** (default the host locale) — BCP-47 locale for the `updated` row, for example `"en-GB"`. A malformed locale is reported and the host locale is used.
-- **`format.timestamp.dateStyle`** (default `"short"`) — `"short"` (locale numeric date), `"medium"` (spelled month, wider), or `"none"` (time only).
-- **`format.timestamp.timeStyle`** (default `"medium"`) — `"medium"` keeps seconds, `"short"` drops them, `"none"` leaves a date-only row. Both halves cannot be `"none"`: the pair falls back to the defaults with a warning.
-- **`format.timestamp.hour12`** (default: the locale's own clock) — `true` forces `2:32:07 PM`, `false` forces `14:32:07`.
-- **`format.timestamp.timeZone`** (default the host zone) — an IANA name (`"Asia/Tokyo"`) or UTC offset (`"+05:30"`). Omit it to follow the host through daylight-saving changes; a Windows zone id is not valid and is reported, with the host zone used.
-
-**Glyphs**
-
-- **`glyphs.watch`** (default `"▲"`), **`glyphs.caution`** (default `"●"`), **`glyphs.clear`** (default `"○"`, reserved, not drawn today) — 1–2 chars each.
-
-**Style**
-
-- **`style.lines`** (default `{color:"default", attributes:[]}`) — fixed-line look.
-- **`style.rows`** — wildcard `"*": {color:"subdued", attributes:[]}` plus per-row overrides. Colors are theme roles: default, subdued, warning, error, success, info. Attributes: bold, dim, italic, underline, blink, inverse, hidden, strikethrough.
-
-Config precedence: host plugin options beat `flight-deck.jsonc`, which beats defaults, merged key by key.
-
 ### Recipes
 
 Quota, session id, and branch:
@@ -179,7 +175,7 @@ Quota, session id, and branch:
 { "sidebar": { "rows": ["status", "cost", "project", "go", "ses", "branch", "elapsed"] } }
 ```
 
-Split the money rows: session and lifetime:
+Split the money rows into session and lifetime:
 
 ```jsonc
 {
@@ -208,22 +204,59 @@ Watchdog on for long runs:
 { "sidebar": { "rows": ["status", "caution", "cost", "elapsed"] }, "caution": { "enabled": true } }
 ```
 
-## Requirements
+## Commands
 
-- OpenCode `2.1.1` or newer (2.x)
-- Node `>=22` or Bun `>=1.4.0`
+The plugin exposes no tools and no CLI: it draws, and the host owns the session. The read-only host commands below are how you check it, and how you find the file this guide names.
+
+| Command | What it returns |
+| --- | --- |
+| `opencode plugin check` | Whether every configured plugin loads. Run it first when the rail does not draw. |
+| `opencode plugin list` | The loaded plugins, including `oc-flight-deck`. |
+| `opencode debug paths` | The config root that holds `flight-deck.jsonc`. |
+
+The shipped `flight-deck.example.jsonc` is a complete starting file, and `flight-deck.schema.json` validates your own against every key above.
+
+## Troubleshooting
+
+**The rail does not draw.** Run `opencode plugin check`, confirm `oc-flight-deck` is in the loaded list, then restart. A rail with `sidebar.enabled: false` is loaded but invisible by design.
+
+**A row is missing.** Only rows named in `sidebar.rows` draw, and the default list is 11 of them; add the rest by name. Unknown names are ignored with a one-time warning. With `persist: false`, a row with no data yet is omitted rather than drawn as a zero.
+
+**A number looks wrong after a restart.** Cost, tokens, and context come from what the host recorded; elapsed and speed are recomputed from turn spans. If the host did not record the turns — a session restored from elsewhere — those rows start from what exists rather than inventing the gap.
+
+**`cost` and `project` disagree.** They answer different questions. `cost` is this conversation plus its subagent tree; `project` is every session in the project, including sessions that were never children of this one.
+
+**The `context` gauge is not exact.** It is an occupancy proxy, drawn with a `~` on purpose. It is not the model's own token count.
+
+**A config value is ignored.** A bad value restores its default and toasts once naming the key; silence that toast with `notifications.config: false`. A file in a project root configures nothing — the only file read is the global one.
+
+**The `go` row is blank.** It reads OpenCode's active opencode-go credential store. With no such credential there is nothing to read, and no environment variable sets it.
+
+**Toasts are noisy.** `notifications.enabled: false` silences every kind at once. The four flags under it only ever silence.
+
+## Limitations
+
+- The context gauge is an estimate derived from recorded request sizes, not a measurement from the model.
+- Cache hit rate excludes cache writes from the denominator by design; a figure that includes them would be a different metric, not a more accurate one.
+- `cost` follows the host's `parentID` link only. Work done in an unrelated top-level session shows in `project` and nowhere else.
+- `branch` costs a VCS call per read, which is why it is off by default.
+- `guard` has no data unless a guard bridge supplies it.
+- `go` depends on an active opencode-go credential; it cannot report quota for any other provider.
+- The caution annunciator only reports. It never aborts, kills, retries, or blocks a turn.
+- One global config file, no per-project override: a per-repo look is a non-feature here.
+- No tools are registered, so nothing in this package is callable by an agent.
 
 ## Links
 
-- Source: https://github.com/nathwn12/oc-collections/tree/main/packages/oc-flight-deck — the npm package remains individually installable.
-- Package: https://www.npmjs.com/package/oc-flight-deck
-- Issues: https://github.com/nathwn12/oc-collections/issues
-- OpenCode V2 plugin API: https://opencode.ai/v2/docs/build/plugins/cli
+- Source: <https://github.com/nathwn12/oc-collections/tree/main/packages/oc-flight-deck>
+- Package: <https://www.npmjs.com/package/oc-flight-deck>
+- Issues: <https://github.com/nathwn12/oc-collections/issues>
+- OpenCode V2 plugin API: <https://opencode.ai/v2/docs/build/plugins/cli>
 - Example config: [flight-deck.example.jsonc](../flight-deck.example.jsonc)
 - Config schema: [flight-deck.schema.json](../flight-deck.schema.json)
 - Install: [INSTALL.md](../INSTALL.md)
 - Changelog: [CHANGELOG.md](../CHANGELOG.md)
-- Releases: https://github.com/nathwn12/oc-collections/releases
+- Releases: <https://github.com/nathwn12/oc-collections/releases>
 - Licence: MIT, see [LICENSE](../LICENSE)
 
 <!-- nathwn12 house footer: identical in every repo. Do not edit. -->
