@@ -724,7 +724,7 @@ async function ensureTools(ctx) {
 export { doneRefusal, ensureTools, listSessions, resolveTarget, stripPrefix };
 
 export default {
-  id: 'session-talk',
+  id: 'oc-talk',
   // V2 config loader: requires id + setup|effect; registers tools when the
   // host exposes the tool domain here, otherwise server retries below.
   setup(ctx) {
