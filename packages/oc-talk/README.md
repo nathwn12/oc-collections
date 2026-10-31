@@ -4,7 +4,17 @@ Gives an agent nine tools to run the session lifecycle across the sessions next 
 
 ## Install
 
-This package is private pending a trial. It is **not installable from a registry** — there is no `npx` command and no npm install, and nothing about it is published. There are two local routes, both from a checkout of this repo.
+The package is published on npm as `oc-talk`, and OpenCode installs it from the registry: add it to the `plugins` array in your `opencode.jsonc`.
+
+```json
+{ "plugins": ["oc-talk@0.1.1"] }
+```
+
+Restart OpenCode. The plugin registers its nine tools when the session starts, and uses the same `opencode` binary that is running it.
+
+### Development
+
+Working on the package itself, from a checkout of this repo, has two local routes. Either one loads the checkout instead of the registry copy, so an edit is live after a restart.
 
 Link the package directory into the harness:
 
@@ -25,7 +35,7 @@ Or skip the link and point the same array at the directory itself, as a local pl
 { "plugins": ["file:///C:/path/to/oc-collections/packages/oc-talk"] }
 ```
 
-Restart OpenCode either way. The plugin registers its nine tools when the session starts, and uses the same `opencode` binary that is running it.
+Restart OpenCode either way.
 
 ## What you get
 
@@ -47,7 +57,7 @@ OpenCode V2, with Node 22 or newer.
 
 ## Going deeper
 
-The manual at [docs/GUIDE.md](docs/GUIDE.md) covers every tool's arguments and return shape, the title-prefix state machine, how titles are resolved, the failure payloads, and what the plugin deliberately does not do.
+The manual at [the oc-talk guide](https://github.com/nathwn12/oc-collections/blob/main/packages/oc-talk/docs/GUIDE.md) covers every tool's arguments and return shape, the title-prefix state machine, how titles are resolved, the failure payloads, and what the plugin deliberately does not do.
 
 <!-- nathwn12 house footer: identical in every repo. Do not edit. -->
 <p align="center">

@@ -1,6 +1,6 @@
 <h1 align="center">oc-talk guide</h1>
 
-This package is private and unpublished. It is not installable from a registry; the README carries the two local routes.
+This package is published on npm as `oc-talk` and installable from the registry; this guide describes the shipped plugin. The README carries the registry route and, for working on the package itself, the two local checkout routes.
 
 ## How it works
 
@@ -204,7 +204,7 @@ You are the agent in a build session and the test session is running beside you.
 
 ## Limitations
 
-- Private and unpublished: no registry install, no version to pin, and no release lane.
+- It does not delete sessions, does not handle credentials, and does not manage releases: publishing `oc-talk` is done outside the plugin.
 - It drives sessions through the `opencode api` CLI it runs inside. It does not implement the protocol, and it does not talk to a remote harness.
 - The `done` lock is advisory. It is checked before the action and again inside the rename, but neither check is atomic with the write it guards.
 - `session_kill` covers the target session only: `cascaded` is always `false`, and children are listed by id with no running state.
