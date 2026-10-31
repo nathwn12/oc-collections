@@ -12,7 +12,7 @@
     "packages/*"
   ],
   "scripts": {
-    "check": "node scripts/check-docs.mjs && node scripts/check-docs.selftest.mjs && node scripts/workspace-run.mjs check",
+    "check": "node scripts/check-vocabulary.mjs && pwsh -NoProfile -File scripts/check-index.ps1 --structural && pwsh -NoProfile -File scripts/check-index.selftest.ps1 && node scripts/check-docs.mjs && node scripts/check-docs.selftest.mjs && node scripts/workspace-run.mjs check",
     "build": "node scripts/workspace-run.mjs build",
     "test": "node scripts/workspace-run.mjs test",
     "pack:check": "npm run check && npm run build && node scripts/pack-check.mjs"
