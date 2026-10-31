@@ -17,6 +17,7 @@ export const ROOT = path.resolve(import.meta.dirname, "..")
 
 export const PLAN = {
   check: {
+    "janua": [["script", "check"], ["script", "test"], ["pack", "--dry-run"]],
     "oc-bifrost": [["script", "check"]],
     "oc-flight-deck": [["script", "check"]],
     "oc-harness-setup": [["script", "test"], ["script", "check"]],
@@ -24,6 +25,7 @@ export const PLAN = {
     "rea-shim": [["script", "check"], ["script", "test"], ["pack", "--dry-run"]],
   },
   build: {
+    "janua": [],
     "oc-bifrost": [["script", "compile"]],
     "oc-flight-deck": [["script", "compile"]],
     "oc-harness-setup": [],
@@ -31,6 +33,7 @@ export const PLAN = {
     "rea-shim": [],
   },
   test: {
+    "janua": [["script", "test"]],
     "oc-bifrost": [["script", "test"]],
     "oc-flight-deck": [["script", "test"]],
     "oc-harness-setup": [["script", "test"]],
