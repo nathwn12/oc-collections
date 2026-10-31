@@ -44,18 +44,21 @@ const DESCRIPTIONS = {
     'Deliver one text message to another session by id (ses_...) or unambiguous title substring, then let its loop run; ' +
     'resume defaults to true because the reply is the point. ' +
     'Fire instead of dispatching a lane whenever a peer must act. ' +
-    'Sends one message only: it never reads history, and it never guesses — a missing or ambiguous title fails with candidates.',
+    'Sends one message only: it never reads history, and it never guesses — a missing or ambiguous title fails with candidates. ' +
+    'Refuses a `done ` session with a typed error; session_open is the only revival path.',
   session_read:
     "Read another session's newest messages by id (ses_...) or unambiguous title substring, newest first, default 20, text verbatim including newlines. " +
     'Fire when you need what a peer actually said. ' +
     'Reads only: it never sends, wakes, or steers the other session, and it never guesses — a missing or ambiguous title fails with candidates.',
   session_close:
     'Close a finished session in one call: set its title to `done <work>` then compact it. ' +
-    'Queues rename (PATCH title to `done <current title>` unless an explicit title is given, never double-prefixing `done `, reporting `already-closed` when already done) then compact (POST compact); one call, never two commands typed by hand.',
+    'Queues rename (PATCH title to `done <current title>` unless an explicit title is given, never double-prefixing `done `, reporting `already-closed` when already done) then compact (POST compact); one call, never two commands typed by hand. ' +
+    'An explicit title is normalized to the same `done ` prefix, so a closed session never reads as live.',
   session_open:
     'Create a session titled `active <work>`, optionally delivering one prompt; resume defaults to true so the loop runs. ' +
     'The only verb that may lift `done`: when exactly one live session title contains <work> it reopens that session to `active <work>` instead of creating. ' +
-    'Zero matches create; several matches fail ambiguous with candidates.',
+    'Zero matches create; several matches fail ambiguous with candidates. ' +
+    'A scan that hit its page cap never revives: it creates instead, reporting truncated.',
   session_kick:
     'Wake a live session with one message; resume defaults to true because the reply is the point. ' +
     'Renames to `active <work>` (prefix replaced, never stacked) then delivers the message. ' +
@@ -230,12 +233,64 @@ test('`done` is a lock: kick refuses it, open alone revives', async () => {
   const { ctx, added } = host();
   await mod.default.setup(ctx);
   const body = (name) => added.find((t) => t.name === name).execute.toString();
-  for (const name of ['session_kick', 'session_park', 'session_kill', 'session_await']) {
+  for (const name of ['session_send', 'session_kick', 'session_park', 'session_kill', 'session_await']) {
     assert.match(body(name), /doneRefusal\(/, name + ' must refuse a done session');
   }
-  for (const name of ['session_open', 'session_list', 'session_send', 'session_read', 'session_close']) {
+  for (const name of ['session_open', 'session_list', 'session_read', 'session_close']) {
     assert.doesNotMatch(body(name), /doneRefusal\(/, name + ' must not consult the done lock');
   }
+});
+
+test('a truncated scan refuses instead of resolving a single match', async () => {
+  const { resolveTarget } = await load();
+  const capped = async () => ({ ok: true, sessions: SESSIONS, truncated: true, pages: 20 });
+
+  // The probe that motivated the fix: one hit on a capped scan used to authorize.
+  const r = await resolveTarget('smoke', capped);
+  assert.equal(r.ok, false, 'a capped scan must not authorize a target');
+  assert.equal(r.error, 'ambiguous_scan');
+  assert.equal(r.truncated, true);
+  assert.match(r.reason, /scan truncated at 20 pages; 1 scanned session\(s\) match "smoke"; use the full id/);
+  assert.deepEqual(r.candidates, [{ id: 'ses_solo', title: 'smoke tests' }]);
+
+  // The id path never scans, so a capped estate cannot touch it.
+  let scans = 0;
+  const counted = async () => {
+    scans++;
+    return { ok: true, sessions: SESSIONS, truncated: true, pages: 20 };
+  };
+  const viaId = await resolveTarget('ses_solo', counted, async (id) => ({ ok: true, session: { id } }));
+  assert.deepEqual(viaId, { ok: true, id: 'ses_solo' });
+  assert.equal(scans, 0);
+
+  // A complete scan still resolves one hit; a capped scan that found nothing
+  // resolves nothing either, and still reports itself as partial.
+  assert.deepEqual(await resolveTarget('smoke', scan), { ok: true, id: 'ses_solo' });
+  const none = await resolveTarget('no such session', capped);
+  assert.equal(none.error, 'session_not_found');
+  assert.equal(none.truncated, true);
+});
+
+test('session_send refuses a `done` session, and retitle re-checks the lock itself', async () => {
+  const mod = await load();
+  assert.equal(mod.doneRefusal({ title: 'done build lane' }).error, 'session_closed');
+
+  // session_send posts a prompt with no rename of its own, so the lock must be
+  // consulted in its own body, before the prompt is posted.
+  const { ctx, added } = host();
+  await mod.default.setup(ctx);
+  const body = added.find((t) => t.name === 'session_send').execute.toString();
+  const lock = body.indexOf('doneRefusal(');
+  assert.ok(lock >= 0, 'session_send must consult the done lock');
+  assert.ok(body.indexOf('/prompt') > lock, 'the lock must be checked before the prompt is posted');
+
+  // retitle re-reads the session, so it carries its own check: a close landing
+  // between the caller's check and that read is refused there, not only above.
+  const src = fs.readFileSync(ENTRY, 'utf8');
+  const retitle = src.slice(src.indexOf('async function retitle('), src.indexOf('// The only timer'));
+  const relock = retitle.indexOf('doneRefusal(');
+  assert.ok(relock >= 0, 'retitle must re-check the done lock itself');
+  assert.ok(retitle.indexOf("'/api/session/'") > relock, 'retitle must check the lock before it patches');
 });
 
 test('source carries no credential, localhost reference or removal verb', () => {

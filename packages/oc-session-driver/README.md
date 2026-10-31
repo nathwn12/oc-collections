@@ -38,16 +38,19 @@ is a readable answer rather than a crashed turn.
 A session's state is its title prefix, and there are three:
 
 - `active ` — live and working.
-- `parked ` — live but idle; nothing runs until it is woken.
+- `parked ` — live but marked idle. Park rewrites the title and nothing else, so work already
+  running in that session keeps running until it finishes.
 - `done ` — closed; the record stays, the session is out of play.
 
 The prefix is **replaced, never stacked**. Every rename strips an existing lifecycle prefix
 first, so `parked active foo` collapses to `active foo` instead of piling up. A rename that
-would change nothing sends no request and reports `renamed: false`.
+would change nothing sends no request.
 
-`done` is a **lock**. `session_kick`, `session_park`, `session_kill` and `session_await` refuse
-it with `{ "error": "session_closed", … }`. `session_open` is the only verb that may lift it,
-and the only way back in.
+`done` is a **lock**. `session_send`, `session_kick`, `session_park`, `session_kill` and
+`session_await` refuse it with `{ "error": "session_closed", … }`. `session_open` is the only
+verb that may lift it, and the only way back in. The lock is checked twice: once in the verb, and
+again on the freshly read title inside the shared rename, so a close that lands mid-call is
+refused rather than renamed away.
 
 `session_park` is graceful: the title only, no message, no compaction. `session_kill` is hard:
 the same rename, then an interrupt of the active execution. That interrupt covers only the
@@ -63,11 +66,12 @@ There is no delete verb, by design. A session is the record of what was attempte
 | `limit` | no | Page size; default is the server's own page (newest 50) |
 | `cursor` | no | Opaque cursor from a previous `session_list` response |
 
-Returns every live session as `id`, `title`, `directory`, `updated` (last-update time) and
+Returns one page of live sessions as `id`, `title`, `directory`, `updated` (last-update time) and
 `parentID` (empty for a top-level session): a bare array when neither argument is given, and
-`{ sessions, cursor }` when either is, so paging is explicit rather than implied. Lists only —
-it never sends, reads, wakes or steers anything. Use it to turn a title you remember into the
-`ses_…` id the other tools accept.
+`{ sessions, cursor }` when either is, so paging is explicit rather than implied. It is not the
+whole estate — it is the page the server returns, newest first, 50 by default; pass `limit` and
+then the `cursor` from the response to walk further. Lists only — it never sends, reads, wakes or
+steers anything. Use it to turn a title you remember into the `ses_…` id the other tools accept.
 
 ### `session_send`
 
@@ -77,7 +81,8 @@ it never sends, reads, wakes or steers anything. Use it to turn a title you reme
 | `text` | yes | Message text, delivered verbatim |
 | `resume` | no | Let the receiver's loop run; defaults to `true` |
 
-Sends one message and returns `{ id, sessionID, created }`. It never reads history.
+Sends one message and returns `{ id, sessionID, created }`. It never reads history, and it
+refuses a `done` session — that lock is lifted only by `session_open`.
 
 ### `session_read`
 
@@ -101,8 +106,9 @@ Sends one message with `resume` forced to `true`, then polls the session's messa
 a second for an assistant message created after the send. On a reply it returns
 `{ sessionID, text, messageId, timeoutMs }`; on expiry
 `{ sessionID, timeout: true, lastSeen, timeoutMs }` with the newest text it saw, so a slow peer
-is a readable answer rather than a hung call. It never waits past its budget, and it refuses a
-`done` session.
+is a readable answer rather than a hung call. The budget bounds the wait **after** the send, not
+the whole call: each poll is one backend round trip with its own 20-second timeout, so a call can
+overrun its budget by up to one poll. It refuses a `done` session.
 
 ### `session_close`
 
@@ -112,9 +118,10 @@ is a readable answer rather than a hung call. It never waits past its budget, an
 | `title` | no | Explicit final title; defaults to `done <current title>` |
 
 Closes a finished session in one call: renames it to `done <work>`, then compacts it. The order
-is fixed — rename, then compact, never the other way. An explicit `title` wins, and a session
-that is already `done` is left byte-identical and reported `already-closed` rather than
-double-prefixed. Returns
+is fixed — rename, then compact, never the other way. An explicit `title` wins, but it is
+normalized to the same `done ` prefix, so a close can never leave a compacted session reading as
+live; a session that is already `done` is left byte-identical and reported `already-closed`
+rather than double-prefixed. Returns
 `{ sessionID, titleBefore, titleAfter, compacted, compactionId, alreadyClosed, status }`; if the
 compaction fails after a successful rename, the error names both titles so the state stays
 readable.
@@ -129,9 +136,10 @@ readable.
 
 Creates a session titled `active <work>`, or revives one: when exactly one live session title
 contains `work`, that session is reopened to `active <work>` instead of a second one being made.
-Zero matches create; several fail `ambiguous_session` with candidates. This is the only verb
-that lifts `done`. Returns
-`{ sessionID, titleBefore, titleAfter, reopened, resume, messageID }`.
+Zero matches create; several fail `ambiguous_session` with candidates. A scan that hits its page
+cap never revives — an unscanned session may be the one meant, so it creates instead and reports
+`"truncated": true`, which is visible in the response. This is the only verb that lifts `done`.
+Returns `{ sessionID, titleBefore, titleAfter, reopened, resume, messageID }`.
 
 ### `session_kick`
 
@@ -164,8 +172,9 @@ compaction runs, so anything already in flight is left alone. Returns
 Rewrites the title to `parked <work>`, then interrupts the session's active execution. Park is
 graceful, kill is hard. Returns
 `{ sessionID, titleBefore, titleAfter, interrupted, cascaded, children }`, with `cascaded`
-always `false` and `children` naming the live child sessions left running. A `done` session is
-refused.
+always `false` and `children` naming the live child sessions it saw running — one page of up to
+1,000, so it is a listing of what the lookup returned, not a proof that no other child exists.
+A `done` session is refused.
 
 ### Titles are never guessed
 
@@ -178,8 +187,12 @@ scan of the whole estate — 1000 sessions a page, at most 20 pages. Any value b
   near-miss titles so you can pick a real one.
 - More than one match: `{ "error": "ambiguous_session", … "candidates": [ … ] }`, listing every
   match so you can pass the full id instead.
-- The scan hit its page cap without a unique answer: `"truncated": true` on the same failure,
-  so a large estate is reported as a partial scan rather than as a session that does not exist.
+- The scan hit its page cap: a substring never resolves to a target, not even on a single
+  match, because an unscanned session may match too. That is
+  `{ "error": "ambiguous_scan", "truncated": true, "candidates": [ … ] }` listing the matches it
+  did see; pass the full id. A capped scan that found nothing is still reported as
+  `session_not_found`, carrying `"truncated": true`, so a large estate is never mistaken for a
+  complete answer.
 
 ## Worked example
 

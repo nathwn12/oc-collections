@@ -164,8 +164,9 @@ function nearMisses(sessions, query) {
 // GET /api/session/{id}: never the list, never ambiguous. Anything else is an
 // exact-substring title match (case-sensitive) over a bounded paginated scan:
 // zero hits fail with nearMisses, several fail with candidates, and a scan that
-// hits the page cap without a unique match reports truncated:true rather than
-// claiming not-found. Never guesses.
+// hit its page cap refuses with ambiguous_scan even on a single hit — an
+// unscanned session may match too, so uniqueness is unproven and nothing is
+// authorized. Never guesses.
 //
 // `scan` and `get` are injectable so resolution can be proved offline; the
 // tools always call them with the real backend.
@@ -184,6 +185,18 @@ async function resolveTarget(to, scan = scanSessions, get = getSession) {
   const scanned = await scan();
   if (!scanned.ok) return { ok: false, error: scanned.code, reason: 'list failed: ' + scanned.detail };
   const hits = scanned.sessions.filter((s) => s.title.includes(to));
+  // A capped scan cannot prove uniqueness: an unscanned session may match too,
+  // so even a single hit is not an authorization. Refuse and hand back what was
+  // seen. The id path above never scans, so it is unaffected.
+  if (scanned.truncated && hits.length > 0) {
+    return {
+      ok: false,
+      error: 'ambiguous_scan',
+      reason: 'scan truncated at ' + scanned.pages + ' pages; ' + hits.length + ' scanned session(s) match "' + to + '"; use the full id',
+      truncated: true,
+      candidates: hits.map((s) => ({ id: s.id, title: s.title })),
+    };
+  }
   if (hits.length === 1) return { ok: true, id: hits[0].id };
   if (hits.length === 0) {
     return {
@@ -240,7 +253,7 @@ function isDone(title) {
   return String(title || '').startsWith('done ');
 }
 
-// `done` is a lock: kick, park, kill and await refuse; open alone may lift it.
+// `done` is a lock: send, kick, park, kill and await refuse; open alone may lift it.
 function doneRefusal(session) {
   if (!isDone(session.title)) return null;
   return { error: 'session_closed', reason: 'session "' + session.title + '" is closed (done); session_open is the only verb that may revive it' };
@@ -254,10 +267,16 @@ async function findSession(id) {
 
 // Rewrite to one lifecycle prefix without stacking. No-op when already right
 // (renamed:false) so a redundant PATCH is never sent.
+//
+// The lock is re-checked here on the freshly read title, not only at the caller:
+// a close that landed between the caller's check and this read must not be
+// renamed away. Caller-side checks stay as defence in depth.
 async function retitle(id, prefix) {
   const f = await findSession(id);
   if (!f.ok) return f;
   const titleBefore = f.session.title || '';
+  const lock = doneRefusal(f.session);
+  if (lock) return { ok: false, code: lock.error, detail: lock.reason };
   const titleAfter = prefix + stripPrefix(titleBefore);
   if (titleBefore === titleAfter) {
     return { ok: true, titleBefore, titleAfter, renamed: false };
@@ -313,7 +332,8 @@ async function ensureTools(ctx) {
         'Deliver one text message to another session by id (ses_...) or unambiguous title substring, then let its loop run; ' +
         'resume defaults to true because the reply is the point. ' +
         'Fire instead of dispatching a lane whenever a peer must act. ' +
-        'Sends one message only: it never reads history, and it never guesses — a missing or ambiguous title fails with candidates.',
+        'Sends one message only: it never reads history, and it never guesses — a missing or ambiguous title fails with candidates. ' +
+        'Refuses a `done ` session with a typed error; session_open is the only revival path.',
       input: {
         type: 'object',
         properties: {
@@ -333,6 +353,14 @@ async function ensureTools(ctx) {
         const resume = args.resume === undefined ? true : !!args.resume;
         const t = await resolveTarget(args.to);
         if (!t.ok) return fail(t.error, t.reason, t.candidates, t.truncated);
+        const f = await findSession(t.id);
+        if (!f.ok) {
+          if (f.code === 'session_not_found') return fail('session_not_found', 'session ' + t.id + ' is gone: ' + f.detail);
+          return fail(f.code, 'list failed: ' + f.detail);
+        }
+        // `done` is a lock: a prompt must not reach a closed session.
+        const lock = doneRefusal(f.session);
+        if (lock) return fail(lock.error, lock.reason);
         const r = await runApi(['post', '/api/session/' + t.id + '/prompt', '--data', JSON.stringify({ text: args.text, resume })]);
         if (!r.ok) {
           if (r.code === 'session_not_found') return fail('session_not_found', 'session ' + t.id + ' is gone: ' + r.detail);
@@ -380,7 +408,8 @@ async function ensureTools(ctx) {
       name: 'session_close',
       description:
         'Close a finished session in one call: set its title to `done <work>` then compact it. ' +
-        'Queues rename (PATCH title to `done <current title>` unless an explicit title is given, never double-prefixing `done `, reporting `already-closed` when already done) then compact (POST compact); one call, never two commands typed by hand.',
+        'Queues rename (PATCH title to `done <current title>` unless an explicit title is given, never double-prefixing `done `, reporting `already-closed` when already done) then compact (POST compact); one call, never two commands typed by hand. ' +
+        'An explicit title is normalized to the same `done ` prefix, so a closed session never reads as live.',
       input: {
         type: 'object',
         properties: {
@@ -405,8 +434,11 @@ async function ensureTools(ctx) {
         const alreadyClosed = titleBefore.startsWith('done ');
         const explicit = typeof args.title === 'string' && args.title ? args.title : null;
         // The close-prefix fix: strip first, then add `done ` once. An explicit
-        // title wins; an already-closed session is left byte-identical.
-        const titleAfter = alreadyClosed ? titleBefore : (explicit || ('done ' + stripPrefix(titleBefore)));
+        // title wins but is normalized to the same prefix — a close that renamed
+        // to a live-looking title would compact a session that still reads as
+        // open. An already-closed session is left byte-identical.
+        const explicitTitle = explicit ? (isDone(explicit) ? explicit : 'done ' + stripPrefix(explicit)) : null;
+        const titleAfter = alreadyClosed ? titleBefore : (explicitTitle || ('done ' + stripPrefix(titleBefore)));
         // Order is fixed: rename, then compact. Never compact first.
         if (!alreadyClosed) {
           const r1 = await runApi(['patch', '/api/session/' + t.id, '--data', JSON.stringify({ title: titleAfter })]);
@@ -430,7 +462,8 @@ async function ensureTools(ctx) {
       description:
         'Create a session titled `active <work>`, optionally delivering one prompt; resume defaults to true so the loop runs. ' +
         'The only verb that may lift `done`: when exactly one live session title contains <work> it reopens that session to `active <work>` instead of creating. ' +
-        'Zero matches create; several matches fail ambiguous with candidates.',
+        'Zero matches create; several matches fail ambiguous with candidates. ' +
+        'A scan that hit its page cap never revives: it creates instead, reporting truncated.',
       input: {
         type: 'object',
         properties: {
@@ -455,7 +488,11 @@ async function ensureTools(ctx) {
           return fail('ambiguous_session', hits.length + ' sessions match "' + args.work + '"; refine work' + (scanned.truncated ? ' (scan truncated at ' + scanned.pages + ' pages)' : ''), hits.map((s) => ({ id: s.id, title: s.title })), scanned.truncated || undefined);
         }
         let id, titleBefore, titleAfter, reopened;
-        if (hits.length === 1) {
+        // Revive only on a proven-unique hit. A truncated scan never revives: an
+        // unscanned session may be the one meant, so it creates instead and says
+        // truncated:true rather than reusing an unproven target as a revival.
+        const revive = hits.length === 1 && !scanned.truncated;
+        if (revive) {
           // Open is the one verb that may lift `done`: no lock check here.
           id = hits[0].id;
           titleBefore = hits[0].title || '';
