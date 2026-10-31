@@ -1,6 +1,7 @@
 # Architecture
 
 <!-- brain:start -->
+
 ## Generated facts (do not edit between markers)
 
 project: Q-PROJECTS-PERSONAL-oc-collections
@@ -57,4 +58,5 @@ edges: 8903
 - showing first 20 of 184 sorted by qualified_name
 
 source: graph index (codebase-memory-mcp)
+
 <!-- brain:end -->
