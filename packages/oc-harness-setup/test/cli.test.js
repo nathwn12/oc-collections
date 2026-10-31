@@ -9,7 +9,8 @@
  * doctor secret-pointer law (T2 literal vs pointer), uninstall restore, and a
  * shipped-content audit (layout counts, 1:1 seam, generic leak scan, T4
  * packaging paths + unwired-routing record).
- * Doctor tests skip with a clear message when `pwsh` is absent.
+ * Doctor tests run the shipped Node doctor (scripts/harness-doctor.mjs); they
+ * no longer need an interpreter on PATH beyond the Node running the suite.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -46,15 +47,6 @@ function runCli(args, { env = {}, input, cwd, nodeArgs = [] } = {}) {
     cwd,
     env: { ...process.env, ...env },
   });
-}
-
-function pwshUsable() {
-  try {
-    const r = spawnSync('pwsh', ['-NoProfile', '-Command', 'exit 0'], { encoding: 'utf8' });
-    return !(r.error || r.status !== 0);
-  } catch {
-    return false;
-  }
 }
 
 function stripLineComments(text) {
@@ -154,18 +146,18 @@ function makeDoctorFixture(base, configObject) {
   // The REAL script copied from the package, so the fixture grades exactly
   // what setup installs.
   writeFileSync(
-    path.join(cfg, 'scripts', 'harness-doctor.ps1'),
-    readFileSync(path.join(PKG_ROOT, 'scripts', 'harness-doctor.ps1'), 'utf8')
+    path.join(cfg, 'scripts', 'harness-doctor.mjs'),
+    readFileSync(path.join(PKG_ROOT, 'scripts', 'harness-doctor.mjs'), 'utf8')
   );
   return cfg;
 }
 
 function runDoctorScript(cfg) {
-  const script = path.join(cfg, 'scripts', 'harness-doctor.ps1');
-  return spawnSync('pwsh', ['-NoProfile', '-File', script, '-ConfigDir', cfg], { encoding: 'utf8' });
+  const script = path.join(cfg, 'scripts', 'harness-doctor.mjs');
+  return spawnSync(process.execPath, [script, '-ConfigDir', cfg], { encoding: 'utf8' });
 }
 
-function runDoctorPwsh(cfg) {
+function runDoctorNode(cfg) {
   const r = runDoctorScript(cfg);
   return { status: r.status, out: `${r.stdout || ''}\n${r.stderr || ''}` };
 }
@@ -351,11 +343,7 @@ test('--dry-run prints the manifest with orchestrator, state/, 18 and creates no
 
 const shared = {};
 
-test('real install upgrades a prior 0.3.3 tree (fake opencode, real pwsh)', { skip: WIN_SKIP, timeout: 300000 }, () => {
-  if (!pwshUsable()) {
-    console.log('SKIP: pwsh absent — install test needs the real doctor; skipping');
-    return;
-  }
+test('real install upgrades a prior 0.3.3 tree (fake opencode, real doctor)', { skip: WIN_SKIP, timeout: 300000 }, () => {
   const base = mkdtempSync(path.join(os.tmpdir(), 'oc-install-'));
   const cfg = path.join(base, 'cfg');
   mkdirSync(cfg, { recursive: true });
@@ -736,17 +724,13 @@ test('a user-set install-owned key survives the merge, is reported, and the ship
 /* ---------------- test 5 (before uninstall): negative doctor ---------------- */
 
 test('doctor fails naming state/template.md when it is removed', { skip: WIN_SKIP, timeout: 120000 }, () => {
-  if (!pwshUsable()) {
-    console.log('SKIP: pwsh absent — cannot run harness-doctor; skipping');
-    return;
-  }
   if (!shared.cfg) {
     console.log('SKIP: install test was skipped — nothing to grade; skipping');
     return;
   }
   rmSync(path.join(shared.cfg, 'state', 'template.md'), { force: true });
-  const script = path.join(shared.cfg, 'scripts', 'harness-doctor.ps1');
-  const r = spawnSync('pwsh', ['-NoProfile', '-File', script, '-ConfigDir', shared.cfg], { encoding: 'utf8' });
+  const script = path.join(shared.cfg, 'scripts', 'harness-doctor.mjs');
+  const r = spawnSync(process.execPath, [script, '-ConfigDir', shared.cfg], { encoding: 'utf8' });
   const out = `${r.stdout || ''}\n${r.stderr || ''}`;
   assert.notEqual(r.status, 0, `doctor should fail without state/template.md:\n${out}`);
   assert.ok(out.includes('state/template.md'), 'a law failure names the missing path');
@@ -755,14 +739,10 @@ test('doctor fails naming state/template.md when it is removed', { skip: WIN_SKI
 /* ---------------- T1: doctor grades a config with no permissions key ---------------- */
 
 test('doctor grades a config with no permissions key instead of crashing', { skip: WIN_SKIP, timeout: 120000 }, () => {
-  if (!pwshUsable()) {
-    console.log('SKIP: pwsh absent — cannot run harness-doctor; skipping');
-    return;
-  }
   const base = mkdtempSync(path.join(os.tmpdir(), 'oc-doctor-noperms-'));
   try {
     const cfg = makeDoctorFixture(base, { default_agent: 'orchestrator' });
-    const { status, out } = runDoctorPwsh(cfg);
+    const { status, out } = runDoctorNode(cfg);
     assert.equal(status, 1, `doctor should exit 1 on a permissions-less config:\n${out}`);
     assert.ok(!out.includes('cannot be found on this object'), 'no StrictMode property crash');
     assert.ok(out.includes('deny set survives --auto'), 'deny law names the missing block');
@@ -775,10 +755,6 @@ test('doctor grades a config with no permissions key instead of crashing', { ski
 /* ---------------- T2: doctor secret-pointer law ---------------- */
 
 test('doctor fails a literal apiKey but accepts a pointer', { skip: WIN_SKIP, timeout: 120000 }, () => {
-  if (!pwshUsable()) {
-    console.log('SKIP: pwsh absent — cannot run harness-doctor; skipping');
-    return;
-  }
   const distroPerms = parseJsoncForTest(readFileSync(path.join(PKG_ROOT, 'opencode.jsonc'), 'utf8')).permissions;
   const baseA = mkdtempSync(path.join(os.tmpdir(), 'oc-doctor-pointer-'));
   try {
@@ -787,7 +763,7 @@ test('doctor fails a literal apiKey but accepts a pointer', { skip: WIN_SKIP, ti
       permissions: distroPerms,
       provider: { openai: { options: { apiKey: '{env:OPENAI_API_KEY}' } } },
     });
-    const { out } = runDoctorPwsh(cfgA);
+    const { out } = runDoctorNode(cfgA);
     assert.ok(out.includes('[PASS] no secret-like property names'), `pointer accepted:\n${out}`);
   } finally {
     rmSync(baseA, { recursive: true, force: true });
@@ -799,7 +775,7 @@ test('doctor fails a literal apiKey but accepts a pointer', { skip: WIN_SKIP, ti
       permissions: distroPerms,
       apiKey: 'sk-literal-value',
     });
-    const { status, out } = runDoctorPwsh(cfgB);
+    const { status, out } = runDoctorNode(cfgB);
     assert.ok(out.includes('[FAIL] no secret-like property names'), `literal failed:\n${out}`);
     assert.equal(status, 1, `doctor should exit 1 on a literal secret:\n${out}`);
     assert.ok(!out.includes('sk-literal-value'), 'literal value never printed');
@@ -1210,10 +1186,6 @@ test('settled (retired/archived) or already-absent /goal skill paths still prune
 });
 
 test('command-only /goal retirement never prunes the goal skill allow — the doctor reports the dangling allow', { skip: WIN_SKIP, timeout: 300000 }, () => {
-  if (!pwshUsable()) {
-    console.log('SKIP: pwsh absent — this row grades the doctor layer that reports the dangling allow; skipping');
-    return;
-  }
   const { base, cfg, run } = makeGoalFixture('oc-goal-cmdonly-');
   try {
     // A prior journal that tracked ONLY the command: nothing proves the skill
@@ -1478,10 +1450,6 @@ test('a packed tarball installs and passes the doctor (no dotfile rename)', { sk
   const npmProbe = npmSync(['--version']);
   if (npmProbe.error || npmProbe.status !== 0) {
     console.log('SKIP: npm not runnable — packed-tarball test needs npm; skipping');
-    return;
-  }
-  if (!pwshUsable()) {
-    console.log('SKIP: pwsh absent — packed-tarball test needs the real doctor; skipping');
     return;
   }
   const tmp = mkdtempSync(path.join(os.tmpdir(), 'oc-pack-'));

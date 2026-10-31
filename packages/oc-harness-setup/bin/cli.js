@@ -206,7 +206,7 @@ function bail(msg) {
 }
 
 // Windows 10/11 only. This installer writes the Windows config home, runs
-// PowerShell doctors, and registers Windows shell policy — there is no
+// the Node doctor, and registers Windows shell policy — there is no
 // macOS/Linux path. --help and --version return from parseArgs before any
 // dispatch, so they keep working everywhere.
 function assertWindows() {
@@ -940,32 +940,18 @@ function lintPackagedSource(files) {
 
 /* --------------------------------- doctor ---------------------------------- */
 
-function pwshProbe() {
-  const probe = exec('pwsh', ['-NoProfile', '-Command', 'exit 0'], true);
-  return { usable: !(probe.error || probe.status !== 0) };
-}
-
 function doctorPlan() {
-  return pwshProbe().usable
-    ? 'run scripts/harness-doctor.ps1 via pwsh'
-    : 'pwsh missing — doctor SKIPPED, 18 laws UNVERIFIED (warned + journaled)';
+  return 'run scripts/harness-doctor.mjs via node';
 }
 
-function runDoctor(configDir, probe) {
-  if (!probe.usable) {
-    console.warn('[doctor] WARNING: pwsh (PowerShell 7) was not found — harness-doctor did NOT run, so the 18 laws are UNVERIFIED.');
-    console.warn('[doctor] Your config still landed, and the skip is recorded in the manifest. To verify later:');
-    console.log('    winget install --id Microsoft.PowerShell --source winget   (Windows)');
-    console.log('    then re-run: npx oc-harness-setup setup');
-    return { code: 0, skipped: true };
-  }
-  const script = path.join(configDir, 'scripts', 'harness-doctor.ps1');
+function runDoctor(configDir) {
+  const script = path.join(configDir, 'scripts', 'harness-doctor.mjs');
   if (!existsSync(script)) {
     console.warn(`[doctor] WARNING: ${script} not found — harness-doctor did NOT run, so the 18 laws are UNVERIFIED.`);
     return { code: 0, skipped: true };
   }
   log('doctor', `running ${script}`);
-  const res = exec('pwsh', ['-NoProfile', '-File', script, '-ConfigDir', configDir], false);
+  const res = exec(process.execPath, [script, '-ConfigDir', configDir], false);
   if (res.error || res.status !== 0) {
     log(
       'doctor',
@@ -1403,7 +1389,6 @@ async function setup(opts) {
   // already been mutated by the previous install, so restoring from it would be
   // a lie. Keep the original pointer; chain the new snapshot as priorBackup.
   const backupPath = prior && prior.backupPath ? prior.backupPath : newBackupPath;
-  const doctorProbe = pwshProbe(); // read-only probe
   printManifest(configDir, files, backupPath, doctorPlan(), prior);
 
   // (F2: --dry-run / --ci already returned print-only before preflight.)
@@ -1441,11 +1426,11 @@ async function setup(opts) {
   mergeJsonc(configDir, backup, manifest, retiredSkills, prior);
 
   // R6: record the skip in the journal so "all 18 laws unrun" is never silent.
-  manifest.doctorSkipped = !doctorProbe.usable || !existsSync(path.join(configDir, 'scripts', 'harness-doctor.ps1'));
+  manifest.doctorSkipped = !existsSync(path.join(configDir, 'scripts', 'harness-doctor.mjs'));
   writeManifest(configDir, manifest);
   log('manifest', `journal written: ${path.join(configDir, MANIFEST_FILE)}`);
 
-  const doctorResult = runDoctor(configDir, doctorProbe);
+  const doctorResult = runDoctor(configDir);
   if (doctorResult.code !== 0) return 1;
 
   console.log();
@@ -1457,7 +1442,7 @@ async function setup(opts) {
   }
   console.log(`  backup   : ${manifest.backupPath}${manifest.priorBackup ? `\n  snapshot : ${manifest.priorBackup} (chained — backup() pointer above is the original)` : ''}`);
   if (manifest.doctorSkipped) {
-    console.log('  doctor   : ⚠ SKIPPED — the 18 laws were NOT verified (journaled as doctorSkipped; install PowerShell 7 and re-run to verify)');
+    console.log('  doctor   : ⚠ SKIPPED — the 18 laws were NOT verified (journaled as doctorSkipped; re-run setup to verify)');
   }
   console.log('  undo     : npx oc-harness-setup setup --uninstall');
   console.log('  restart  : restart your OpenCode session so the new agents/commands/skills load.');
