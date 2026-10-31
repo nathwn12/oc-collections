@@ -15,12 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `@opentui/core` and `@opentui/solid` peer ranges are `>=0.8.0`.
 - `@opencode/plugin` development pin is `2.2.4`.
 
-### Breaking
+### Breaking, relative to 0.20.7
 
-- A host on `@opentui` below 0.8.0 is outside this package's declared peer range. Declaring the range makes that mismatch a checked fact at install time rather than a renderer incompatibility discovered at run time.
+- `@opentui/core` and `@opentui/solid` peer ranges are `>=0.8.0`, up from `>=0.6.6`. A host below 0.8.0 is outside the declared range.
 
 ## [0.20.7] - 2026-10-30
 
