@@ -48,9 +48,9 @@ would change nothing sends no request.
 
 `done` is a **lock**. `session_send`, `session_kick`, `session_park`, `session_kill` and
 `session_await` refuse it with `{ "error": "session_closed", … }`. `session_open` is the only
-verb that may lift it, and the only way back in. The lock is checked twice: once in the verb, and
-again on the freshly read title inside the shared rename, so a close that lands mid-call is
-refused rather than renamed away.
+verb that may lift it, and the only way back in. The `done` lock is checked before each action,
+and again inside the rename. The checks are not atomic: a close that lands between the read and
+the write can still race, and the next call will refuse it.
 
 `session_park` is graceful: the title only, no message, no compaction. `session_kill` is hard:
 the same rename, then an interrupt of the active execution. That interrupt covers only the
@@ -137,8 +137,9 @@ readable.
 Creates a session titled `active <work>`, or revives one: when exactly one live session title
 contains `work`, that session is reopened to `active <work>` instead of a second one being made.
 Zero matches create; several fail `ambiguous_session` with candidates. A scan that hits its page
-cap never revives — an unscanned session may be the one meant, so it creates instead and reports
-`"truncated": true`, which is visible in the response. This is the only verb that lifts `done`.
+cap never revives an existing session. If the capped scan found exactly one match, `session_open`
+creates a new session titled `active <work>`. If it found more than one, it returns
+`ambiguous_session` with the candidates. This is the only verb that lifts `done`.
 Returns `{ sessionID, titleBefore, titleAfter, reopened, resume, messageID }`.
 
 ### `session_kick`
@@ -172,9 +173,8 @@ compaction runs, so anything already in flight is left alone. Returns
 Rewrites the title to `parked <work>`, then interrupts the session's active execution. Park is
 graceful, kill is hard. Returns
 `{ sessionID, titleBefore, titleAfter, interrupted, cascaded, children }`, with `cascaded`
-always `false` and `children` naming the live child sessions it saw running — one page of up to
-1,000, so it is a listing of what the lookup returned, not a proof that no other child exists.
-A `done` session is refused.
+always `false`. `children` lists up to 1,000 child sessions in one page. It reports their ids; it
+does not report whether they are running. A `done` session is refused.
 
 ### Titles are never guessed
 
@@ -182,11 +182,12 @@ A `done` session is refused.
 scan of the whole estate — 1000 sessions a page, at most 20 pages. Any value beginning with
 `ses_` is taken as an id and resolved directly, with no list and no ambiguity.
 
-- Exactly one match: the call proceeds.
+An id argument resolves directly. A title substring resolves only when exactly one session
+matches and the scan did not hit its cap. Several matches return `ambiguous_session`; a scan that
+hit its page cap returns `ambiguous_scan` with the candidates it saw.
+
 - No match: `{ "error": "session_not_found", … "candidates": [ … ] }`, listing up to five
   near-miss titles so you can pick a real one.
-- More than one match: `{ "error": "ambiguous_session", … "candidates": [ … ] }`, listing every
-  match so you can pass the full id instead.
 - The scan hit its page cap: a substring never resolves to a target, not even on a single
   match, because an unscanned session may match too. That is
   `{ "error": "ambiguous_scan", "truncated": true, "candidates": [ … ] }` listing the matches it
