@@ -24,8 +24,10 @@ import { fileURLToPath } from "node:url"
 // match.
 export const ALLOWED = [
   "@nathwn12/oc-bifrost",
+  "janua",
   "oc-flight-deck",
   "oc-harness-setup",
+  "oc-talk",
   "rea-shim",
 ]
 

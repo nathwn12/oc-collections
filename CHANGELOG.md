@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Added `packages/janua` at 0.1.0: a stdio MCP server that keeps interactive PTYs alive and exposes `pty_spawn`, `pty_write`, `pty_read`, `pty_kill`, and `pty_list`. Node-native via `@lydell/node-pty` (prebuilt binaries, no toolchain). Registered in the release allowlist, the dispatch choice list, the workspace plan, the index table, and the registry scope table.
+- Renamed `oc-session-driver` to `oc-talk` (directory, manifest name, index row, workspace plan, index guards, lockfile). The package is no longer private: it is released at 0.1.0 from this repo.
 - Removed the frozen in-repo MCP copies and the dead private package: `packages/gladius-mcp`, `packages/puppet-mcp`, `packages/oc-unified`, `crates/gladius`, and `crates/puppet`. The root workspace plan, lockfile, Cargo workspace, and index table no longer reference them; no retained package file was changed by this removal.
 - Removed `packages/rea-shim`: the package now lives in its own `rea-shim` repository at 0.2.2. The root workspace plan, lockfile, release allowlist, dispatch choice list, index table, registry scope table, doc checker, and index self-test no longer reference it; the repo releases three packages. Historical migration and release records are unchanged.
 - `rea-shim` left this repo with its own instructions: the `--bootstrap` work (upstream Ghidra policy, JDK minimum from the installed Ghidra, hardened extraction and version gates, offline contract suite) shipped from its own repository, where the package now lives at 0.2.2. Its changelog travels with it; this repo no longer carries a copy.

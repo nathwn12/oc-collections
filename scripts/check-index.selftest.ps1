@@ -242,7 +242,7 @@ try {
         '| oc-bifrost | plugin | `1.6.13` | Scoped fixture row. | Add `@nathwn12/oc-bifrost` to your `plugins`. |',
         '| oc-flight-deck | plugin | `0.21.0` | Fixture row with a published pin. | Add `oc-flight-deck` to your `plugins`. |',
         '| oc-harness-setup | CLI | `1.0.0` | Fixture row. | `npx -y oc-harness-setup setup` |',
-        '| oc-session-driver | plugin | not published | Private fixture row. | Nothing installs it. |',
+        '| oc-talk | plugin | not published | Private fixture row. | Nothing installs it. |',
         '| oc-collections | repo | — | The index itself. | — |',
         ''
     )
@@ -279,7 +279,7 @@ try {
                 Args    = @()
                 Exit    = 0
                 Summary = '^registry: checked=3 failed=0$'
-                Needles = @('PASS oc-bifrost.*@nathwn12/oc-bifrost', 'PASS oc-flight-deck', 'PASS oc-harness-setup', 'SKIP oc-session-driver', 'SKIP oc-collections')
+                Needles = @('PASS oc-bifrost.*@nathwn12/oc-bifrost', 'PASS oc-flight-deck', 'PASS oc-harness-setup', 'SKIP oc-talk', 'SKIP oc-collections')
             }
             [pscustomobject]@{
                 What    = 'shelf table, not-yet-released pin'
@@ -308,7 +308,7 @@ try {
             [pscustomobject]@{
                 What    = '--package names a non-target row'
                 Path    = $shelfFixture
-                Args    = @('--package', 'oc-session-driver')
+                Args    = @('--package', 'oc-talk')
                 Exit    = 1
                 Summary = $null
                 Needles = @('not an installation target')

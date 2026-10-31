@@ -294,7 +294,7 @@ foreach ($row in $rows) {
     # The Version cell is the table's own claim about published bytes, so its
     # backticked pin is what gets asserted -- never a link. A row carrying no pin
     # is not an installation target: `oc-collections` (kind `repo`, this
-    # monorepo's private root manifest) and `oc-session-driver` (private, owner
+    # monorepo's private root manifest) and `oc-talk` (private, owner
     # ruling) both say so in their own cells, so no name list is needed. A
     # released package that drops its pin is still caught, by structural mode's
     # "version cell names no version".

@@ -1,0 +1,44 @@
+{
+  "name": "janua",
+  "version": "0.1.0",
+  "description": "A stdio MCP server that gives an agent persistent interactive terminals: spawn a program in a real PTY, talk to it, read what it answers.",
+  "license": "MIT",
+  "author": "nathwn12",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nathwn12/oc-collections.git",
+    "directory": "packages/janua"
+  },
+  "engines": {
+    "node": "^22.23.4 || ^24.22.1 || >=26.12.1"
+  },
+  "type": "module",
+  "bin": {
+    "janua": "bin/janua.js"
+  },
+  "scripts": {
+    "test": "node --test \"test/**/*.test.js\"",
+    "check": "node --check bin/janua.js && node --check lib/ansi.js && node --check lib/errors.js && node --check lib/ring.js && node --check lib/server.js && node --check lib/sessions.js"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "docs/GUIDE.md",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "keywords": [
+    "mcp",
+    "pty",
+    "terminal",
+    "interactive",
+    "stdio",
+    "agent"
+  ],
+  "dependencies": {
+    "@lydell/node-pty": "^1.1.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "zod": "^4.6.7"
+  }
+}

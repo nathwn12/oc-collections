@@ -1,4 +1,4 @@
-<h1 align="center">oc-session-driver guide</h1>
+<h1 align="center">oc-talk guide</h1>
 
 This package is private and unpublished. It is not installable from a registry; the README carries the two local routes.
 
@@ -216,7 +216,7 @@ You are the agent in a build session and the test session is running beside you.
 
 ## Links
 
-- Source: <https://github.com/nathwn12/oc-collections/tree/main/packages/oc-session-driver>
+- Source: <https://github.com/nathwn12/oc-collections/tree/main/packages/oc-talk>
 - Issues: <https://github.com/nathwn12/oc-collections/issues>
 - Changelog: [CHANGELOG.md](../CHANGELOG.md)
 - Licence: MIT, see [LICENSE](../LICENSE)
