@@ -11,7 +11,7 @@
 import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { statSync } from 'node:fs';
-import { basename } from 'node:path';
+import { basename, extname, join } from 'node:path';
 import { spawn as spawnPty } from '@lydell/node-pty';
 import { OutputRing } from './ring.js';
 import { stripAnsi } from './ansi.js';
@@ -27,10 +27,122 @@ export const DEFAULT_COLS = 80;
 export const DEFAULT_ROWS = 24;
 export const DEFAULT_MAX_SESSIONS = 16;
 export const DEFAULT_MAX_BUFFER_BYTES = 1024 * 1024;
+export const DEFAULT_LIST_LIMIT = 50;
+export const MAX_LIST_LIMIT = 200;
+
+const DEFAULT_PATHEXT = '.COM;.EXE;.BAT;.CMD';
+const BATCH_EXTENSIONS = new Set(['.cmd', '.bat']);
 
 function envInt(name, fallback) {
   const raw = Number.parseInt(process.env[name] ?? '', 10);
   return Number.isInteger(raw) && raw > 0 ? raw : fallback;
+}
+
+// Windows environment names are case-insensitive, so an override must replace
+// the existing key whatever its case: otherwise the child would see two PATHs
+// and the one it reads is not necessarily the one resolution searched.
+function mergeEnv(extra) {
+  const env = { ...process.env };
+  for (const [key, value] of Object.entries(extra ?? {})) {
+    if (process.platform === 'win32') {
+      const upper = key.toUpperCase();
+      for (const existing of Object.keys(env)) {
+        if (existing !== key && existing.toUpperCase() === upper) delete env[existing];
+      }
+    }
+    env[key] = value;
+  }
+  return env;
+}
+
+function envValue(env, name) {
+  if (env[name] !== undefined) return env[name];
+  const key = Object.keys(env).find((candidate) => candidate.toUpperCase() === name);
+  return key === undefined ? undefined : env[key];
+}
+
+// The first file on PATH that answers to `command`, in PATHEXT order, the way
+// cmd.exe finds it. A name that already carries a PATHEXT extension is looked
+// up as-is; anything else gets each extension appended in turn.
+function findOnPath(command, env) {
+  const pathValue = envValue(env, 'PATH');
+  if (!pathValue) return null;
+  const extensions = (envValue(env, 'PATHEXT') || DEFAULT_PATHEXT)
+    .split(';')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  const lower = command.toLowerCase();
+  const suffixes = extensions.some((entry) => lower.endsWith(entry.toLowerCase()))
+    ? ['']
+    : extensions;
+  for (const entry of pathValue.split(';')) {
+    const directory = entry.trim().replace(/^"(.*)"$/, '$1');
+    if (!directory) continue;
+    for (const suffix of suffixes) {
+      const candidate = join(directory, `${command}${suffix}`);
+      try {
+        if (statSync(candidate).isFile()) return candidate;
+      } catch {
+        // not here, try the next extension or directory
+      }
+    }
+  }
+  return null;
+}
+
+// One argument as cmd.exe reads it on a /c line: quoted when it holds anything
+// the line would otherwise split or interpret, with an embedded `"` doubled.
+function quoteForCmd(value) {
+  const text = String(value);
+  if (text === '') return '""';
+  if (!/[\s"&|<>^()]/.test(text)) return text;
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+/**
+ * Turn a tool's command and args into what node-pty is handed.
+ *
+ * POSIX passes through untouched. On Windows a bare name is resolved against
+ * PATH x PATHEXT, because CreateProcess does not consult PATHEXT: `npm`,
+ * `npx`, `pnpm`, `yarn` and `tsc` are .cmd batch shims, and CreateProcess
+ * fails on them with error code 2. A batch shim runs through `cmd /d /s /c`
+ * with the whole line passed as node-pty's pre-escaped CommandLine string, so
+ * node-pty does not re-escape the quotes with backslashes that cmd does not
+ * understand. An .exe/.com resolves to its absolute path and runs directly.
+ *
+ * `^` is refused on the batch path: cmd consumes it even inside quotes, so an
+ * argument carrying one cannot be passed through a shim intact.
+ */
+export function resolveSpawn(command, args, options = {}) {
+  const platform = options.platform ?? process.platform;
+  const env = options.env ?? process.env;
+  const direct = { file: command, args, viaShell: false, resolved: null };
+  if (platform !== 'win32') return direct;
+  if (/[\\/]/.test(command)) return direct;
+
+  const resolved = findOnPath(command, env);
+  if (!resolved) return direct;
+  const extension = extname(resolved).toLowerCase();
+  if (!BATCH_EXTENSIONS.has(extension)) {
+    return { file: resolved, args, viaShell: false, resolved };
+  }
+
+  if (args.some((arg) => arg.includes('^'))) {
+    throw invalidArgs(
+      `${command} is a batch shim and an argument contains "^", which cmd consumes even inside quotes; `
+      + 'run it through a cmd.exe session instead',
+    );
+  }
+  const comspec = envValue(env, 'COMSPEC') || 'cmd.exe';
+  const line = [quoteForCmd(resolved), ...args.map(quoteForCmd)].join(' ');
+  return {
+    // The outer pair is the one cmd /s strips; what is left is the quoted
+    // command and its quoted arguments, exactly as a shell would have built it.
+    file: comspec,
+    args: `/d /s /c "${line}"`,
+    viaShell: true,
+    resolved,
+  };
 }
 
 function assertDescription(description) {
@@ -164,16 +276,20 @@ export class SessionManager {
     }
 
     const title = (typeof input.title === 'string' && input.title.trim()) || basename(command) || command;
-    const env = { ...process.env, ...(input.env ?? {}) };
+    const env = mergeEnv(input.env);
+    const plan = resolveSpawn(command, args, { env });
     const sessionId = randomUUID();
 
     let term;
     try {
-      term = spawnPty(command, args, { cols, rows, cwd, env });
+      term = spawnPty(plan.file, plan.args, { cols, rows, cwd, env });
     } catch (err) {
+      // The searched-for name is always in the message, and the resolved path
+      // too when PATH turned the name into something else.
+      const target = plan.resolved ? `${command} (resolved to ${plan.resolved})` : command;
       throw new JanuaError(
         ERROR_CODES.SPAWN_FAILED,
-        `could not start ${command}: ${describeCause(err)}`,
+        `could not start ${target}: ${describeCause(err)}`,
       );
     }
 
@@ -267,8 +383,19 @@ export class SessionManager {
     return { ok: true };
   }
 
-  list() {
-    return [...this.#sessions.values()].map((session) => ({
+  // Newest last, one page at a time. total counts every session known, so a
+  // client can tell a full page from the end of the list; nextOffset is null on
+  // the last page.
+  list(options = {}) {
+    const limit = options.limit ?? DEFAULT_LIST_LIMIT;
+    const offset = options.offset ?? 0;
+    if (!Number.isInteger(limit) || limit < 1 || limit > MAX_LIST_LIMIT) {
+      throw invalidArgs(`limit must be an integer between 1 and ${MAX_LIST_LIMIT}`);
+    }
+    if (!Number.isInteger(offset) || offset < 0) {
+      throw invalidArgs('offset must be an integer >= 0');
+    }
+    const all = [...this.#sessions.values()].map((session) => ({
       sessionId: session.sessionId,
       pid: session.pid,
       title: session.title,
@@ -278,6 +405,9 @@ export class SessionManager {
       bytes: session.ring.total,
       createdAt: session.createdAt,
     }));
+    const sessions = all.slice(offset, offset + limit);
+    const nextOffset = offset + sessions.length < all.length ? offset + sessions.length : null;
+    return { sessions, total: all.length, nextOffset };
   }
 
   killAll() {

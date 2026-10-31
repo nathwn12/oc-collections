@@ -43,7 +43,13 @@ export function toolSuccess(payload) {
   };
 }
 
-/** Failure result: a typed code, a readable message, and isError so clients surface it. */
+/** Failure result: a typed code, a readable message, and isError so clients surface it.
+ *
+ * Deliberately no structuredContent: a tool that declares an outputSchema has
+ * its structuredContent validated against it even when isError is set, so an
+ * {error} envelope there would turn a typed tool failure into a thrown
+ * protocol error. The code stays in the text payload, which is never validated.
+ */
 export function toolFailure(err) {
   const code = err instanceof JanuaError ? err.code : ERROR_CODES.INTERNAL;
   const message = err instanceof JanuaError
@@ -52,6 +58,5 @@ export function toolFailure(err) {
   return {
     isError: true,
     content: [{ type: 'text', text: `${code}: ${message}` }],
-    structuredContent: { error: { code, message } },
   };
 }

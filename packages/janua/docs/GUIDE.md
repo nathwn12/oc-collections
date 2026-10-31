@@ -58,6 +58,12 @@ and the tree under it:
 **Why a shell here.** A session running `npm` directly dies when the server exits and cannot be
 restarted in place. A shell session outlives its child, which is what a restart is.
 
+**Running `npm` without a shell.** `pty_spawn` with `"command": "npm"` works too, for a one-shot
+command rather than a server you restart: on Windows a bare name is resolved through `PATH` x
+`PATHEXT`, and the `npm.cmd` batch shim it finds is started through `cmd /d /s /c`. The arguments
+are quoted for that line, so `{"command":"npm","args":["run","build","--","--outDir","my dir"]}`
+arrives as five arguments with the space intact.
+
 ---
 
 ## 2. Answering an interactive prompt
@@ -68,6 +74,9 @@ answers it. The newline default appends the carriage return the prompt is waitin
 ```jsonc
 {"command":"npx","args":["-y","create-something@latest","my-app"],"cwd":"C:\\work","description":"scaffold a new project"}
 // -> {"sessionId":"b2a8...","pid":7744,"title":"npx"}
+
+// On Windows npx is a .cmd shim: janua resolves it through PATH x PATHEXT and runs it through
+// cmd /d /s /c, so the spawn above works without wrapping it in a shell yourself.
 
 {"sessionId":"b2a8...","cursor":0,"waitMs":5000}
 // -> {"data":"Need to install the following packages:\ncreate-something@1.4.0\nOk to proceed? (y) ",
