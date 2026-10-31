@@ -282,7 +282,7 @@ try {
                 Needles = @('PASS oc-bifrost.*@nathwn12/oc-bifrost', 'PASS oc-flight-deck', 'PASS oc-harness-setup', 'SKIP oc-session-driver', 'SKIP oc-collections')
             }
             [pscustomobject]@{
-                What    = 'shelf table, unpublished pin'
+                What    = 'shelf table, not-yet-released pin'
                 Path    = $staleFixture
                 Args    = @()
                 Exit    = 1
