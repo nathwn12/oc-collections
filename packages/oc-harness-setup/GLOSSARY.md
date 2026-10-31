@@ -6,7 +6,7 @@
   Not a reading list or bibliography of everything consulted.
 **capability envelope** — The reach an agent is allowed: what it may read, write, run, and fetch.
   Not a role, personality, or craft specialty.
-**doctor** — The install-time gate (`scripts/harness-doctor.ps1`) checking the pack's shape laws.
+**doctor** — The install-time gate (`scripts/harness-doctor.mjs`) checking the pack's shape laws.
   Not a prose enforcer; it gates what was installed, never how a sentence reads.
 **drift** — A rule or fact that aged out of agreement with the tree, accepted openly.
   Not a regression; only a doctor FAIL is a regression.
