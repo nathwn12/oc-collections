@@ -61,7 +61,9 @@ for a cursor that has since been discarded, the reply starts at the oldest retai
 how many bytes were lost in `dropped`.
 
 `waitMs` makes a read block instead of polling: it returns as soon as new output arrives, or when
-the session exits, or at the deadline.
+the session exits, or at the deadline. A ConPTY opens with escape-only chunks (mode set, focus
+reporting), so a stripped read that finds nothing visible keeps waiting from the same cursor for the
+text behind it; `stripAnsi: false` returns those first bytes as they arrive.
 
 ### Errors
 

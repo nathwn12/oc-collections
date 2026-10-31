@@ -353,20 +353,33 @@ export class SessionManager {
     const requested = Number.isInteger(options.cursor) ? options.cursor : session.ring.base;
     if (requested < 0) throw invalidArgs('cursor must be a non-negative byte offset');
 
+    const raw = options.stripAnsi === false;
     const deadline = Date.now() + waitMs;
-    while (session.ring.total <= requested && !session.exited && Date.now() < deadline) {
+    for (;;) {
+      while (session.ring.total <= requested && !session.exited && Date.now() < deadline) {
+        await waitForChange(session, deadline - Date.now());
+      }
+
+      const slice = session.ring.read(requested, maxBytes);
+      const text = slice.data.toString('utf8');
+      const data = raw ? text : stripAnsi(text);
+      // A ConPTY opens with escape-only chunks (mode set, focus reporting), so
+      // the bytes arrive while the visible text has not. Returning "" there
+      // reads as a silent terminal, so a stripped read keeps waiting from the
+      // same absolute cursor until something visible lands, the child exits, or
+      // the deadline passes. A raw read still returns the first bytes, escapes
+      // and all, and a slice that carried no bytes has nothing to wait for.
+      if (raw || data !== '' || slice.end === requested || session.exited || Date.now() >= deadline) {
+        return {
+          data,
+          cursor: slice.end,
+          exited: session.exited,
+          exitCode: session.exitCode,
+          dropped: slice.dropped,
+        };
+      }
       await waitForChange(session, deadline - Date.now());
     }
-
-    const slice = session.ring.read(requested, maxBytes);
-    const text = slice.data.toString('utf8');
-    return {
-      data: options.stripAnsi === false ? text : stripAnsi(text),
-      cursor: slice.end,
-      exited: session.exited,
-      exitCode: session.exitCode,
-      dropped: slice.dropped,
-    };
   }
 
   kill(sessionId, signal = 'SIGTERM') {

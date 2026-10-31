@@ -128,7 +128,8 @@ export function createServer(options = {}) {
         'Read output from a session, starting at cursor, and return {data, cursor, exited, exitCode, dropped}. '
         + 'Pass the cursor from the previous read to get only new output; omit it to read from the oldest byte '
         + 'still buffered. dropped > 0 means the ring buffer discarded that many bytes before this read. '
-        + 'waitMs waits for the session to produce new output (or exit) before returning.',
+        + 'waitMs waits for the session to produce output (or exit) before returning; with stripAnsi '
+        + 'a chunk holding only escape sequences does not count, so the read keeps waiting for visible text.',
       inputSchema: {
         sessionId: z.string().describe('Session id returned by pty_spawn.'),
         cursor: z.number().int().min(0).optional().describe('Byte offset from the previous read. Omit to read from the start of the buffer.'),
