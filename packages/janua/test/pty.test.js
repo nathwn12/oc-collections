@@ -33,7 +33,7 @@ test('spawn, read, list and kill a session', async (t) => {
   const seen = await readUntil(manager, spawned.sessionId, /JANUA_OK/);
   assert.match(seen.text, /JANUA_OK/);
 
-  const sessions = manager.list();
+  const { sessions } = manager.list();
   assert.equal(sessions.length, 1);
   assert.equal(sessions[0].sessionId, spawned.sessionId);
   assert.equal(sessions[0].command, process.execPath);
@@ -127,5 +127,42 @@ test('cursor and maxBytes never duplicate output', async (t) => {
 
   const full = await manager.read(sessionId, { cursor: 0, maxBytes: 1048576, stripAnsi: false });
   assert.equal(assembled, full.data, 'chunked reads must reassemble to the full output');
-  assert.equal(full.cursor, manager.list()[0].bytes);
+  assert.equal(full.cursor, manager.list().sessions[0].bytes);
+});
+
+test('list pages with limit and offset, newest last', async (t) => {
+  const manager = new SessionManager();
+  t.after(() => manager.killAll());
+
+  const ids = [];
+  for (let index = 0; index < 3; index += 1) {
+    const spawned = manager.spawn({
+      command: process.execPath,
+      args: ['-e', 'setInterval(() => {}, 1000)'],
+      description: `pagination child number ${index} staying alive`,
+    });
+    ids.push(spawned.sessionId);
+  }
+
+  const first = manager.list({ limit: 2 });
+  assert.equal(first.total, 3);
+  assert.deepEqual(first.sessions.map((session) => session.sessionId), ids.slice(0, 2));
+  assert.equal(first.nextOffset, 2);
+
+  const rest = manager.list({ limit: 2, offset: first.nextOffset });
+  assert.deepEqual(rest.sessions.map((session) => session.sessionId), ids.slice(2));
+  assert.equal(rest.nextOffset, null, 'the last page has no next offset');
+
+  const unpaged = manager.list();
+  assert.equal(unpaged.sessions.length, 3);
+  assert.equal(unpaged.nextOffset, null);
+
+  const past = manager.list({ offset: 10 });
+  assert.deepEqual(past.sessions, []);
+  assert.equal(past.total, 3);
+  assert.equal(past.nextOffset, null);
+
+  assert.throws(() => manager.list({ limit: 0 }), (err) => err.code === 'invalid_args');
+  assert.throws(() => manager.list({ limit: 201 }), (err) => err.code === 'invalid_args');
+  assert.throws(() => manager.list({ offset: -1 }), (err) => err.code === 'invalid_args');
 });

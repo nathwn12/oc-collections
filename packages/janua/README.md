@@ -46,11 +46,11 @@ On Windows, if your client cannot launch `npx` directly, wrap it in the command 
 
 | Tool | What it does |
 | --- | --- |
-| `pty_spawn` | Start `command` with `args` in a new PTY. Takes an optional `cwd`, `env`, `cols`/`rows` (defaults 80x24), `title`, and a required 5-10 word `description`. Returns `{sessionId, pid, title}`. No shell string: command and args are passed as given, there is no `shell: true`. |
+| `pty_spawn` | Start `command` with `args` in a new PTY. Takes an optional `cwd`, `env`, `cols`/`rows` (defaults 80x24), `title`, and a required 5-10 word `description`. Returns `{sessionId, pid, title}`. No shell string: command and args are passed as given, there is no `shell: true`. On Windows a bare name is resolved through `PATH` x `PATHEXT` and a batch shim runs through `cmd /c` (see Windows notes). |
 | `pty_write` | Send `data` to a session. `newline` (default true) appends a carriage return, which is what a prompt is waiting for. Returns `{ok}`. |
 | `pty_read` | Read output from `cursor` onward, up to `maxBytes` (default 8000). `waitMs` waits up to 10 s for new output; `stripAnsi` (default true) removes colour and cursor-control sequences. Returns `{data, cursor, exited, exitCode, dropped}`. |
 | `pty_kill` | Terminate the program. Idempotent. `signal` defaults to `SIGTERM` and is honoured on POSIX; Windows terminates the process tree. Returns `{ok}`. |
-| `pty_list` | Every session with `sessionId`, `pid`, `title`, `command`, `exited`, `exitCode`, `bytes` and `createdAt`. |
+| `pty_list` | Sessions newest last, one page at a time: `limit` (1-200, default 50) and `offset` (default 0). Returns `{sessions, total, nextOffset}`, where `total` counts every session known and `nextOffset` is null on the last page. Each session carries `sessionId`, `pid`, `title`, `command`, `exited`, `exitCode`, `bytes` and `createdAt`. |
 
 ### Reading without duplicates
 
@@ -67,6 +67,9 @@ the session exits, or at the deadline.
 
 Tool failures come back as an `isError` result carrying a typed code, never as a thrown exception:
 `invalid_args`, `session_not_found`, `spawn_failed`, `pty_write_failed`, `too_many_sessions`.
+Every tool also declares its success shape as an output schema, so a client validates
+`structuredContent`; a failure carries its typed code in the text content only, because a payload
+that contradicted the declared shape would be rejected by a validating client.
 
 ## Limits and defaults
 
@@ -79,6 +82,20 @@ Tool failures come back as an `isError` result carrying a typed code, never as a
 
 ## Windows notes
 
+- **Command names are resolved the way a shell resolves them.** `CreateProcess` does not consult
+  `PATHEXT`, so a bare `npm`, `npx`, `pnpm`, `yarn` or `tsc` - all of them `.cmd` batch shims -
+  used to fail with "Cannot create process, error code: 2". A bare name is now looked up against
+  `PATH` x `PATHEXT` (`.COM;.EXE;.BAT;.CMD` by default) and the first match wins. An `.exe`/`.com`
+  runs directly by its absolute path; a `.cmd`/`.bat` runs through `cmd /d /s /c`, because batch
+  files cannot be executed by `CreateProcess` at all. Nothing is run through a shell on POSIX, and
+  a name that contains a path separator is never resolved through `PATH`.
+- **Arguments are quoted for that `cmd /c` line.** An argument holding a space, a tab, a quote or a
+  cmd metacharacter is wrapped in `"`, and an embedded `"` is doubled, so
+  `['hello world', 'say "hi" now']` arrives as two arguments with their spaces and quotes intact.
+  Two cmd behaviours cannot be escaped from outside: `%NAME%` inside an argument is expanded by
+  cmd, and `^` is consumed even inside quotes - an argument containing `^` through a batch shim is
+  refused with `invalid_args` rather than silently mangled. Drive either through a `cmd.exe`
+  session instead.
 - Terminals come from ConPTY, so programs see a real console: `cmd.exe`, PowerShell, `node`, Python
   and anything that uses colour or prompts all work. A first read right after spawn usually contains
   a screen-initialisation sequence; it is stripped by default.

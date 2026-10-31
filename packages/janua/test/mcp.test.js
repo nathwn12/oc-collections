@@ -34,6 +34,26 @@ test('MCP handshake: tools/list, then spawn, read and kill over stdio', async (t
   console.log(`tools/list -> ${names.join(', ')}`);
   assert.deepEqual(names, TOOL_NAMES);
 
+  // Every tool declares its output shape and its effect on the world, so a
+  // client can validate structuredContent and decide what to auto-approve.
+  for (const tool of listed.tools) {
+    assert.ok(tool.outputSchema, `${tool.name} must declare an outputSchema`);
+    assert.equal(typeof tool.annotations, 'object', `${tool.name} must carry annotations`);
+    assert.equal(tool.annotations.openWorldHint, false, `${tool.name} must not claim the open web`);
+  }
+  const byName = Object.fromEntries(listed.tools.map((tool) => [tool.name, tool]));
+  assert.equal(byName.pty_read.annotations.readOnlyHint, true);
+  assert.equal(byName.pty_list.annotations.readOnlyHint, true);
+  assert.equal(byName.pty_spawn.annotations.readOnlyHint, false);
+  assert.equal(byName.pty_write.annotations.readOnlyHint, false);
+  assert.equal(byName.pty_kill.annotations.destructiveHint, true);
+  assert.equal(byName.pty_spawn.annotations.destructiveHint, false);
+  assert.deepEqual(
+    byName.pty_list.outputSchema.required?.sort(),
+    ['nextOffset', 'sessions', 'total'],
+  );
+  console.log(`pty_kill annotations -> ${JSON.stringify(byName.pty_kill.annotations)}`);
+
   const spawned = await client.callTool({
     name: 'pty_spawn',
     arguments: {
@@ -80,11 +100,14 @@ test('MCP handshake: tools/list, then spawn, read and kill over stdio', async (t
   console.log(`pty_read(after kill) -> exited=${stopped.exited} exitCode=${stopped.exitCode}`);
   assert.equal(stopped.exited, true);
 
-  const listedAfter = await client.callTool({ name: 'pty_list', arguments: {} });
-  const sessions = JSON.parse(textOf(listedAfter)).sessions;
-  console.log(`pty_list -> ${JSON.stringify(sessions)}`);
-  assert.equal(sessions.length, 1);
-  assert.equal(sessions[0].sessionId, spawnPayload.sessionId);
+  const listedAfter = await client.callTool({ name: 'pty_list', arguments: { limit: 10 } });
+  const page = JSON.parse(textOf(listedAfter));
+  console.log(`pty_list -> ${JSON.stringify(page)}`);
+  assert.equal(page.sessions.length, 1);
+  assert.equal(page.total, 1);
+  assert.equal(page.nextOffset, null);
+  assert.equal(page.sessions[0].sessionId, spawnPayload.sessionId);
+  assert.deepEqual(listedAfter.structuredContent, page, 'structuredContent must match the payload');
 
   const missing = await client.callTool({
     name: 'pty_read',
@@ -93,4 +116,9 @@ test('MCP handshake: tools/list, then spawn, read and kill over stdio', async (t
   console.log(`pty_read(bogus) -> isError=${missing.isError} text=${JSON.stringify(textOf(missing))}`);
   assert.equal(missing.isError, true);
   assert.match(textOf(missing), /session_not_found/);
+  assert.equal(
+    missing.structuredContent,
+    undefined,
+    'a typed failure must not carry a payload that contradicts the output schema',
+  );
 });

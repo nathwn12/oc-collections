@@ -30,6 +30,44 @@ function wrap(handler) {
   };
 }
 
+// Hints say what a tool does to the world, so a client can decide what to
+// auto-approve: none of these reach the network, only pty_kill destroys state,
+// and only pty_read can be repeated for the same answer.
+const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
+const MUTATING = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false };
+const DESTRUCTIVE = { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false };
+
+// Output shapes mirror the payloads exactly, so structuredContent is declared
+// rather than merely sent and clients can rely on the fields.
+const SPAWN_SHAPE = {
+  sessionId: z.string().describe('Session id to pass to the other tools.'),
+  pid: z.number().describe('Process id of the program in the terminal.'),
+  title: z.string().describe('Label shown by pty_list.'),
+};
+const OK_SHAPE = { ok: z.boolean().describe('True when the call did what it says.') };
+const READ_SHAPE = {
+  data: z.string().describe('Output from cursor onward.'),
+  cursor: z.number().describe('Byte offset to pass to the next read.'),
+  exited: z.boolean().describe('Whether the program has exited.'),
+  exitCode: z.number().nullable().describe('Exit code once exited, otherwise null.'),
+  dropped: z.number().describe('Bytes the buffer discarded before this read.'),
+};
+const SESSION_SHAPE = {
+  sessionId: z.string(),
+  pid: z.number(),
+  title: z.string(),
+  command: z.string(),
+  exited: z.boolean(),
+  exitCode: z.number().nullable(),
+  bytes: z.number(),
+  createdAt: z.string(),
+};
+const LIST_SHAPE = {
+  sessions: z.array(z.object(SESSION_SHAPE)).describe('This page, newest last.'),
+  total: z.number().describe('Sessions known in total, not just this page.'),
+  nextOffset: z.number().nullable().describe('Offset of the next page, or null on the last one.'),
+};
+
 export function createServer(options = {}) {
   const manager = options.manager ?? new SessionManager();
   const server = new McpServer(
@@ -44,7 +82,9 @@ export function createServer(options = {}) {
       description:
         'Start a program in a persistent pseudo-terminal and return {sessionId, pid, title}. '
         + 'The program keeps running until pty_kill or its own exit; nothing is run through a shell, '
-        + 'so command and args are passed exactly as given. Use this for anything you need to talk to '
+        + 'so command and args are passed exactly as given. On Windows a bare name is resolved through '
+        + 'PATH and PATHEXT, and a .cmd/.bat shim (npm, npx, pnpm, yarn, tsc) runs through cmd /c with its '
+        + 'arguments quoted. Use this for anything you need to talk to '
         + '(dev servers, REPLs, installers that prompt), not for commands whose output you want once.',
       inputSchema: {
         command: z.string().describe('Executable to run: a name resolved on PATH, or an absolute path. No shell string.'),
@@ -56,6 +96,8 @@ export function createServer(options = {}) {
         title: z.string().optional().describe('Short label for this session, shown by pty_list. Defaults to the command name.'),
         description: z.string().describe('5-10 words saying what this session is for, so a later read makes sense on its own.'),
       },
+      outputSchema: SPAWN_SHAPE,
+      annotations: MUTATING,
     },
     wrap(async (args) => manager.spawn(args)),
   );
@@ -72,6 +114,8 @@ export function createServer(options = {}) {
         data: z.string().describe('Text to send. Escape sequences such as \\u0003 (Ctrl+C) are sent literally.'),
         newline: z.boolean().optional().describe('Append a carriage return after data (default true).'),
       },
+      outputSchema: OK_SHAPE,
+      annotations: MUTATING,
     },
     wrap(async ({ sessionId, data, newline }) => manager.write(sessionId, data, newline ?? true)),
   );
@@ -92,6 +136,8 @@ export function createServer(options = {}) {
         waitMs: z.number().int().min(0).max(10000).optional().describe('Wait up to this many milliseconds for new output (default 0).'),
         stripAnsi: z.boolean().optional().describe('Remove ANSI escape sequences from data (default true). The cursor still counts raw bytes.'),
       },
+      outputSchema: READ_SHAPE,
+      annotations: READ_ONLY,
     },
     wrap(async ({ sessionId, cursor, maxBytes, waitMs, stripAnsi }) =>
       manager.read(sessionId, {
@@ -113,6 +159,8 @@ export function createServer(options = {}) {
         sessionId: z.string().describe('Session id returned by pty_spawn.'),
         signal: z.string().optional().describe('POSIX signal name (default SIGTERM). Ignored on Windows, where the process tree is terminated.'),
       },
+      outputSchema: OK_SHAPE,
+      annotations: DESTRUCTIVE,
     },
     wrap(async ({ sessionId, signal }) => manager.kill(sessionId, signal ?? 'SIGTERM')),
   );
@@ -122,11 +170,17 @@ export function createServer(options = {}) {
     {
       title: 'List terminals',
       description:
-        'List every session this server knows about, newest last: sessionId, pid, title, command, exited, '
-        + 'exitCode, bytes emitted, and createdAt. Use it to recover a session id you lost.',
-      inputSchema: {},
+        'List sessions this server knows about, newest last, one page at a time: sessionId, pid, title, command, '
+        + 'exited, exitCode, bytes emitted, and createdAt. Returns {sessions, total, nextOffset}: total counts every '
+        + 'session known, and nextOffset is null on the last page. Use it to recover a session id you lost.',
+      inputSchema: {
+        limit: z.number().int().min(1).max(200).optional().describe('Sessions to return (default 50, max 200).'),
+        offset: z.number().int().min(0).optional().describe('Sessions to skip from the oldest (default 0).'),
+      },
+      outputSchema: LIST_SHAPE,
+      annotations: READ_ONLY,
     },
-    wrap(async () => ({ sessions: manager.list() })),
+    wrap(async ({ limit, offset }) => manager.list({ limit, offset })),
   );
 
   return { server, manager };
