@@ -12,7 +12,7 @@ update, and typing works.
 ## Install
 
 ```powershell
-npx janua
+npx @nathwn12/janua
 ```
 
 That is the whole install: no build step, no native compile (the PTY ships prebuilt binaries). Point
@@ -23,7 +23,7 @@ your MCP client at it:
   "mcpServers": {
     "janua": {
       "command": "npx",
-      "args": ["-y", "janua"]
+      "args": ["-y", "@nathwn12/janua"]
     }
   }
 }
@@ -36,7 +36,7 @@ On Windows, if your client cannot launch `npx` directly, wrap it in the command 
   "mcpServers": {
     "janua": {
       "command": "cmd",
-      "args": ["/c", "npx", "-y", "janua"]
+      "args": ["/c", "npx", "-y", "@nathwn12/janua"]
     }
   }
 }
