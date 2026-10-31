@@ -27,7 +27,7 @@ on:
         type: choice
         options:
           - '@nathwn12/oc-bifrost'
-          - janua
+          - '@nathwn12/janua'
           - oc-flight-deck
           - oc-harness-setup
           - oc-talk
