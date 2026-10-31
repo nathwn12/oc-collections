@@ -1,4 +1,4 @@
-# oc-session-driver
+# oc-talk
 
 Gives an agent nine tools to run the session lifecycle across the sessions next door: find a peer, hand it a message, read what it answered, park it, wake it, close it.
 
@@ -9,20 +9,20 @@ This package is private pending a trial. It is **not installable from a registry
 Link the package directory into the harness:
 
 ```powershell
-cd packages/oc-session-driver
+cd packages/oc-talk
 npm link
 ```
 
 Then add the entry to the `plugins` array in your `opencode.jsonc`:
 
 ```json
-{ "plugins": ["oc-session-driver"] }
+{ "plugins": ["oc-talk"] }
 ```
 
 Or skip the link and point the same array at the directory itself, as a local plugin path:
 
 ```json
-{ "plugins": ["file:///C:/path/to/oc-collections/packages/oc-session-driver"] }
+{ "plugins": ["file:///C:/path/to/oc-collections/packages/oc-talk"] }
 ```
 
 Restart OpenCode either way. The plugin registers its nine tools when the session starts, and uses the same `opencode` binary that is running it.

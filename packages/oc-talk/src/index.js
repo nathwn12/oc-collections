@@ -1,4 +1,4 @@
-// oc-session-driver — cross-session talk for any OpenCode harness.
+// oc-talk — cross-session talk for any OpenCode harness.
 //
 // Nine tools, one for each lifecycle verb: session_list, session_send,
 // session_read, session_close, session_open, session_kick, session_park,
