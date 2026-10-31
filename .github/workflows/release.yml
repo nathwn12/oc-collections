@@ -49,6 +49,10 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history: the ancestor guard below asks whether the released
+          # commit is reachable from origin/main, which a shallow clone cannot answer.
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -80,13 +84,30 @@ jobs:
         shell: pwsh
         run: npm ci
 
-      - name: Workspace check
-        shell: pwsh
-        run: npm run check
-
+      # The test suite already ran in CI on the commit being tagged; re-running
+      # `npm run check` here would only re-prove it. Build and tarball proof stay
+      # because oc-flight-deck publishes compiled output.
       - name: Workspace pack verification
         shell: pwsh
-        run: npm run pack:check
+        run: npm run build && node scripts/pack-check.mjs
+
+      - name: Guard the release commit is on origin/main
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            subject="$(git rev-parse "refs/tags/${GITHUB_REF_NAME}^{commit}")"
+            label="tag ${GITHUB_REF_NAME}"
+          else
+            subject="${GITHUB_SHA}"
+            label="dispatched commit"
+          fi
+          git fetch --no-tags origin main
+          main="$(git rev-parse FETCH_HEAD)"
+          if ! git merge-base --is-ancestor "$subject" "$main"; then
+            echo "::error::${label} is at ${subject}, which is not an ancestor of origin/main (${main}); merge it into main before releasing"
+            exit 1
+          fi
 
       - name: Publish (dry run)
         if: github.event_name == 'workflow_dispatch' && inputs.dry_run
