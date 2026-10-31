@@ -7,15 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- The `@opencode/plugin` development pin is `2.2.4`, exact rather than a caret or `latest`: the fixture requires a concrete version, and the types and the build read exactly one SDK. No source change and no peer-range change: `@opencode/plugin` stays `>=2.1.1 <3`.
-
 ## [0.21.0] - 2026-10-31
 
 ### Changed
 
-- `@opencode/plugin` development pin is `2.2.4`.
+- The `@opencode/plugin` development pin is `2.2.4`, exact rather than a caret or `latest`: the fixture requires a concrete version, and the types and the build read exactly one SDK. No source change and no peer-range change: `@opencode/plugin` stays `>=2.1.1 <3`.
 
 ### Breaking, relative to 0.20.7
 

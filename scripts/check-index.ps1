@@ -11,8 +11,16 @@
 #     every pull request.
 #
 #   --registry (network, post-publish)
-#     Every listed package resolves on the npm registry and every claimed
-#     version is published; a package declared omitted is never queried.
+#     Package identity is read from the table's own cells -- the Package cell for
+#     the label, the Kind cell for whether it is an install target, the Version
+#     cell for the claimed pin -- and the published name is resolved from the
+#     workspace manifest where one exists. Link syntax is never consulted: the
+#     README is a shelf page, so a row's links cannot decide whether it counts.
+#     Every installation target resolves on the npm registry and every claimed
+#     version is published; a row the table declares non-installable (a kind that
+#     ships no artifact, or a Version cell with no pin) is skipped with its
+#     reason, never counted as a publish failure. A package declared omitted is
+#     never queried.
 #     Packages released from this monorepo (the table in
 #     scripts/index-registry.ps1) must also name `nathwn12/oc-collections` in
 #     their registry `repository` metadata; a package classified `external`
@@ -76,6 +84,11 @@ $ua = @{ 'User-Agent' = 'oc-collections-index-check/1.0' }
 # guard stays for a future private package.
 $Omitted = @{}
 
+# Kinds whose row ships an npm artifact, so a row of that kind with a version
+# pin is an installation target. `repo` is deliberately absent: the index's own
+# row names this monorepo's private root manifest, which is never published.
+$ArtifactKinds = @('plugin', 'cli', 'mcp', 'mcp-server', 'server', 'library', 'tool')
+
 # The released/external scope table and the repository-metadata assertion.
 . (Join-Path $PSScriptRoot 'index-registry.ps1')
 
@@ -83,6 +96,40 @@ $Omitted = @{}
 function Get-PackageLabel([string]$name) {
     if ($name -match '^@[^/]+/(.+)$') { return $Matches[1] }
     return $name
+}
+
+# The workspace inventory, by the rule both halves need: the root manifest plus
+# every packages/* (and archive/*) manifest that has one. Structural mode
+# compares version cells against it; registry mode resolves a row's published
+# name from it, because a table label is only the unscoped half of it.
+function Get-WorkspaceInventory {
+    $rootDir = Join-Path $PSScriptRoot '..'
+    $names = New-Object System.Collections.Generic.List[string]
+    $versions = @{}
+    $manifests = @{}
+    $rootPkg = Get-Content (Join-Path $rootDir 'package.json') -Raw | ConvertFrom-Json
+    $rootLabel = Get-PackageLabel $rootPkg.name
+    $names.Add($rootLabel)
+    $versions[$rootLabel] = $rootPkg.version
+    $manifests[$rootLabel] = $rootPkg.name
+    foreach ($base in @('packages', 'archive')) {
+        $dir = Join-Path $rootDir $base
+        if (-not (Test-Path $dir)) { continue }
+        foreach ($child in @(Get-ChildItem $dir -Directory)) {
+            $manifest = Join-Path $child.FullName 'package.json'
+            if (-not (Test-Path $manifest)) { continue }
+            $pkg = Get-Content $manifest -Raw | ConvertFrom-Json
+            $label = Get-PackageLabel $pkg.name
+            $names.Add($label)
+            $versions[$label] = $pkg.version
+            $manifests[$label] = $pkg.name
+        }
+    }
+    return [pscustomobject]@{
+        Inventory = @($names | Sort-Object -Unique)
+        Versions  = $versions
+        Manifests = $manifests
+    }
 }
 
 # Every table row in the file. Header and separator rows are skipped; other
@@ -119,29 +166,10 @@ if ($mode -eq 'structural') {
         Write-Output ("PASS {0,-20} name well-formed" -f $name)
     }
 
-    $rootDir = Join-Path $PSScriptRoot '..'
-    $inventory = New-Object System.Collections.Generic.List[string]
-    $versions = @{}
-    $manifests = @{}
-    $rootPkg = Get-Content (Join-Path $rootDir 'package.json') -Raw | ConvertFrom-Json
-    $rootLabel = Get-PackageLabel $rootPkg.name
-    $inventory.Add($rootLabel)
-    $versions[$rootLabel] = $rootPkg.version
-    $manifests[$rootLabel] = $rootPkg.name
-    foreach ($base in @('packages', 'archive')) {
-        $dir = Join-Path $rootDir $base
-        if (-not (Test-Path $dir)) { continue }
-        foreach ($child in @(Get-ChildItem $dir -Directory)) {
-            $manifest = Join-Path $child.FullName 'package.json'
-            if (-not (Test-Path $manifest)) { continue }
-            $pkg = Get-Content $manifest -Raw | ConvertFrom-Json
-            $label = Get-PackageLabel $pkg.name
-            $inventory.Add($label)
-            $versions[$label] = $pkg.version
-            $manifests[$label] = $pkg.name
-        }
-    }
-    $inventory = @($inventory | Sort-Object -Unique)
+    $tree = Get-WorkspaceInventory
+    $inventory = $tree.Inventory
+    $versions = $tree.Versions
+    $manifests = $tree.Manifests
 
     # A version cell is a claim about published bytes. Only this monorepo's own
     # releases have a manifest here to compare against, so their cell must name
@@ -229,88 +257,104 @@ function Get-HttpStatus([string]$url) {
     }
 }
 
+# One npm registry document, or the status that stood in for it. The fixture
+# seam exists so scripts/check-index.selftest.ps1 can prove the version and
+# metadata assertions go red without network: CHECK_INDEX_REGISTRY_FIXTURES
+# naming a directory of `<published-name>.json` documents stands in for the
+# registry, a scoped name losing its @ and keeping `__` for the slash. Unset in
+# every real run, where registry.npmjs.org answers.
+function Get-NpmMetadata([string]$Name) {
+    $dir = $env:CHECK_INDEX_REGISTRY_FIXTURES
+    if ($dir) {
+        $file = Join-Path $dir ((($Name -replace '^@', '').Replace('/', '__')) + '.json')
+        if (-not (Test-Path -LiteralPath $file)) { return [pscustomobject]@{ Code = 404; Meta = $null } }
+        return [pscustomobject]@{ Code = 200; Meta = (Get-Content -LiteralPath $file -Raw | ConvertFrom-Json) }
+    }
+    $url = "https://registry.npmjs.org/$Name"
+    $code = Get-HttpStatus $url
+    if ($code -ne 200) { return [pscustomobject]@{ Code = $code; Meta = $null } }
+    $meta = (Invoke-WebRequest -Uri $url -UseBasicParsing -Headers $ua -TimeoutSec 30).Content | ConvertFrom-Json
+    return [pscustomobject]@{ Code = 200; Meta = $meta }
+}
+
 $fail = 0
 $checked = 0
 $matched = 0
-$npmChecked = 0
 $filterLabel = if ($packageFilter) { Get-PackageLabel $packageFilter } else { $null }
+# A table label is the unscoped half of the published name; the full name comes
+# from the workspace manifest where this monorepo releases the package.
+$manifests = (Get-WorkspaceInventory).Manifests
 
 foreach ($row in $rows) {
-    if ($row.Line -notmatch '\[repo\]\(http') { continue }
-    $repoName = $row.Name
-    $label = Get-PackageLabel $repoName
+    $label = Get-PackageLabel $row.Name
     if ($filterLabel -and $label -ne $filterLabel) { continue }
+
+    $kindCell    = if ($row.Cells.Count -ge 2) { $row.Cells[1].Trim() } else { '' }
+    $versionCell = if ($row.Cells.Count -ge 3) { $row.Cells[2].Trim() } else { '' }
+    # The Version cell is the table's own claim about published bytes, so its
+    # backticked pin is what gets asserted -- never a link. A row carrying no pin
+    # is not an installation target: `oc-collections` (kind `repo`, this
+    # monorepo's private root manifest) and `oc-session-driver` (private, owner
+    # ruling) both say so in their own cells, so no name list is needed. A
+    # released package that drops its pin is still caught, by structural mode's
+    # "version cell names no version".
+    $pin = if ($versionCell -match '`([^`]+)`') { $Matches[1].Split('@')[-1] } else { $null }
+    if (-not $pin -or ($ArtifactKinds -notcontains $kindCell)) {
+        Write-Output ("SKIP {0,-16} kind={1} version-cell='{2}'  not an installation target" -f $label, $kindCell, $versionCell)
+        continue
+    }
     $matched++
+    $checked++
+    $published = if ($manifests.ContainsKey($label)) { $manifests[$label] } else { $label }
 
-    $versionPin = if ($row.Cells.Count -ge 3 -and $row.Cells[2] -match '`([^`]+)`') { $Matches[1] } else { $null }
-
-    foreach ($m in [regex]::Matches($row.Line, '\[(repo|npm)\]\((https?://[^)]+)\)')) {
-        $kind = $m.Groups[1].Value
-        $url  = $m.Groups[2].Value
-        $checked++
-
-        if ($kind -eq 'npm') {
-            $npmChecked++
-            $pkg = [uri]::UnescapeDataString(($url -replace '^.*/package/', ''))
-            $code = Get-HttpStatus "https://registry.npmjs.org/$pkg"
-            if ($code -ne 200) {
-                Write-Output ("FAIL {0,-16} npm  HTTP {1}  {2}" -f $repoName, $code, $url)
-                $fail++
-                continue
-            }
-            $meta = (Invoke-WebRequest -Uri "https://registry.npmjs.org/$pkg" -UseBasicParsing -Headers $ua).Content | ConvertFrom-Json
-            $pin = if ($versionPin) { $versionPin.Split('@')[-1] } else { $null }
-            $pinPublished = (-not $pin) -or ($meta.versions.PSObject.Properties.Name -contains $pin)
-            if ($pin -and -not $pinPublished) {
-                Write-Output ("FAIL {0,-16} npm  version {1} not published  {2}" -f $repoName, $pin, $pkg)
-                $fail++
-            } else {
-                Write-Output ("PASS {0,-16} npm  registry OK{1}  {2}" -f $repoName, $(if ($pin) { " - $pin published" } else { '' }), $pkg)
-            }
-            $scope = Get-RegistryScope $pkg
-            if ($scope.Scope -eq 'unknown') {
-                Write-Output ("FAIL {0,-16} npm  not classified in the registry scope table ({1})" -f $repoName, $scope.Reason)
-                $fail++
-            } elseif ($scope.Scope -eq 'external') {
-                if ($pin -and -not $pinPublished) {
-                    Write-Output ("INFO {0,-16} npm  claimed version missing; repository metadata not asserted ({1})" -f $repoName, $scope.Reason)
-                } else {
-                    Write-Output ("PASS {0,-16} npm  existence and claimed version OK; repository metadata not asserted ({1})" -f $repoName, $scope.Reason)
-                }
-            } elseif ($pin -and -not $pinPublished) {
-                # The claimed version is not on the registry yet, so the only
-                # metadata visible belongs to an older version. Asserting it
-                # would test the wrong bytes; the version failure above already
-                # makes this run red.
-                Write-Output ("INFO {0,-16} npm  repository metadata not asserted until {1} is published" -f $repoName, $pin)
-            } else {
-                $repoUrl = if ($meta.repository -is [string]) { $meta.repository } else { $meta.repository.url }
-                if (-not (Test-RepositoryMetadata $pkg $repoUrl)) {
-                    Write-Output ("FAIL {0,-16} npm  repository does not name oc-collections: {1} ({2})" -f $repoName, $repoUrl, $scope.Reason)
-                    $fail++
-                }
-            }
+    $result = Get-NpmMetadata $published
+    if ($result.Code -ne 200) {
+        Write-Output ("FAIL {0,-16} npm  HTTP {1}  {2}" -f $label, $result.Code, $published)
+        $fail++
+        continue
+    }
+    $meta = $result.Meta
+    $pinPublished = $meta.versions.PSObject.Properties.Name -contains $pin
+    if ($pinPublished) {
+        Write-Output ("PASS {0,-16} npm  registry OK - {1} published  {2}" -f $label, $pin, $published)
+    } else {
+        Write-Output ("FAIL {0,-16} npm  version {1} not published  {2}" -f $label, $pin, $published)
+        $fail++
+    }
+    $scope = Get-RegistryScope $published
+    if ($scope.Scope -eq 'unknown') {
+        Write-Output ("FAIL {0,-16} npm  not classified in the registry scope table ({1})" -f $label, $scope.Reason)
+        $fail++
+    } elseif ($scope.Scope -eq 'external') {
+        if (-not $pinPublished) {
+            Write-Output ("INFO {0,-16} npm  claimed version missing; repository metadata not asserted ({1})" -f $label, $scope.Reason)
         } else {
-            $code = Get-HttpStatus $url
-            if ($code -eq 200) {
-                Write-Output ("PASS {0,-16} repo HTTP 200  {1}" -f $repoName, $url)
-            } else {
-                Write-Output ("FAIL {0,-16} repo HTTP {1}  {2}" -f $repoName, $code, $url)
-                $fail++
-            }
+            Write-Output ("PASS {0,-16} npm  existence and claimed version OK; repository metadata not asserted ({1})" -f $label, $scope.Reason)
+        }
+    } elseif (-not $pinPublished) {
+        # The claimed version is not on the registry yet, so the only metadata
+        # visible belongs to an older version. Asserting it would test the wrong
+        # bytes; the version failure above already makes this run red.
+        Write-Output ("INFO {0,-16} npm  repository metadata not asserted until {1} is published" -f $label, $pin)
+    } else {
+        $repoUrl = if ($meta.repository -is [string]) { $meta.repository } else { $meta.repository.url }
+        if (-not (Test-RepositoryMetadata $published $repoUrl)) {
+            Write-Output ("FAIL {0,-16} npm  repository does not name oc-collections: {1} ({2})" -f $label, $repoUrl, $scope.Reason)
+            $fail++
         }
     }
 }
 
-if ($packageFilter) {
-    if ($matched -eq 0) {
+if ($packageFilter -and $matched -eq 0) {
+    # A row can exist and still name no installation target; that is a different
+    # failure from a missing row. Both exit 1.
+    $known = @($rows | Where-Object { (Get-PackageLabel $_.Name) -eq $filterLabel }).Count
+    if ($known -gt 0) {
+        Write-Output ("FAILED: row for package '{0}' is not an installation target (no version pin)" -f $packageFilter)
+    } else {
         Write-Output ("FAILED: no index row for package '{0}'" -f $packageFilter)
-        exit 1
     }
-    if ($npmChecked -eq 0) {
-        Write-Output ("FAILED: '{0}' has no npm link in the table" -f $packageFilter)
-        exit 1
-    }
+    exit 1
 }
 
 Write-Output ("registry: checked={0} failed={1}" -f $checked, $fail)
