@@ -237,8 +237,9 @@ function usage(exitCode, stream) {
     `  ${AGENTS_VERSION_ENV} pin rea-agents@<v> instead of @latest (bootstrap: exact only)`,
     '  REA_SHIM_HOME    bootstrap install root (default %LOCALAPPDATA%\\rea-shim)',
     'discovery: env override -> rea-shim bootstrap -> scoop',
-    '  (apps/ghidra/current, scoop JDKs) -> C:\\Program Files\\Eclipse Adoptium',
-    '  (jdk-*). The JDK floor is read from the selected Ghidra, never a constant.',
+    '  (apps/ghidra/current, scoop JDKs) -> %ProgramFiles%\\Eclipse Adoptium',
+    '  (jdk-*), falling back to C:\\Program Files when %ProgramFiles% is unset.',
+    '  The JDK floor is read from the selected Ghidra, never a constant.',
   ].join('\n') + '\n';
   fs.writeSync(stream === process.stderr ? 2 : 1, text);
   process.exit(exitCode);

@@ -15,11 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
-- Hosts on `@opentui/core` / `@opentui/solid` below 0.8.0 are no longer supported: npm refuses the install instead of loading this plugin onto a renderer it was not built against.
+- Hosts on `@opentui/core` / `@opentui/solid` below 0.8.0 are no longer supported: they fall outside the declared peer range, so a normal install will not pair this plugin with a renderer it was not built against, though `--legacy-peer-deps` tells npm to ignore peer checks and can bypass that.
 
 ### Changed
 
-- The `@opentui/core` and `@opentui/solid` peer floors are now `>=0.8.0`, raised from `>=0.6.6`. 0.8.0 is the renderer line the host's TUI plugin surface runs on, so a host that satisfied the old range could load this plugin onto a core instance the host no longer ships; the floor makes npm reject that pairing.
+- The `@opentui/core` and `@opentui/solid` peer floors are now `>=0.8.0`, raised from `>=0.6.6`. 0.8.0 is the renderer line the host's TUI plugin surface runs on, so a host that satisfied the old range could load this plugin onto a core instance the host no longer ships; the floor puts that pairing outside the declared peer range, so a normal install will not accept it, though `--legacy-peer-deps` tells npm to ignore peer checks and can bypass that.
 
 ## [0.20.7] - 2026-10-30
 

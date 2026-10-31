@@ -290,7 +290,7 @@ function collectJdkCandidates(env = process.env) {
     // where Adoptium actually installed. The literal stays as the last
     // fallback so a standard English install with no such variable set still
     // probes the same directory it always did, at the same point in the chain.
-    const programFiles = env.ProgramFiles || env['ProgramFiles'] || 'C:\\Program Files';
+    const programFiles = env.ProgramFiles || 'C:\\Program Files';
     const adoptium = path.join(programFiles, 'Eclipse Adoptium');
     for (const entry of fs.readdirSync(adoptium, { withFileTypes: true })) {
       if (!entry.isDirectory() || !/^jdk-/i.test(entry.name)) continue;
