@@ -1,6 +1,7 @@
 {
   "name": "oc-session-driver",
   "version": "0.1.0",
+  "private": true,
   "description": "Cross-session talk for any OpenCode harness: list live sessions, send one message to a peer, and read its reply back.",
   "keywords": [
     "opencode",
@@ -41,7 +42,7 @@
   "scripts": {
     "check": "node --check src/index.js",
     "test": "node --test \"test/**/*.test.js\"",
-    "prepublishOnly": "npm run check && npm run test"
+    "prepublishOnly": "node -e \"const p=require('./package.json');if(p.private){console.error('oc-session-driver is private pending a trial; publish blocked');process.exit(1)}\" && npm run check && npm run test"
   },
   "publishConfig": {
     "access": "public"
