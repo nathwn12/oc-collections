@@ -21,7 +21,7 @@ npm run check -w oc-harness-setup
 - `commands/` — the explicit rituals the installer ships.
 - `skills/` — the reusable procedures the installer ships.
 - `reference/` — the supporting material the installer ships.
-- `scripts/` — the PowerShell helpers the installer ships, ending in the harness doctor gate.
+- `scripts/` — the Node helpers the installer ships, ending in the harness doctor gate (`harness-doctor.mjs`).
 - `state-seed/` — the starter state the installer lays down; live session state is never shipped.
 - `.docs/` — supplementary notes installed into the host config (the doctor reads the unwired-routing record there).
 - `AGENTS.md` — the shipped starter contract; edits here are consumer-facing documentation.
@@ -42,7 +42,7 @@ npm run check -w oc-harness-setup
 
 ## Host contract
 
-- Targets the OpenCode host on Windows 10/11 only (macOS and Linux are not supported): the only host requirement is that the host CLI is runnable when `setup` runs (preflight refuses otherwise). Requires Node >= 22; the doctor gate needs PowerShell 7, and where it is missing its checks report as skipped, not passed.
+- Targets the OpenCode host on Windows 10/11 only (macOS and Linux are not supported): the only host requirement is that the host CLI is runnable when `setup` runs (preflight refuses otherwise). Requires Node >= 22; the doctor gate is Node ESM like the rest of the package and adds no requirement of its own.
 - `setup` lays down exactly the shipped content — `agents/`, `commands/`, `skills/`, `reference/`, `scripts/`, `.docs/`, plus `AGENTS.md` — into the host config location, lays `state-seed/` down as `state/`, and merges the base configuration into the user's config file. The destination is resolved through the host itself first, then an environment override, then platform fallbacks; it is never an invented path.
 - The install is consent-first and idempotent: the full manifest prints before anything moves, and re-runs skip identical files. Existing settings and existing state survive the merge; runtime policy is owned by the pack. Every run ends on the harness doctor, and a SHA-256 journal records every touched file.
 - Upgrading from 0.3.x retires unmodified 0.3.x files so the old roster, old skills, and old scripts never sit beside the new ones. Files the user modified after install are kept.
