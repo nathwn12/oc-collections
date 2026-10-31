@@ -130,6 +130,65 @@ test('cursor and maxBytes never duplicate output', async (t) => {
   assert.equal(full.cursor, manager.list().sessions[0].bytes);
 });
 
+// The shape a ConPTY produces: the mode-set escapes land as the first chunk and
+// the visible line only afterwards. A child that writes the escapes, pauses,
+// then writes its line reproduces that without depending on ConPTY timing.
+const MODE_ESCAPES = '\u001b[?9001h\u001b[?1004h';
+
+function escapesThenLine(line, delayMs) {
+  return [
+    '-e',
+    `process.stdout.write(${JSON.stringify(MODE_ESCAPES)});`
+    + `setTimeout(() => process.stdout.write(${JSON.stringify(`${line}\r\n`)}), ${delayMs});`
+    + 'setInterval(() => {}, 1000);',
+  ];
+}
+
+test('one stripped read waits past an escape-only chunk for the visible line', async (t) => {
+  const manager = new SessionManager();
+  t.after(() => manager.killAll());
+
+  const visible = manager.spawn({
+    command: process.execPath,
+    args: escapesThenLine('SECONDREAD', 400),
+    description: 'escapes first then a visible line',
+  });
+  const single = await manager.read(visible.sessionId, { waitMs: 5000 });
+  assert.match(single.data, /SECONDREAD/, 'one read with a wait must return the text behind the escapes');
+  assert.ok(single.cursor > Buffer.byteLength(MODE_ESCAPES), 'the cursor must pass the escape bytes');
+
+  // Nothing is replayed: the next read starts where the first one stopped.
+  const next = await manager.read(visible.sessionId, { cursor: single.cursor, waitMs: 200 });
+  assert.doesNotMatch(next.data, /SECONDREAD/);
+  assert.ok(next.cursor >= single.cursor);
+
+  // A raw read still returns the escapes themselves, without waiting for text.
+  const raw = manager.spawn({
+    command: process.execPath,
+    args: escapesThenLine('LATE_TEXT', 1500),
+    description: 'escapes first and the text much later',
+  });
+  const first = await manager.read(raw.sessionId, { stripAnsi: false, waitMs: 5000 });
+  assert.ok(first.data.includes(MODE_ESCAPES), 'stripAnsi: false must return the escape bytes');
+  assert.doesNotMatch(first.data, /LATE_TEXT/, 'stripAnsi: false must not wait for visible text');
+
+  // Bytes discarded while the stripped read waited are still reported, and the
+  // cursor is the absolute end of what came back.
+  const tight = new SessionManager({ maxBufferBytes: 512 });
+  t.after(() => tight.killAll());
+  const capped = tight.spawn({
+    command: process.execPath,
+    args: escapesThenLine('DROPPED-TAIL'.repeat(100), 300),
+    description: 'escapes first then more text than the ring',
+  });
+  const cut = await tight.read(capped.sessionId, { waitMs: 5000 });
+  assert.ok(cut.dropped > 0, 'bytes the ring discarded before the read must be reported');
+  assert.match(cut.data, /DROPPED-TAIL/);
+  const replayed = await tight.read(capped.sessionId, { cursor: cut.cursor, waitMs: 200 });
+  assert.equal(replayed.dropped, 0, 'a cursor at the end loses nothing');
+  assert.equal(replayed.data, '');
+});
+
 test('list pages with limit and offset, newest last', async (t) => {
   const manager = new SessionManager();
   t.after(() => manager.killAll());
