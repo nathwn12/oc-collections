@@ -24,7 +24,7 @@ Then add the entry to the `plugins` array in your `opencode.jsonc`:
 Or point that `plugins` array at this directory directly, as a local plugin path, and restart
 OpenCode.
 
-The plugin registers its three tools on session start. Nothing else to configure: it uses
+The plugin registers its nine tools when the session starts. Nothing else to configure: it uses
 the same `opencode` binary that is running it.
 
 ## Tools
