@@ -236,9 +236,13 @@ function usage(exitCode, stream) {
     `  ${GHIDRA_OVERRIDE_ENV}   pin the Ghidra install dir`,
     `  ${AGENTS_VERSION_ENV} pin rea-agents@<v> instead of @latest (bootstrap: exact only)`,
     '  REA_SHIM_HOME    bootstrap install root (default %LOCALAPPDATA%\\rea-shim)',
-    'discovery: env override -> rea-shim bootstrap -> scoop',
-    '  (apps/ghidra/current, scoop JDKs) -> C:\\Program Files\\Eclipse Adoptium',
-    '  (jdk-*). The JDK floor is read from the selected Ghidra, never a constant.',
+    'discovery: candidate sources, not a precedence order. Ghidra: rea-shim',
+    '  bootstrap installs and scoop apps/ghidra/current. JDKs: rea-shim bootstrap',
+    '  JDKs, scoop JDKs, and %ProgramFiles%\\Eclipse Adoptium (jdk-*), falling back',
+    '  to C:\\Program Files when %ProgramFiles% is unset; selection sorts the viable',
+    '  candidates by version, highest first. A JDK named by REA_SHIM_JDK_HOME is an',
+    '  override, taken when it satisfies the Ghidra-declared bounds. The JDK floor',
+    '  is read from the selected Ghidra, never a constant.',
   ].join('\n') + '\n';
   fs.writeSync(stream === process.stderr ? 2 : 1, text);
   process.exit(exitCode);
