@@ -18,7 +18,17 @@
 #   * the same package with monorepo metadata passes,
 #   * an externally released package (fixture classification) with its original
 #     metadata passes,
-#   * an unclassified package fails instead of being guessed.
+#   * an unclassified package fails instead of being guessed,
+#   * registry mode reads a shelf-shaped table (Package | Kind | Version | What it
+#     does | Install, no [repo]/[npm] link anywhere) and finds every installation
+#     target from the cells, resolving a scoped published name from its manifest,
+#   * a shelf row whose pinned version is not published fails,
+#   * a shelf row with no version pin and no artifact kind is skipped, not failed,
+#   * --package for an absent package exits 1, and for a row that is not an
+#     installation target exits 1 with that reason.
+# The registry cases run the real script bytes against registry documents in
+# CHECK_INDEX_REGISTRY_FIXTURES instead of the network, so they hold offline; the
+# live registry itself is exercised by the post-publish --registry run, not here.
 # Exit 0 only when every direction holds.
 $ErrorActionPreference = 'Stop'
 $check = Join-Path $PSScriptRoot 'check-index.ps1'
@@ -212,6 +222,124 @@ try {
         if ($case.Actual -ne $case.Expected) {
             Write-Output ('FAIL: ' + $case.Name)
             $fail++
+        }
+    }
+
+    # 5. Registry mode reads the shelf table, not link syntax. The fixture README
+    # is the README's shape -- Package | Kind | Version | What it does | Install
+    # -- and carries no [repo]/[npm] link at all, which is precisely what made
+    # the old link filter match zero rows. Registry documents served from
+    # CHECK_INDEX_REGISTRY_FIXTURES stand in for npm, so row discovery, target
+    # classification and the version/metadata assertions are all proven here
+    # offline. The scoped package's document is keyed by its published name, so a
+    # row resolved to the bare label 404s instead of quietly passing.
+    $shelfFixture = Join-Path $temp 'shelf.md'
+    $shelfLines = @(
+        '# Shelf index',
+        '',
+        '| Package | Kind | Version | What it does | Install |',
+        '| --- | --- | --- | --- | --- |',
+        '| oc-bifrost | plugin | `1.6.13` | Scoped fixture row. | Add `@nathwn12/oc-bifrost` to your `plugins`. |',
+        '| oc-flight-deck | plugin | `0.21.0` | Fixture row with a published pin. | Add `oc-flight-deck` to your `plugins`. |',
+        '| oc-harness-setup | CLI | `1.0.0` | Fixture row. | `npx -y oc-harness-setup setup` |',
+        '| oc-session-driver | plugin | not published | Private fixture row. | Nothing installs it. |',
+        '| oc-collections | repo | — | The index itself. | — |',
+        ''
+    )
+    Set-Content -LiteralPath $shelfFixture -Encoding utf8 -Value $shelfLines
+    $shelfText = Get-Content -LiteralPath $shelfFixture -Raw
+    $shelfRepoLinks = [regex]::Matches($shelfText, '\[repo\]\(http').Count
+    $shelfNpmLinks = [regex]::Matches($shelfText, '\[npm\]\(http').Count
+    Write-Output ('shelf fixture: repo-links={0} npm-links={1}' -f $shelfRepoLinks, $shelfNpmLinks)
+    if ($shelfRepoLinks -ne 0 -or $shelfNpmLinks -ne 0) {
+        Write-Output 'FAIL: the shelf fixture carries a link, so it cannot prove the old filter saw no rows'
+        $fail++
+    }
+
+    $registryDir = Join-Path $temp 'registry'
+    New-Item -ItemType Directory -Force -Path $registryDir | Out-Null
+    function Set-RegistryDoc([string]$file, [string]$name, [string]$version) {
+        $doc = '{ "name": "' + $name + '", "versions": { "' + $version + '": {} }, "repository": { "type": "git", "url": "git+https://github.com/nathwn12/oc-collections.git" } }'
+        Set-Content -LiteralPath (Join-Path $registryDir $file) -Encoding utf8 -Value $doc
+    }
+    Set-RegistryDoc 'nathwn12__oc-bifrost.json' '@nathwn12/oc-bifrost' '1.6.13'
+    Set-RegistryDoc 'oc-flight-deck.json' 'oc-flight-deck' '0.21.0'
+    Set-RegistryDoc 'oc-harness-setup.json' 'oc-harness-setup' '1.0.0'
+
+    $staleFixture = Join-Path $temp 'shelf-stale.md'
+    Set-Content -LiteralPath $staleFixture -Encoding utf8 -Value (Set-VersionCell $shelfText 'oc-flight-deck' '`9.9.9`')
+
+    $previousFixtures = $env:CHECK_INDEX_REGISTRY_FIXTURES
+    $env:CHECK_INDEX_REGISTRY_FIXTURES = $registryDir
+    try {
+        $registryCases = @(
+            [pscustomobject]@{
+                What    = 'shelf table, every pin published'
+                Path    = $shelfFixture
+                Args    = @()
+                Exit    = 0
+                Summary = '^registry: checked=3 failed=0$'
+                Needles = @('PASS oc-bifrost.*@nathwn12/oc-bifrost', 'PASS oc-flight-deck', 'PASS oc-harness-setup', 'SKIP oc-session-driver', 'SKIP oc-collections')
+            }
+            [pscustomobject]@{
+                What    = 'shelf table, unpublished pin'
+                Path    = $staleFixture
+                Args    = @()
+                Exit    = 1
+                Summary = '^registry: checked=3 failed=1$'
+                Needles = @('FAIL oc-flight-deck.*version 9\.9\.9 not published')
+            }
+            [pscustomobject]@{
+                What    = '--package names a target row'
+                Path    = $shelfFixture
+                Args    = @('--package', 'oc-flight-deck')
+                Exit    = 0
+                Summary = '^registry: checked=1 failed=0$'
+                Needles = @('PASS oc-flight-deck')
+            }
+            [pscustomobject]@{
+                What    = '--package names an absent row'
+                Path    = $shelfFixture
+                Args    = @('--package', 'oc-not-in-the-table')
+                Exit    = 1
+                Summary = $null
+                Needles = @("FAILED: no index row for package 'oc-not-in-the-table'")
+            }
+            [pscustomobject]@{
+                What    = '--package names a non-target row'
+                Path    = $shelfFixture
+                Args    = @('--package', 'oc-session-driver')
+                Exit    = 1
+                Summary = $null
+                Needles = @('not an installation target')
+            }
+        )
+        foreach ($case in $registryCases) {
+            $caseArgv = @('--registry') + @($case.Args) + @('-Path', $case.Path)
+            $caseOut = @(& pwsh -NoProfile -File $fakeCheck @caseArgv 2>&1)
+            $caseExit = $LASTEXITCODE
+            Write-Output ('shelf registry ({0}): exit={1}' -f $case.What, $caseExit)
+            $caseOut | Where-Object { $_ -match '^(PASS|FAIL|SKIP|FAILED|INFO|registry:)' } | ForEach-Object { Write-Output ('  ' + $_) }
+            if ($caseExit -ne $case.Exit) {
+                Write-Output ('FAIL: shelf registry {0} exited {1}, expected {2}' -f $case.What, $caseExit, $case.Exit)
+                $fail++
+            }
+            foreach ($needle in $case.Needles) {
+                if (@($caseOut | Where-Object { $_ -match $needle }).Count -eq 0) {
+                    Write-Output ('FAIL: shelf registry {0} never showed {1}' -f $case.What, $needle)
+                    $fail++
+                }
+            }
+            if ($case.Summary -and @($caseOut | Where-Object { $_ -match $case.Summary }).Count -eq 0) {
+                Write-Output ('FAIL: shelf registry {0} did not produce the expected summary' -f $case.What)
+                $fail++
+            }
+        }
+    } finally {
+        if ($null -eq $previousFixtures) {
+            Remove-Item Env:\CHECK_INDEX_REGISTRY_FIXTURES -ErrorAction SilentlyContinue
+        } else {
+            $env:CHECK_INDEX_REGISTRY_FIXTURES = $previousFixtures
         }
     }
 } finally {
