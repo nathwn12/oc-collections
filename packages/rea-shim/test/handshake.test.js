@@ -119,6 +119,35 @@ function isolatedEnv(extra) {
   return { ...env, ...extra };
 }
 
+// The refusal case must not depend on what this shell happens to export, so it
+// gets a child environment built from an allowlist instead of a delete-list of
+// known-bad names: a delete-list cannot survive a variable nobody thought of
+// yet, and `GHIDRA_INSTALL_DIR`/`JAVA_HOME` exported at user scope already
+// defeated this test once (the shim found a provisioned Ghidra and exited 0).
+const CHILD_ENV_ALLOWLIST = new Set([
+  'PATH', 'PATHEXT', 'COMSPEC', 'SYSTEMROOT', 'SYSTEMDRIVE', 'WINDIR', 'TEMP', 'TMP',
+]);
+
+// Every directory discovery falls back to when no explicit override is set is
+// pinned inside one empty temp root: REA_SHIM_HOME for the bootstrap tree and
+// SCOOP for the scoop tree (scoopRoot otherwise reads the user's home, which
+// bootstrapRoot also reads when LOCALAPPDATA is absent). A provisioned install
+// on this machine is therefore invisible to the child.
+function scrubbedEnv(t) {
+  const root = temporary(t, 'rea-shim-scrubbed-');
+  const env = {};
+  for (const [name, value] of Object.entries(process.env)) {
+    const key = name.toUpperCase();
+    if (!CHILD_ENV_ALLOWLIST.has(key) || Object.prototype.hasOwnProperty.call(env, key)) continue;
+    env[key] = value;
+  }
+  return {
+    ...env,
+    [discovery.HOME_ENV]: path.join(root, 'bootstrap'),
+    SCOOP: path.join(root, 'scoop'),
+  };
+}
+
 function context(t, { exitCode = 0 } = {}) {
   const root = temporary(t);
   const ghidra = path.join(root, 'ghidra');
@@ -263,19 +292,19 @@ test('the launcher forwards the child exit code to the MCP client', { skip: WIND
 });
 
 test('a refusal writes nothing to stdout', { skip: WINDOWS_ONLY }, (t) => {
-  const root = temporary(t);
+  const scrubbed = scrubbedEnv(t);
   const result = spawnSync(process.execPath, [BIN], {
     cwd: PACKAGE_DIR,
     encoding: 'utf8',
     timeout: TIMEOUT_MS,
-    env: isolatedEnv({ [discovery.HOME_ENV]: path.join(root, 'empty') }),
+    env: scrubbed,
   });
   assert.equal(result.status, 2);
   assert.equal(result.stdout, '', 'a refusal must not corrupt the JSON-RPC channel');
-  // Which dependency is missing depends on the machine (Ghidra or its JDK);
-  // the contract is that a refusal is stderr-only, non-zero, and never a
-  // half-open channel.
-  assert.match(result.stderr, /^rea-shim: refusing: no (Ghidra dir|JDK satisfying)/);
+  // The child sees no Ghidra from any source once the environment is scrubbed
+  // (no env override, an empty bootstrap root, an empty scoop tree), so the
+  // refusal that must fire is now deterministic rather than machine-dependent.
+  assert.match(result.stderr, /^rea-shim: refusing: no Ghidra dir found/);
 });
 
 test('--print-config emits the mcp.servers block OpenCode 2.2 writes', (t) => {
