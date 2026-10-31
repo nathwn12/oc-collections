@@ -48,13 +48,13 @@ would change nothing sends no request.
 
 `done` is a **lock**. `session_send`, `session_kick`, `session_park`, `session_kill` and
 `session_await` refuse it with `{ "error": "session_closed", … }`. `session_open` is the only
-verb that may lift it, and the only way back in. The `done` lock is checked before each action,
-and again inside the rename. The checks are not atomic: a close that lands between the read and
-the write can still race, and the next call will refuse it.
+verb that may lift it, and the only way back in. The `done` lock is advisory. It is checked
+before an action and again inside the rename, but neither check is atomic with the write it
+guards: a close that races an in-flight call can be overwritten.
 
 `session_park` is graceful: the title only, no message, no compaction. `session_kill` is hard:
 the same rename, then an interrupt of the active execution. That interrupt covers only the
-target — `cascaded` is always `false`, and live child sessions come back as a `children` id
+target — `cascaded` is always `false`, and child session ids come back as a `children` id
 list, never claimed stopped.
 
 There is no delete verb, by design. A session is the record of what was attempted.
@@ -182,18 +182,9 @@ does not report whether they are running. A `done` session is refused.
 scan of the whole estate — 1000 sessions a page, at most 20 pages. Any value beginning with
 `ses_` is taken as an id and resolved directly, with no list and no ambiguity.
 
-An id argument resolves directly. A title substring resolves only when exactly one session
-matches and the scan did not hit its cap. Several matches return `ambiguous_session`; a scan that
-hit its page cap returns `ambiguous_scan` with the candidates it saw.
-
-- No match: `{ "error": "session_not_found", … "candidates": [ … ] }`, listing up to five
-  near-miss titles so you can pick a real one.
-- The scan hit its page cap: a substring never resolves to a target, not even on a single
-  match, because an unscanned session may match too. That is
-  `{ "error": "ambiguous_scan", "truncated": true, "candidates": [ … ] }` listing the matches it
-  did see; pass the full id. A capped scan that found nothing is still reported as
-  `session_not_found`, carrying `"truncated": true`, so a large estate is never mistaken for a
-  complete answer.
+Resolution takes an id first, then a title substring. Ambiguous matches and capped scans refuse
+rather than guess. The exact branch order and payloads are in `src/index.js`; this page does not
+restate them.
 
 ## Worked example
 
