@@ -176,9 +176,13 @@ describe("flight deck plugin", () => {
     // refuses to load (opencode v2.1.1).
     expect(dependencies["@opentui/core"]).toBeUndefined();
     expect(dependencies["@opentui/solid"]).toBeUndefined();
+    // 0.8.0 is the floor, not 0.6.6: opencode 2.2.3+ runs its TUI plugins on
+    // the 0.8 module surface, so a host that satisfies an older range can load
+    // this plugin onto a core instance the host no longer ships. Declaring the
+    // floor here makes npm refuse that pairing instead of rendering on it.
     expect(packageJson.peerDependencies).toMatchObject({
-      "@opentui/core": ">=0.6.6",
-      "@opentui/solid": ">=0.6.6",
+      "@opentui/core": ">=0.8.0",
+      "@opentui/solid": ">=0.8.0",
       "solid-js": ">=1.9.0",
     });
     // These peers MUST NOT be optional. The render entrypoint imports
