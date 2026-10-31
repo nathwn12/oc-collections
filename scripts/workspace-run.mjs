@@ -9,23 +9,16 @@
  * is fail-closed: a workspace missing from the plan is an error, never a silent
  * skip.
  *
+ * Failures set process.exitCode and return; a forced exit can truncate the
+ * message still queued on stderr when CI pipes it, and the child's exact
+ * status is what the caller must see.
+ *
  * Usage: node scripts/workspace-run.mjs <check|build|test>
  */
 import { spawnSync } from "node:child_process"
 import path from "node:path"
 
 import { PLAN, ROOT, checkPlan, workspaceDirs } from "./workspace-plan.mjs"
-
-const purpose = process.argv[2]
-
-const plan = PLAN[purpose]
-if (!plan) {
-  console.error(`usage: node scripts/workspace-run.mjs <check|build|test> (got "${purpose ?? ""}")`)
-  process.exit(2)
-}
-
-const dirs = workspaceDirs(ROOT)
-if (!checkPlan(plan, dirs, purpose)) process.exit(1)
 
 function runNpm(args, cwd) {
   const npmCli = process.env.npm_execpath
@@ -36,26 +29,54 @@ function runNpm(args, cwd) {
         stdio: "inherit",
         shell: process.platform === "win32",
       })
-  if (result.status !== 0) process.exit(result.status ?? 1)
+  if (result.status !== 0) {
+    process.exitCode = result.status ?? 1
+    return false
+  }
+  return true
 }
 
-for (const dir of dirs) {
-  const name = path.basename(dir)
-  const workspacePath = path.relative(ROOT, dir).replace(/\\/g, "/")
-  const steps = plan[name]
-  if (steps.length === 0) {
-    console.log(`\n[${purpose}] ${name}: skip (this package has no ${purpose} command)`)
-    continue
+function main() {
+  const purpose = process.argv[2]
+
+  const plan = PLAN[purpose]
+  if (!plan) {
+    console.error(`usage: node scripts/workspace-run.mjs <check|build|test> (got "${purpose ?? ""}")`)
+    process.exitCode = 2
+    return
   }
-  for (const [kind, ...rest] of steps) {
-    console.log(`\n[${purpose}] ${name}: ${kind} ${rest.join(" ")}`)
-    if (kind === "script") runNpm(["run", rest[0], "-w", workspacePath], ROOT)
-    else if (kind === "pack") runNpm(["pack", ...rest], dir)
-    else if (kind === "node") {
-      const result = spawnSync(process.execPath, rest, { cwd: dir, stdio: "inherit" })
-      if (result.status !== 0) process.exit(result.status ?? 1)
-    } else throw new Error(`unknown step kind: ${kind}`)
+
+  const dirs = workspaceDirs(ROOT)
+  if (!checkPlan(plan, dirs, purpose)) {
+    process.exitCode = 1
+    return
   }
+
+  for (const dir of dirs) {
+    const name = path.basename(dir)
+    const workspacePath = path.relative(ROOT, dir).replace(/\\/g, "/")
+    const steps = plan[name]
+    if (steps.length === 0) {
+      console.log(`\n[${purpose}] ${name}: skip (this package has no ${purpose} command)`)
+      continue
+    }
+    for (const [kind, ...rest] of steps) {
+      console.log(`\n[${purpose}] ${name}: ${kind} ${rest.join(" ")}`)
+      if (kind === "script") {
+        if (!runNpm(["run", rest[0], "-w", workspacePath], ROOT)) return
+      } else if (kind === "pack") {
+        if (!runNpm(["pack", ...rest], dir)) return
+      } else if (kind === "node") {
+        const result = spawnSync(process.execPath, rest, { cwd: dir, stdio: "inherit" })
+        if (result.status !== 0) {
+          process.exitCode = result.status ?? 1
+          return
+        }
+      } else throw new Error(`unknown step kind: ${kind}`)
+    }
+  }
+
+  console.log(`\n[${purpose}] all packages OK`)
 }
 
-console.log(`\n[${purpose}] all packages OK`)
+main()

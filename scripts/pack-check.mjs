@@ -15,6 +15,9 @@
  * Fail-closed: zero discovered workspaces, or a workspace missing from the
  * shared plan (scripts/workspace-plan.mjs), exits 1 instead of verifying
  * nothing and reporting success.
+ *
+ * Failures set process.exitCode and return; a forced exit can truncate the
+ * FAIL lines still queued on stderr when CI pipes them.
  */
 import { spawnSync } from "node:child_process"
 import { createHash } from "node:crypto"
@@ -23,19 +26,6 @@ import os from "node:os"
 import path from "node:path"
 
 import { PLAN, ROOT, checkPlan, workspaceDirs } from "./workspace-plan.mjs"
-
-const dirs = workspaceDirs(ROOT)
-if (dirs.length === 0) {
-  console.error("pack-check FAILED: no workspace packages found")
-  process.exit(1)
-}
-if (!checkPlan(PLAN.check, dirs, "pack-check")) {
-  console.error("pack-check FAILED: workspace plan mismatch")
-  process.exit(1)
-}
-
-const outRoot = fs.mkdtempSync(path.join(os.tmpdir(), "oc-collections-pack-check-"))
-const failures = []
 
 function npm(args) {
   const npmCli = process.env.npm_execpath
@@ -75,66 +65,86 @@ function isForbidden(entry) {
 
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex")
 
-try {
-  for (const dir of dirs) {
-    const pkgPath = path.join(dir, "package.json")
-    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"))
-    const destination = path.join(outRoot, path.basename(dir))
-    fs.mkdirSync(destination, { recursive: true })
-
-    console.log(`\n[pack] ${pkg.name}@${pkg.version}`)
-    const packed = npm(["pack", "--workspace", pkg.name, "--pack-destination", destination])
-    if (packed.status !== 0) {
-      console.log(`  FAIL npm pack (exit ${packed.status})`)
-      failures.push(pkg.name)
-      continue
-    }
-    const filename = packed.stdout.trim().split(/\r?\n/).filter(Boolean).pop()
-    const tgz = path.join(destination, filename)
-
-    const listing = tar(["-tzf", tgz])
-    if (listing.status !== 0) {
-      console.log("  FAIL tar -tzf")
-      failures.push(pkg.name)
-      continue
-    }
-    const entries = listing.stdout.toString("utf8").split(/\r?\n/).filter(Boolean)
-    const forbidden = entries.filter(isForbidden)
-
-    const extracted = tar(["-xzf", tgz, "-O", "package/package.json"])
-    const packedManifest = extracted.status === 0 ? extracted.stdout : Buffer.alloc(0)
-    const builtManifest = fs.readFileSync(pkgPath)
-    const manifestEqual = sha256(packedManifest) === sha256(builtManifest)
-
-    const declared = new Set()
-    if (pkg.main) declared.add(pkg.main)
-    const bins = typeof pkg.bin === "string" ? { bin: pkg.bin } : (pkg.bin ?? {})
-    for (const binRel of Object.values(bins)) declared.add(binRel)
-    for (const target of exportTargets(pkg.exports)) declared.add(target)
-    const missingEntries = [...declared]
-      .map((target) => target.replace(/^\.\//, ""))
-      .filter((target) => !entries.includes(`package/${target}`))
-
-    const missingFiles = (pkg.files ?? []).filter((file) => {
-      const clean = file.replace(/\/+$/, "")
-      return !entries.some((entry) => entry === `package/${clean}` || entry.startsWith(`package/${clean}/`))
-    })
-
-    const ok = forbidden.length === 0 && manifestEqual && missingEntries.length === 0 && missingFiles.length === 0
-    console.log(`  tarball: ${filename} (${entries.length} entries)`)
-    console.log(`  forbidden entries: ${forbidden.length ? forbidden.join(", ") : "none"}`)
-    console.log(`  manifest byte-equal: ${manifestEqual}`)
-    console.log(`  entry points present: ${missingEntries.length ? "MISSING " + missingEntries.join(", ") : `yes (${declared.size})`}`)
-    console.log(`  files entries present: ${missingFiles.length ? "MISSING " + missingFiles.join(", ") : `yes (${(pkg.files ?? []).length})`}`)
-    console.log(`  ${ok ? "PASS" : "FAIL"}`)
-    if (!ok) failures.push(pkg.name)
+function main() {
+  const dirs = workspaceDirs(ROOT)
+  if (dirs.length === 0) {
+    console.error("pack-check FAILED: no workspace packages found")
+    process.exitCode = 1
+    return
   }
-} finally {
-  fs.rmSync(outRoot, { recursive: true, force: true })
+  if (!checkPlan(PLAN.check, dirs, "pack-check")) {
+    console.error("pack-check FAILED: workspace plan mismatch")
+    process.exitCode = 1
+    return
+  }
+
+  const outRoot = fs.mkdtempSync(path.join(os.tmpdir(), "oc-collections-pack-check-"))
+  const failures = []
+
+  try {
+    for (const dir of dirs) {
+      const pkgPath = path.join(dir, "package.json")
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"))
+      const destination = path.join(outRoot, path.basename(dir))
+      fs.mkdirSync(destination, { recursive: true })
+
+      console.log(`\n[pack] ${pkg.name}@${pkg.version}`)
+      const packed = npm(["pack", "--workspace", pkg.name, "--pack-destination", destination])
+      if (packed.status !== 0) {
+        console.log(`  FAIL npm pack (exit ${packed.status})`)
+        failures.push(pkg.name)
+        continue
+      }
+      const filename = packed.stdout.trim().split(/\r?\n/).filter(Boolean).pop()
+      const tgz = path.join(destination, filename)
+
+      const listing = tar(["-tzf", tgz])
+      if (listing.status !== 0) {
+        console.log("  FAIL tar -tzf")
+        failures.push(pkg.name)
+        continue
+      }
+      const entries = listing.stdout.toString("utf8").split(/\r?\n/).filter(Boolean)
+      const forbidden = entries.filter(isForbidden)
+
+      const extracted = tar(["-xzf", tgz, "-O", "package/package.json"])
+      const packedManifest = extracted.status === 0 ? extracted.stdout : Buffer.alloc(0)
+      const builtManifest = fs.readFileSync(pkgPath)
+      const manifestEqual = sha256(packedManifest) === sha256(builtManifest)
+
+      const declared = new Set()
+      if (pkg.main) declared.add(pkg.main)
+      const bins = typeof pkg.bin === "string" ? { bin: pkg.bin } : (pkg.bin ?? {})
+      for (const binRel of Object.values(bins)) declared.add(binRel)
+      for (const target of exportTargets(pkg.exports)) declared.add(target)
+      const missingEntries = [...declared]
+        .map((target) => target.replace(/^\.\//, ""))
+        .filter((target) => !entries.includes(`package/${target}`))
+
+      const missingFiles = (pkg.files ?? []).filter((file) => {
+        const clean = file.replace(/\/+$/, "")
+        return !entries.some((entry) => entry === `package/${clean}` || entry.startsWith(`package/${clean}/`))
+      })
+
+      const ok = forbidden.length === 0 && manifestEqual && missingEntries.length === 0 && missingFiles.length === 0
+      console.log(`  tarball: ${filename} (${entries.length} entries)`)
+      console.log(`  forbidden entries: ${forbidden.length ? forbidden.join(", ") : "none"}`)
+      console.log(`  manifest byte-equal: ${manifestEqual}`)
+      console.log(`  entry points present: ${missingEntries.length ? "MISSING " + missingEntries.join(", ") : `yes (${declared.size})`}`)
+      console.log(`  files entries present: ${missingFiles.length ? "MISSING " + missingFiles.join(", ") : `yes (${(pkg.files ?? []).length})`}`)
+      console.log(`  ${ok ? "PASS" : "FAIL"}`)
+      if (!ok) failures.push(pkg.name)
+    }
+  } finally {
+    fs.rmSync(outRoot, { recursive: true, force: true })
+  }
+
+  if (failures.length > 0) {
+    console.error(`\npack-check FAILED: ${failures.join(", ")}`)
+    process.exitCode = 1
+    return
+  }
+  console.log("\npack-check: all workspace tarballs verified")
 }
 
-if (failures.length > 0) {
-  console.error(`\npack-check FAILED: ${failures.join(", ")}`)
-  process.exit(1)
-}
-console.log("\npack-check: all workspace tarballs verified")
+main()
