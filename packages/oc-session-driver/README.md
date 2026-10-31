@@ -8,17 +8,20 @@ the sessions next door: find a peer, hand it a message, and read what it answere
 
 This package is private pending a trial and is not installable from the registry.
 
-Install the package where OpenCode can resolve it:
+To try it locally, link this directory into the harness from `packages/oc-session-driver`:
 
 ```powershell
-npm install -g oc-session-driver
+npm link
 ```
 
-Add the entry to the `plugins` array in your `opencode.jsonc`, then restart OpenCode:
+Then add the entry to the `plugins` array in your `opencode.jsonc`:
 
 ```json
 { "plugins": ["oc-session-driver"] }
 ```
+
+Or point that `plugins` array at this directory directly, as a local plugin path, and restart
+OpenCode.
 
 The plugin registers its three tools on session start. Nothing else to configure: it uses
 the same `opencode` binary that is running it.
