@@ -6,6 +6,8 @@ the sessions next door: find a peer, hand it a message, and read what it answere
 
 ## Install
 
+This package is private pending a trial and is not installable from the registry.
+
 Install the package where OpenCode can resolve it:
 
 ```powershell

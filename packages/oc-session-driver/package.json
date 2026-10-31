@@ -1,6 +1,7 @@
 {
   "name": "oc-session-driver",
   "version": "0.1.0",
+  "private": true,
   "description": "Cross-session talk for any OpenCode harness: list live sessions, send one message to a peer, and read its reply back.",
   "keywords": [
     "opencode",
