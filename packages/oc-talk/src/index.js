@@ -14,6 +14,7 @@
 // here, and no secret ever crosses this module: the child process holds its own
 // authentication and this module only ever sees the JSON it prints.
 import { execFile } from 'node:child_process';
+import { Plugin } from '@opencode/plugin';
 
 const BIN = 'opencode';
 const TIMEOUT_MS = 20000;
@@ -771,23 +772,18 @@ async function ensureTools(ctx) {
 
 export { doneRefusal, ensureTools, listSessions, resolveTarget, setApiRunner, stripPrefix };
 
-export default {
+// V2 plugin definition, and the only shape the V2 host executes: a V1 object
+// export is loaded (it appears in `opencode plugin list`) but its `setup` is
+// never called, which is exactly how this package registered zero tools. The
+// V1 `server` fallback is gone for the same reason: a V1 implementation does not
+// run in V2, so it was dead weight that also misread as a live path.
+//
+// `setup` returns void by design: `ensureTools` keeps the single live
+// registration and disposes it before re-registering, so a reload replaces the
+// transform instead of stacking a second one.
+export default Plugin.define({
   id: 'oc-talk',
-  // V2 config loader: requires id + setup|effect; registers tools when the
-  // host exposes the tool domain here, otherwise server retries below.
-  //
-  // The returned cleanup disposes this call's registration so an unload leaves
-  // nothing behind. It only touches the registration it created: if a newer
-  // setup has already replaced it, that one is the live one and is left alone.
-  setup(ctx) {
-    return ensureTools(ctx).then((mine) => () => {
-      if (!mine || registration !== mine) return undefined;
-      return dropRegistration();
-    });
-  },
-  // Server runtime: same registration gate; no hooks to dispatch.
-  server: async (ctx) => {
+  async setup(ctx) {
     await ensureTools(ctx);
-    return {};
   },
-};
+});

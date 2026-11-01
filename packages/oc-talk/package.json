@@ -1,6 +1,6 @@
 {
   "name": "oc-talk",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Cross-session talk for any OpenCode harness: list live sessions, send one message to a peer, and read its reply back.",
   "keywords": [
     "opencode",
@@ -42,6 +42,9 @@
     "check": "node --check src/index.js",
     "test": "node --test \"test/**/*.test.js\"",
     "prepublishOnly": "npm run check && npm run test"
+  },
+  "dependencies": {
+    "@opencode/plugin": "^2.2.5"
   },
   "publishConfig": {
     "access": "public"

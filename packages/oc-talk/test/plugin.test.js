@@ -94,27 +94,34 @@ function host() {
   return { ctx, added };
 }
 
-test('all nine tools register, through setup and through server', async () => {
+test('the V2 definition registers all nine tools through setup', async () => {
   const mod = await load();
 
   // A host with no tool domain registers nothing and must not throw.
   await assert.doesNotReject(() => mod.default.setup({ tool: {} }));
   await assert.doesNotReject(() => mod.default.setup(undefined));
 
-  const viaSetup = host();
-  await mod.default.setup(viaSetup.ctx);
-  assert.deepEqual(viaSetup.added.map((t) => t.name), NINE);
+  const { ctx, added } = host();
+  await mod.default.setup(ctx);
+  assert.deepEqual(added.map((t) => t.name), NINE);
 
-  for (const tool of viaSetup.added) {
+  for (const tool of added) {
     assert.equal(typeof tool.execute, 'function');
     assert.equal(tool.options.codemode, false);
     assert.equal(tool.description, DESCRIPTIONS[tool.name], 'routing description drifted: ' + tool.name);
   }
+});
 
-  // The server path is the same gate: a fresh module registers the same nine.
-  const viaServer = host();
-  await (await load()).default.server(viaServer.ctx);
-  assert.deepEqual(viaServer.added.map((t) => t.name), NINE);
+// The port itself. The V2 host loads a V1 object export and never calls its
+// setup — the failure this release fixes — so the export must be exactly what
+// `Plugin.define` returns: an id and a setup, with no V1 `server` member that
+// would read as a live path while never running.
+test('the default export is a V2 definition: id plus setup, no V1 server', async () => {
+  const mod = await load();
+  assert.deepEqual(Object.keys(mod.default).sort(), ['id', 'setup']);
+  assert.equal(mod.default.id, 'oc-talk');
+  assert.equal(typeof mod.default.setup, 'function');
+  assert.equal(mod.default.server, undefined, 'a V1 server export is dead weight in V2');
 });
 
 test('an ambiguous title returns candidates instead of guessing', async () => {
@@ -438,19 +445,16 @@ test('a reload re-registers tools: setup twice leaves exactly one live registrat
   assert.equal(viaSetup.registrations[1].disposed, 0);
 });
 
-test('the cleanup setup returns disposes its registration, and a later setup registers again', async () => {
+test('setup resolves to void and leaves exactly one live registration', async () => {
   const mod = await load();
   const { ctx, registrations } = reloadHost();
 
-  const cleanup = await mod.default.setup(ctx);
-  assert.equal(typeof cleanup, 'function', 'setup must return a cleanup');
-  await cleanup();
-  assert.equal(registrations[0].disposed, 1, 'an unload must leave nothing behind');
-
-  // The handle was forgotten by the cleanup, so the next setup registers rather
-  // than believing a dead registration is still live.
-  await mod.default.setup(ctx);
-  assert.equal(registrations.length, 2, 'setup after a cleanup must register again');
-  assert.equal(registrations[1].disposed, 0);
+  // The definition's setup is async and resolves to nothing: disposal on unload
+  // belongs to the V2 host, and `ensureTools` is what keeps one live
+  // registration across a reload.
+  assert.equal(await mod.default.setup(ctx), undefined);
+  assert.equal(registrations.length, 1, 'setup must register');
+  assert.deepEqual(registrations[0].added.map((t) => t.name), NINE);
+  assert.equal(registrations[0].disposed, 0, 'the registration is live after setup');
 });
 
