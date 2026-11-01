@@ -9,6 +9,7 @@ export const ERROR_CODES = Object.freeze({
   SESSION_NOT_FOUND: 'session_not_found',
   SPAWN_FAILED: 'spawn_failed',
   PTY_WRITE_FAILED: 'pty_write_failed',
+  PTY_RESIZE_FAILED: 'pty_resize_failed',
   TOO_MANY_SESSIONS: 'too_many_sessions',
   PTY_KILL_FAILED: 'pty_kill_failed',
   // Anything unexpected. Never used for a condition the codes above cover.
