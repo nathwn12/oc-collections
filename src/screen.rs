@@ -837,6 +837,7 @@ mod tests {
     /// acting, with the typed target_gone text.
     #[test]
     fn revalidate_locked_refuses_a_dead_lock() {
+        let _g = crate::fixture::desktop();
         let f = crate::fixture::Fixture::new();
         let hwnd = f.hwnd_i64();
         let spec = crate::target::TargetSpec::parse(&serde_json::json!({"hwnd": hwnd})).unwrap();
@@ -880,6 +881,7 @@ mod tests {
     /// IsWindow bad_window, and never a capture of whatever reused the handle.
     #[test]
     fn window_selector_uses_the_target_lock() {
+        let _g = crate::fixture::desktop();
         let f = crate::fixture::Fixture::new();
         let hwnd = f.hwnd_i64();
         drop(f);
@@ -909,6 +911,7 @@ mod tests {
     /// hwnd failure.
     #[test]
     fn screenshot_target_gone_is_typed() {
+        let _g = crate::fixture::desktop();
         let f = crate::fixture::Fixture::new();
         let hwnd = f.hwnd_i64();
         drop(f);
@@ -980,6 +983,7 @@ mod tests {
     /// thing on a CI runner whose foreground moves under it.
     #[test]
     fn desktop_screenshot_names_the_elements_window() {
+        let _g = crate::fixture::desktop();
         let f = crate::fixture::Fixture::new();
         let hwnd = f.hwnd_i64();
         script_foreground(&[hwnd]);
@@ -1028,6 +1032,7 @@ mod tests {
     /// is exactly what a second read would pick up.
     #[test]
     fn elements_window_keeps_the_handle_sampled_at_call_start() {
+        let _g = crate::fixture::desktop();
         let f = crate::fixture::Fixture::new();
         let hwnd = f.hwnd_i64();
         let g = crate::fixture::Fixture::new();

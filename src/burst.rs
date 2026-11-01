@@ -4824,6 +4824,7 @@ mod tests {
     /// (`msg_counts().0 == 1`), which is the wrong click the guard closes.
     #[test]
     fn click_on_an_element_without_a_rect_is_refused_and_never_posts() {
+        let _g = crate::fixture::desktop();
         let fx = crate::fixture::Fixture::new();
         let hwnd = fx.hwnd_i64();
         // Collapse every child in place: no control then has a pixel to aim
@@ -4993,6 +4994,7 @@ mod tests {
 
     #[test]
     fn invoke_state_validated_before_dry_run_return() {
+        let _g = crate::fixture::desktop();
         // Dry-run must validate `state` before the early ok:true return:
         // bogus state fails typed even though the element resolves.
         let (fx, bg) = fixture_bg();
@@ -5017,6 +5019,7 @@ mod tests {
 
     #[test]
     fn invoke_state_expand_resolves_under_dry_run() {
+        let _g = crate::fixture::desktop();
         // Valid state passes dry-run resolution (ok, found, no firing).
         let (fx, bg) = fixture_bg();
         let _ = fx.hwnd();
@@ -5230,6 +5233,7 @@ mod tests {
 
     #[test]
     fn scroll_element_dry_run_assembles_no_wheel() {
+        let _g = crate::fixture::desktop();
         // Element scroll resolves instead of wheeling: dry run assembles
         // zero INPUT events (no wheel queued), ok + found.
         let (fx, bg) = fixture_bg();
@@ -5257,6 +5261,7 @@ mod tests {
 
     #[test]
     fn scroll_element_without_pattern_is_typed() {
+        let _g = crate::fixture::desktop();
         // The fixture OK button has no ScrollPattern: UIA-only pattern
         // error, never a wheel fallback, never any input. Headless-safe:
         // the pattern query fails before any actuation, on our own window.
@@ -5304,6 +5309,7 @@ mod tests {
 
     #[test]
     fn scroll_element_rejects_xy_without_mouse() {
+        let _g = crate::fixture::desktop();
         // Element scroll is UIA-only: x/y alongside element is a typed
         // error and queues no mouse movement. A target is supplied so the
         // action reaches its own validation instead of the gate.
@@ -5785,6 +5791,7 @@ mod tests {
 
     #[test]
     fn ref_selector_rejected_names_accepted_forms() {
+        let _g = crate::fixture::desktop();
         // The `ref:` invoke selector was removed (4.2.1): a ref token pins
         // only window + path and cannot promise element identity, so any
         // `ref:<x>` element string is rejected with the existing unknown-kind
@@ -5847,6 +5854,7 @@ mod tests {
 
     #[test]
     fn set_value_missing_element_rejected() {
+        let _g = crate::fixture::desktop();
         let (fx, bg) = fixture_bg();
         let _ = fx.hwnd();
         let actions = vec![serde_json::json!({"type": "set_value", "text": "hi"})];
@@ -5862,6 +5870,7 @@ mod tests {
 
     #[test]
     fn set_value_missing_text_rejected() {
+        let _g = crate::fixture::desktop();
         let (fx, bg) = fixture_bg();
         let _ = fx.hwnd();
         // Resolve an existing control first (OK button by name), but omit text.
@@ -5877,6 +5886,7 @@ mod tests {
 
     #[test]
     fn set_value_ref_rejected_like_invoke() {
+        let _g = crate::fixture::desktop();
         // set_value resolves through the same match_element, so ref: stays
         // rejected with the unknown-kind shape naming the accepted forms.
         let (fx, bg) = fixture_bg();
@@ -5898,6 +5908,7 @@ mod tests {
 
     #[test]
     fn set_value_not_found_typed() {
+        let _g = crate::fixture::desktop();
         let (fx, bg) = fixture_bg();
         let _ = fx.hwnd();
         let actions = vec![
@@ -5915,6 +5926,7 @@ mod tests {
 
     #[test]
     fn set_value_button_has_no_valuepattern() {
+        let _g = crate::fixture::desktop();
         // Live (not dry_run): the OK button exposes Invoke, not ValuePattern.
         let (fx, bg) = fixture_bg();
         let _ = fx.hwnd();
@@ -5991,6 +6003,7 @@ mod tests {
 
     #[test]
     fn set_value_readonly_typed() {
+        let _g = crate::fixture::desktop();
         let (fx, bg, _w, ro) = edit_paths();
         let _ = fx.hwnd();
         let actions = vec![
@@ -6017,6 +6030,7 @@ mod tests {
     /// provider write still lands its exact value.
     #[test]
     fn fixture_edit_refuses_external_typing() {
+        let _g = crate::fixture::desktop();
         let f = crate::fixture::Fixture::new();
         crate::fixture::reset_swallowed_keys(f.edit());
         unsafe {
@@ -6049,6 +6063,7 @@ mod tests {
     /// the fixture's typing guard cannot change what the product does.
     #[test]
     fn value_pattern_set_value_replaces_without_keystrokes() {
+        let _g = crate::fixture::desktop();
         let f = crate::fixture::Fixture::new();
         wait_uia_stable(f.hwnd());
         let model = crate::shot::element_model(f.hwnd(), crate::UIA_DEPTH_LIMIT, 0);
@@ -6108,6 +6123,7 @@ mod tests {
     /// owner's keystrokes can prepend characters here.
     #[test]
     fn set_value_success_writes_and_never_echoes() {
+        let _g = crate::fixture::desktop();
         // Environment-independent foreground contract: record the foreground
         // window BEFORE any fixture work; the tool must not CHANGE it. When
         // the environment provides no foreground session (headless CI), the
@@ -6172,6 +6188,7 @@ mod tests {
     /// (FG_OWN_CHURN), never failed — a dry run performs no input.
     #[test]
     fn set_value_dry_run_leaves_foreground_clean() {
+        let _g = crate::fixture::desktop();
         let fg_before = crate::fixture::foreground_now();
         let (fx, bg, wpath, _ro) = edit_paths();
         let _ = fx.hwnd();
@@ -6199,6 +6216,7 @@ mod tests {
     /// recovery advice), never act.
     #[test]
     fn invoke_stale_fp_refused_with_typed_error() {
+        let _g = crate::fixture::desktop();
         let (fx, bg, _w, _ro) = edit_paths();
         let _ = fx.hwnd();
         let actions = vec![
@@ -6224,6 +6242,7 @@ mod tests {
 
     #[test]
     fn set_value_stale_fp_refused_with_typed_error() {
+        let _g = crate::fixture::desktop();
         // Same mismatch path for set_value: wrong expect_fp refuses before
         // any provider call, dry_run included.
         let (fx, bg, wpath, _ro) = edit_paths();
@@ -6248,6 +6267,7 @@ mod tests {
 
     #[test]
     fn invoke_matching_fp_resolves() {
+        let _g = crate::fixture::desktop();
         // Positive control for the fp gate: the CURRENT fingerprint from a
         // fresh walk must resolve (dry_run, no activation).
         let (fx, bg, _w, _ro) = edit_paths();
@@ -6307,6 +6327,7 @@ mod tests {
 
     #[test]
     fn uipi_own_process_readable_and_own_window_unblocked() {
+        let _g = crate::fixture::desktop();
         // Live handles, deterministic on any box, elevated runner or not:
         // our own token is always readable, and our own (necessarily
         // same-integrity) fixture window is never a refusal.
@@ -6324,6 +6345,7 @@ mod tests {
 
     #[test]
     fn uipi_background_dry_run_reports_normally_when_not_elevated() {
+        let _g = crate::fixture::desktop();
         // No-regression companion: a dry_run background action at a
         // non-elevated target still reports ok:true with no blocked_by_uipi
         // and posts nothing.
@@ -6344,6 +6366,7 @@ mod tests {
 
     #[test]
     fn set_value_reresolve_failure_typed() {
+        let _g = crate::fixture::desktop();
         // Direct UIA call with a bogus path exercises the shared resolver's
         // stale branch without touching the owner's desktop.
         let f = crate::fixture::Fixture::new();
@@ -6362,6 +6385,7 @@ mod tests {
 
     #[test]
     fn set_value_burst_continues_after_failure() {
+        let _g = crate::fixture::desktop();
         // Per-action ok:false never aborts the rest of the burst.
         let (fx, bg, wpath, _ro) = edit_paths();
         let _ = fx.hwnd();
@@ -6385,14 +6409,6 @@ mod tests {
     }
 
     // ------------------------------------------------ no-steal (target lock + gate)
-
-    /// Serializes the posted-message tests: the fixture counters are
-    /// process-wide, and `cargo test` runs the tests in parallel.
-    static LIVE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    fn live_guard() -> std::sync::MutexGuard<'static, ()> {
-        LIVE_LOCK.lock().unwrap_or_else(|e| e.into_inner())
-    }
 
     fn sc(out: &str) -> Value {
         let outer: Value = serde_json::from_str(out).expect("outer frame");
@@ -6454,6 +6470,7 @@ mod tests {
     /// refused BEFORE any provider call — no value written, no focus hint.
     #[test]
     fn uia_text_entry_is_refused_without_the_opt_in() {
+        let _g = crate::fixture::desktop();
         let fx = crate::fixture::Fixture::new();
         let hwnd = fx.hwnd_i64();
         wait_uia_stable(fx.hwnd());
@@ -6491,6 +6508,7 @@ mod tests {
     /// typed refusal, zero key messages.
     #[test]
     fn hidden_flag_with_an_ordinary_target_earns_nothing() {
+        let _g = crate::fixture::desktop();
         let fx = crate::fixture::Fixture::new();
         let hwnd = fx.hwnd_i64();
         crate::fixture::reset_msg_counts();
@@ -6534,6 +6552,7 @@ mod tests {
     /// owner's desktop, never on a made-up private one.
     #[test]
     fn window_desktop_name_reads_a_real_desktop() {
+        let _g = crate::fixture::desktop();
         let fx = crate::fixture::Fixture::new();
         let name = crate::window_desktop_name(fx.hwnd()).expect("desktop name readable");
         assert!(!name.is_empty(), "desktop name must not be empty");
@@ -6552,7 +6571,7 @@ mod tests {
     /// is refused on the default path (keyboard is never posted).
     #[test]
     fn live_target_post_delivers_without_stealing() {
-        let _g = live_guard();
+        let _g = crate::fixture::desktop();
         let fx = crate::fixture::Fixture::new();
         let hwnd = fx.hwnd_i64();
         crate::fixture::reset_msg_counts();
@@ -6594,8 +6613,11 @@ mod tests {
         assert_eq!(results[0]["mode"], Value::from("background"));
 
         assert!(
-            wait_until(|| crate::fixture::msg_counts().0 >= 1),
-            "posted WM_LBUTTONDOWN must reach the target, got: {:?}",
+            wait_until(|| {
+                let (down, up, ..) = crate::fixture::msg_counts();
+                down >= 1 && up >= 1
+            }),
+            "posted click pair must reach the target, got: {:?}",
             crate::fixture::msg_counts()
         );
         let (down, up, mv, _kd, _ch) = crate::fixture::msg_counts();
@@ -6629,7 +6651,7 @@ mod tests {
     /// and read-back, not the foreground handle.
     #[test]
     fn live_type_on_element_uses_uia_set_value() {
-        let _g = live_guard();
+        let _g = crate::fixture::desktop();
         let fx = crate::fixture::Fixture::new();
         let hwnd = fx.hwnd_i64();
         crate::fixture::reset_msg_counts();
@@ -6666,7 +6688,7 @@ mod tests {
     /// claiming success.
     #[test]
     fn live_posted_element_click_with_unchanged_state_is_refused() {
-        let _g = live_guard();
+        let _g = crate::fixture::desktop();
         let fx = crate::fixture::Fixture::new();
         let hwnd = fx.hwnd_i64();
         wait_uia_stable(fx.hwnd());
@@ -6697,7 +6719,7 @@ mod tests {
     /// one WM_MOUSEMOVE before the pair; without it, none.
     #[test]
     fn live_hover_is_the_only_mouse_move() {
-        let _g = live_guard();
+        let _g = crate::fixture::desktop();
         let fx = crate::fixture::Fixture::new();
         let hwnd = fx.hwnd_i64();
         crate::fixture::reset_msg_counts();
@@ -6719,7 +6741,7 @@ mod tests {
     /// message at the point. Both delivered by message, never by pointer.
     #[test]
     fn live_drag_and_scroll_are_posted_not_pointer() {
-        let _g = live_guard();
+        let _g = crate::fixture::desktop();
         let fx = crate::fixture::Fixture::new();
         let hwnd = fx.hwnd_i64();
         let cur_before = cursor_now();
@@ -6735,7 +6757,13 @@ mod tests {
         let payload = sc(&out);
         assert_eq!(payload["results"][0]["ok"], Value::from(true), "{payload}");
         assert_eq!(payload["results"][1]["ok"], Value::from(true), "{payload}");
-        assert!(wait_until(|| crate::fixture::msg_counts().0 >= 1));
+        // The fixture pumps on its own thread, so a read can see the first
+        // messages of a posted group before the last one is dispatched. Wait
+        // for the whole down/move/up group before measuring it.
+        assert!(wait_until(|| {
+            let (down, up, mv, _, _) = crate::fixture::msg_counts();
+            down >= 1 && up >= 1 && mv >= 1
+        }));
         let (down, up, mv, _, _) = crate::fixture::msg_counts();
         assert_eq!((down, up, mv), (1, 1, 1), "down, one move, up");
         assert!(wait_until(|| crate::fixture::wheel_count() >= 1));
@@ -6746,6 +6774,7 @@ mod tests {
     /// acting - typed codes, zero events, desktop untouched.
     #[test]
     fn live_gate_refuses_without_target_or_flags() {
+        let _g = crate::fixture::desktop();
         let fg_before = crate::fixture::foreground_now();
         let cur_before = cursor_now();
         let actions = vec![
@@ -6811,6 +6840,7 @@ mod tests {
     /// action (revalidation), never a retarget and never a foreground fall.
     #[test]
     fn live_target_gone_mid_burst_is_typed() {
+        let _g = crate::fixture::desktop();
         let fx = crate::fixture::Fixture::new();
         let hwnd = fx.hwnd_i64();
         let actions = vec![
@@ -6844,7 +6874,7 @@ mod tests {
     /// nothing (posted keyboard is never used on the owner's desktop).
     #[test]
     fn live_message_only_click_delivers_and_key_is_never_posted() {
-        let _g = live_guard();
+        let _g = crate::fixture::desktop();
         let f = crate::fixture::MessageWindow::new();
         let hwnd = f.hwnd_i64();
         crate::fixture::reset_msg_counts();
@@ -6873,9 +6903,15 @@ mod tests {
             assert_eq!(results[k]["code"], Value::from("foreground_required"));
         }
         assert_eq!(payload["sendinput_calls"], Value::from(0));
+        // Wait for the whole posted click pair (down AND up) before reading:
+        // the fixture pumps on its own thread and may not have dispatched the
+        // up yet when the down counter first turns non-zero.
         assert!(
-            wait_until(|| crate::fixture::msg_counts().0 >= 1),
-            "posted WM_LBUTTONDOWN must be received: {:?}",
+            wait_until(|| {
+                let (down, up, ..) = crate::fixture::msg_counts();
+                down >= 1 && up >= 1
+            }),
+            "posted click pair must be received: {:?}",
             crate::fixture::msg_counts()
         );
         let (down, up, mv, kd, ch) = crate::fixture::msg_counts();
@@ -6895,6 +6931,7 @@ mod tests {
     /// target (dry_run resolves and names the path without firing).
     #[test]
     fn live_click_on_element_resolves_to_uia_pattern() {
+        let _g = crate::fixture::desktop();
         let (fx, bg) = fixture_bg();
         wait_uia_stable(fx.hwnd());
         let actions = vec![serde_json::json!({
@@ -6919,6 +6956,7 @@ mod tests {
     /// code, zero events, zero SendInput calls.
     #[test]
     fn live_cursor_only_pointer_actions_are_typed_failures() {
+        let _g = crate::fixture::desktop();
         let f = crate::fixture::MessageWindow::new();
         let _hwnd = f.hwnd_i64();
         crate::fixture::reset_msg_counts();
@@ -7003,7 +7041,7 @@ mod tests {
     /// still post.
     #[test]
     fn live_bad_coordinates_refused_before_posting() {
-        let _g = live_guard();
+        let _g = crate::fixture::desktop();
         let f = crate::fixture::MessageWindow::new();
         let hwnd = f.hwnd_i64();
         let target = Some(serde_json::json!({ "hwnd": hwnd }));
@@ -7060,7 +7098,7 @@ mod tests {
     /// that leaves the 16-bit range after ScreenToClient is still refused.
     #[test]
     fn live_bg_screen_coords_validated_before_and_after_the_cast() {
-        let _g = live_guard();
+        let _g = crate::fixture::desktop();
         let f = crate::fixture::MessageWindow::new();
         let bg = format!("hwnd:{}", f.hwnd_i64());
         crate::fixture::reset_msg_counts();
@@ -7117,6 +7155,7 @@ mod tests {
     /// LIVE: an ambiguous target is listed, never guessed.
     #[test]
     fn live_ambiguous_target_reports_candidates() {
+        let _g = crate::fixture::desktop();
         // Two offscreen fixtures share this process's image name, so an
         // exe-target for our own binary is ambiguous by construction.
         let a = crate::fixture::Fixture::new();

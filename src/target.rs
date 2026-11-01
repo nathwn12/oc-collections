@@ -805,6 +805,7 @@ mod tests {
     /// process creation time is a recycled PID and must be refused.
     #[test]
     fn pid_reuse_with_a_different_creation_time_is_rejected() {
+        let _g = crate::fixture::desktop();
         let f = crate::fixture::Fixture::new();
         let top = f.hwnd_i64();
         let spec = TargetSpec {
@@ -833,6 +834,7 @@ mod tests {
     /// while the target is NOT the foreground window (the alt-tab case).
     #[test]
     fn live_lock_survives_the_target_being_backgrounded() {
+        let _g = crate::fixture::desktop();
         let f = crate::fixture::Fixture::new();
         let top = f.hwnd_i64();
         let l = lock(&TargetSpec {
@@ -899,6 +901,7 @@ mod tests {
     /// hwnd/pid/class finds the same window without touching the foreground.
     #[test]
     fn live_lock_resolves_and_revalidates_the_fixture() {
+        let _g = crate::fixture::desktop();
         let f = crate::fixture::Fixture::new();
         let top = f.hwnd_i64();
         let fg_before = crate::fixture::foreground_now();
@@ -950,6 +953,7 @@ mod tests {
     /// Live: the coordinate conversion is the OS's, not an approximation.
     #[test]
     fn live_client_conversion_matches_client_to_screen() {
+        let _g = crate::fixture::desktop();
         let f = crate::fixture::Fixture::new();
         let top = f.hwnd_i64();
         let rect = client_rect_screen(top).expect("client rect readable");

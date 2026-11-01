@@ -348,6 +348,27 @@ pub fn foreground_now() -> i64 {
     unsafe { GetForegroundWindow() as i64 }
 }
 
+/// Serializes every test that touches the real desktop.
+///
+/// A test binary runs its tests on parallel threads by default, while the
+/// fixture counters above, `GetForegroundWindow`/`GetCursorPos`, and the UIA
+/// provider's focus-on-SetValue behaviour are process-wide. Without this lock
+/// one live test observes a sibling's window, focus, counter bump or posted
+/// message (CI run 41311923165 died exactly this way). Every test that creates
+/// a fixture or message window, posts messages, or measures the
+/// foreground/cursor holds the guard for its whole body, so parallel execution
+/// is safe by construction.
+static DESKTOP_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// RAII hold on the desktop lock; released when the test body ends.
+pub struct DesktopGuard(#[allow(dead_code)] std::sync::MutexGuard<'static, ()>);
+
+/// Acquire the process-wide desktop lock for a whole test body. Poison
+/// tolerant: one failed sibling must not turn every later live test red.
+pub fn desktop() -> DesktopGuard {
+    DesktopGuard(DESKTOP_LOCK.lock().unwrap_or_else(|e| e.into_inner()))
+}
+
 /// A MESSAGE-ONLY fixture window: created with `HWND_MESSAGE` as its parent,
 /// so it is never visible, never on the taskbar, never activatable — the
 /// harshest case for background delivery. It has no children, so a posted
@@ -586,6 +607,7 @@ mod self_tests {
 
     #[test]
     fn foreground_self_pid_rule_sees_own_fixture() {
+        let _g = desktop();
         // Live proof for the FG_SKIP_SELF branch: a window this test process
         // owns (the offscreen fixture) reports our own PID, so a "before"
         // value pointing at a sibling test's fixture is recognised as "no
@@ -611,6 +633,7 @@ mod self_tests {
 
     #[test]
     fn fixture_creates_offscreen_without_activation() {
+        let _g = desktop();
         let fg_before = unsafe { GetForegroundWindow() };
         let f = Fixture::new();
         assert!(f.is_alive());

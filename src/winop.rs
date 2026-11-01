@@ -722,6 +722,7 @@ mod tests {
     /// typed target_gone before the action, never a bare IsWindow bad_window.
     #[test]
     fn window_legacy_hwnd_uses_the_target_lock() {
+        let _g = crate::fixture::desktop();
         let f = crate::fixture::Fixture::new();
         let hwnd = f.hwnd_i64();
         drop(f);
@@ -773,6 +774,7 @@ mod tests {
     #[test]
     fn live_maximize_preserves_state_and_restore_geometry() {
         use windows_sys::Win32::Foundation::RECT;
+        let _g = crate::fixture::desktop();
         if !live_visible() {
             return;
         }
@@ -911,6 +913,7 @@ mod tests {
     #[test]
     fn live_repeated_maximize_restores_original_geometry() {
         use windows_sys::Win32::Foundation::RECT;
+        let _g = crate::fixture::desktop();
         if !live_visible() {
             return;
         }
@@ -1030,6 +1033,7 @@ mod tests {
     /// and the refusal is typed `restore_failed` with the target geometry.
     #[test]
     fn restore_failure_keeps_recovery_state_and_is_typed() {
+        let _g = crate::fixture::desktop();
         let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/winop.rs"))
             .expect("winop.rs readable");
         let clear = src
@@ -1148,6 +1152,7 @@ mod tests {
     /// saved entry only after success.
     #[test]
     fn maximize_path_is_proven_on_a_message_only_window() {
+        let _g = crate::fixture::desktop();
         let f = crate::fixture::MessageWindow::new();
         let h = f.hwnd();
         let hi = h as i64;
@@ -1304,6 +1309,7 @@ mod tests {
     /// exception (never displayed, cannot disturb the desktop).
     #[test]
     fn maximize_of_an_ordinary_window_requires_the_flag() {
+        let _g = crate::fixture::desktop();
         let f = crate::fixture::Fixture::new();
         let h = f.hwnd();
         let out = do_window(&WinArgs {

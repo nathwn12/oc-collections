@@ -981,6 +981,7 @@ mod tests {
     /// `target_gone` the `target:` path produces.
     #[test]
     fn legacy_selectors_share_the_target_lock() {
+        let _g = crate::fixture::desktop();
         let f = crate::fixture::Fixture::new();
         let top = f.hwnd_i64();
         let by_hwnd = lock_legacy(Some(top), None).expect("legacy hwnd locks");

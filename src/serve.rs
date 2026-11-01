@@ -1711,6 +1711,7 @@ mod tests {
     /// is the typed target_gone rather than a bare IsWindow bad_window.
     #[test]
     fn elements_legacy_hwnd_uses_the_target_lock() {
+        let _g = crate::fixture::desktop();
         let f = crate::fixture::Fixture::new();
         let hwnd = f.hwnd_i64();
         drop(f);
@@ -1830,6 +1831,7 @@ mod tests {
 
     #[test]
     fn elements_live_offscreen_fixture_lists_edit_and_ok() {
+        let _g = crate::fixture::desktop();
         // Live resolve path against a real HWND the test owns (offscreen,
         // never activated): proves `elements` beyond unit/schema assertions.
         // Foreground contract is environment-independent: record BEFORE any
@@ -1933,6 +1935,7 @@ mod tests {
     /// pre-fix tree the entry carried `[0,0,0,0]` and no flag.
     #[test]
     fn elements_marks_a_control_without_a_rect_offscreen() {
+        let _g = crate::fixture::desktop();
         let f = crate::fixture::Fixture::new();
         let hwnd = f.hwnd() as i64;
         for child in [f.edit(), f.edit_ro(), f.button()] {
@@ -1992,6 +1995,7 @@ mod tests {
 
     #[test]
     fn elements_live_detail_keeps_win() {
+        let _g = crate::fixture::desktop();
         let f = crate::fixture::Fixture::new();
         let hwnd = f.hwnd() as i64;
         let payload = elements_payload(&elements_args(&[
