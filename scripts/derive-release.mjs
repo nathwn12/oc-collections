@@ -32,13 +32,23 @@
  *   --package <name> --dry-run    print the derivation, list refusals as
  *                                 "would refuse", exit 0
  *   --package <name> --json       the same result as one JSON object
+ *   --all                         every releasable package with a derived
+ *                                 version, in the allowlist order; a package
+ *                                 with no releasable commit is listed as
+ *                                 skipped, never as a release
+ *   --all --json                  `{ packages: [...], skipped: [...] }`
  *   --package <name> --version <v> --assert-cells
  *                                 assert the package manifest, the root index
  *                                 cell and the lockfile cell all carry <v>
  *   --check                       run the offline fixtures
  *
+ * `--all` is the batch lane's plan: it reports each package's own refusals but
+ * exits 0, because one package refusing must not stop the others. The per
+ * package gate is the same command without `--all`.
+ *
  * Output for the workflow: with GITHUB_OUTPUT set, `name`, `version`, `tag`,
- * `base` and `level` are appended there.
+ * `base` and `level` are appended there (`--all` instead writes `matrix` and
+ * `count`).
  *
  * Failures set process.exitCode and return; a forced exit can truncate the
  * lines still queued when CI pipes them.
@@ -49,7 +59,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 
 import { ROOT } from "./workspace-plan.mjs"
-import { compareVersions, parseTag, resolvePackage } from "./release-target.mjs"
+import { ALLOWED, compareVersions, parseTag, resolvePackage } from "./release-target.mjs"
 
 // Conventional types this lane understands. A type outside this table is
 // refused rather than ignored: `feats: ...` is a typo for a minor bump, and
@@ -349,6 +359,55 @@ function emitOutputs(result) {
   const file = process.env.GITHUB_OUTPUT
   if (!file || !result.ok) return
   fs.appendFileSync(file, `name=${result.package}\nversion=${result.version}\ntag=${result.tag}\nbase=${result.base.version}\nlevel=${result.level}\ndir=${result.dir}\n`)
+  // One shape for both dispatch modes: the workflow always fans out over a
+  // matrix, and a single package is a matrix of one.
+  emitMatrix([result])
+}
+
+/** The batch matrix the release workflow fans out over. */
+function emitMatrix(results) {
+  const file = process.env.GITHUB_OUTPUT
+  if (!file) return
+  const include = results.map((result) => ({
+    name: result.package,
+    version: result.version,
+    tag: result.tag,
+    dir: result.dir,
+  }))
+  fs.appendFileSync(file, `matrix=${JSON.stringify({ include })}\ncount=${include.length}\n`)
+}
+
+/** Split a batch derivation into the packages to release and the ones to skip. */
+export function selectAll(results) {
+  return {
+    release: results.filter((result) => result.version !== null),
+    skipped: results.filter((result) => result.version === null),
+  }
+}
+
+/** Derive every releasable package, in the allowlist order. */
+export function deriveAll() {
+  return selectAll(ALLOWED.map((name) => runDerivation(name)))
+}
+
+export function renderAll({ release, skipped }) {
+  const lines = []
+  lines.push(
+    `all: ${release.length + skipped.length} package(s): ${release.length} with a derived version, ${skipped.length} with none`,
+  )
+  for (const result of release) {
+    const codes = result.refusals.map((item) => item.code)
+    lines.push(
+      `all:   ${result.package} ${result.manifestVersion} -> ${result.version} (${result.level}, base ${result.base.version} from the ${result.base.source}) tag ${result.tag}${
+        codes.length > 0 ? ` refused: ${codes.join(", ")}` : ""
+      }`,
+    )
+  }
+  for (const result of skipped) {
+    const reasons = result.refusals.map((item) => `${item.code}: ${item.message}`).join("; ")
+    lines.push(`all:   skipped ${result.package}: ${reasons || "no derivation"}`)
+  }
+  return lines.join("\n")
 }
 
 /** Assert the three cells that carry the version, each read from its own file. */
@@ -549,6 +608,7 @@ const FIXTURES = [
 
 export function runFixtures() {
   let passed = 0
+  let total = 0
   const failures = []
   for (const fixture of FIXTURES) {
     const result = evaluate({
@@ -598,13 +658,61 @@ export function runFixtures() {
       console.log(`PASS ${fixture.name}: ${verdict}`)
     }
   }
-  console.log(`derive-release: fixtures ${FIXTURES.length} passed ${passed} failed ${failures.length}`)
+  // `--all` is what decides which packages a batch run touches, so its split is
+  // a decided fact too: a package with no releasable commit is skipped, never
+  // attempted, and a package with a derived version is listed even when its own
+  // gate would refuse it.
+  const allCase = (commits) =>
+    evaluate({
+      name: "@fixture/unit",
+      dir: "packages/fixture",
+      manifestVersion: "1.2.3",
+      baseVersion: "1.2.3",
+      baseSource: "tag",
+      baseRef: "@fixture/unit@1.2.3",
+      range: "@fixture/unit@1.2.3..HEAD",
+      commits,
+      changelog: { path: "packages/fixture/CHANGELOG.md", text: FIXTURE_CHANGELOG },
+    })
+  const ALL_CASES = [
+    {
+      name: "all-lists-derived-only",
+      results: [allCase([{ sha: "m1", subject: "feat: add a reader" }]), allCase([{ sha: "m2", subject: "fix: hold the tail" }]), allCase([])],
+      expect: { release: 2, skipped: 1 },
+    },
+    {
+      name: "all-skips-everything",
+      results: [allCase([{ sha: "n1", subject: "chore: sync the lockfile" }])],
+      expect: { release: 0, skipped: 1 },
+    },
+  ]
+  for (const fixture of ALL_CASES) {
+    total++
+    const split = selectAll(fixture.results)
+    const problems = []
+    if (split.release.length !== fixture.expect.release) {
+      problems.push(`release=${split.release.length}, expected ${fixture.expect.release}`)
+    }
+    if (split.skipped.length !== fixture.expect.skipped) {
+      problems.push(`skipped=${split.skipped.length}, expected ${fixture.expect.skipped}`)
+    }
+    if (problems.length > 0) {
+      failures.push({ name: fixture.name, problems })
+      console.log(`FAIL ${fixture.name}: ${problems.join("; ")}`)
+    } else {
+      passed++
+      console.log(`PASS ${fixture.name}: ${split.release.length} to release, ${split.skipped.length} skipped`)
+    }
+  }
+  total += FIXTURES.length
+  console.log(`derive-release: fixtures ${total} passed ${passed} failed ${failures.length}`)
   return failures.length === 0
 }
 
 function usage() {
   return [
     "usage: derive-release.mjs --package <name> [--dry-run] [--json]",
+    "       derive-release.mjs --all [--json]",
     "       derive-release.mjs --package <name> --version <v> --assert-cells",
     "       derive-release.mjs --check",
   ].join("\n")
@@ -612,11 +720,12 @@ function usage() {
 
 /** Argument parsing kept separate so `--check` stays dependency-free. */
 function parseArgs(argv) {
-  const options = { mode: "derive", packageName: null, version: null, dryRun: false, json: false }
+  const options = { mode: "derive", packageName: null, version: null, dryRun: false, json: false, all: false }
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
     if (arg === "--check") options.mode = "check"
     else if (arg === "--assert-cells") options.mode = "assert-cells"
+    else if (arg === "--all") options.all = true
     else if (arg === "--dry-run") options.dryRun = true
     else if (arg === "--json") options.json = true
     else if (arg === "--package" && argv[i + 1]) options.packageName = argv[++i]
@@ -661,8 +770,22 @@ function main() {
       return
     }
 
+    if (options.all) {
+      // Batch plan, not a gate: a package that refuses is reported here and
+      // skipped by the run, never allowed to stop the packages beside it.
+      const split = deriveAll()
+      if (options.json) {
+        console.log(JSON.stringify({ packages: split.release, skipped: split.skipped }, null, 2))
+      } else {
+        console.log(renderAll(split))
+      }
+      if (options.dryRun) console.log("all: dry run: nothing was written and nothing was tagged")
+      else emitMatrix(split.release)
+      return
+    }
+
     if (!options.packageName) {
-      console.error(`derive-release: --package <name> is required\n${usage()}`)
+      console.error(`derive-release: --package <name> or --all is required\n${usage()}`)
       process.exitCode = 2
       return
     }
