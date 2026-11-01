@@ -51,10 +51,70 @@ const MAX_STABLE_EDGE: i64 = 4096;
 /// so a huge batch can hold the desktop for hours; 256 is far past any real
 /// UI flow and small enough that a stuck burst is a bounded stall.
 pub const BURST_MAX_ACTIONS: usize = 256;
-/// Total wall-clock budget for one burst call. Checked before every action
-/// and used to clamp `wait`/`wait_for`, so an unbounded sleep chain cannot
-/// hold the lock past it.
+/// Total wall-clock budget for one burst call. Checked before every action,
+/// inside every pacing loop (chunked `type` pacing, `key` hold/gap repeats)
+/// and against the trailing settle, so no sleep chain can hold the lock past
+/// it.
 pub const BURST_BUDGET: std::time::Duration = std::time::Duration::from_secs(300);
+/// Test-only budget override, same idiom as `PUPPET_TEST_STALL_*_MS`: the
+/// suite proves the pacing loops are bounded without a five-minute run. It
+/// can only shorten the budget (clamped up to 500 ms, never past
+/// `BURST_BUDGET`), so a test can never make a real burst run longer.
+const BUDGET_TEST_VAR: &str = "PUPPET_TEST_BURST_BUDGET_MS";
+const BUDGET_TEST_MIN: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// The burst budget in force for this call.
+fn burst_budget() -> std::time::Duration {
+    match std::env::var(BUDGET_TEST_VAR)
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+    {
+        Some(ms) => std::time::Duration::from_millis(ms).clamp(BUDGET_TEST_MIN, BURST_BUDGET),
+        None => BURST_BUDGET,
+    }
+}
+
+/// What is left of the burst budget `t_all` elapsed ago (never negative).
+fn budget_left_ms(t_all: &Instant, budget: std::time::Duration) -> i64 {
+    budget.saturating_sub(t_all.elapsed()).as_millis() as i64
+}
+
+/// One pacing pause (`chunk_ms`, `hold_ms`, `gap_ms`, `settle_ms`) clamped to
+/// what is left of the burst budget. `None` means the budget is spent: the
+/// caller must stop with a typed `burst_budget_exceeded` result instead of
+/// sleeping, so a 1 MiB text at `chunk_chars:1, chunk_ms:60000` cannot hold
+/// the global input lock for a million minutes.
+fn bounded_pause(t_all: &Instant, budget: std::time::Duration, want_ms: u64) -> Option<u64> {
+    if want_ms == 0 {
+        return Some(0);
+    }
+    let left = budget_left_ms(t_all, budget);
+    if left <= 0 {
+        return None;
+    }
+    Some(want_ms.min(left as u64))
+}
+
+/// The typed per-action failure a pacing loop returns when the budget stops
+/// it: same `burst_budget_exceeded` code every other budget refusal uses.
+fn budget_stop(
+    i: usize,
+    typ_v: &Value,
+    t0: &Instant,
+    budget: std::time::Duration,
+    what: &str,
+) -> Map<String, Value> {
+    let mut d = base_entry(i, typ_v, false, elapsed_ms(t0));
+    d.insert("code".to_string(), Value::from("burst_budget_exceeded"));
+    d.insert(
+        "error".to_string(),
+        Value::from(format!(
+            "burst_budget_exceeded: the {}-second burst budget expired during {what}; the rest of the action was not sent",
+            budget.as_secs_f64()
+        )),
+    );
+    d
+}
 
 /// Whole-call typed refusal for a target that could not be locked (nothing
 /// ran): rendered as an MCP tool error carrying `{ok:false, code, error,
@@ -488,6 +548,17 @@ fn key_err(key: &str) -> String {
 
 fn utf16_units(s: &str) -> Vec<u16> {
     s.encode_utf16().collect()
+}
+
+/// UTF-16 units for one `type` chunk, without building a throwaway String per
+/// chunk (a 1 MiB text at `chunk_chars:1` is a million chunks).
+fn utf16_units_chars(chars: &[char]) -> Vec<u16> {
+    let mut out = Vec::with_capacity(chars.len());
+    let mut buf = [0u16; 2];
+    for c in chars {
+        out.extend_from_slice(c.encode_utf16(&mut buf));
+    }
+    out
 }
 
 // ---------------------------------------------------------------- _vk (puppet.py:1571-1623)
@@ -1775,14 +1846,6 @@ fn restore_foreground(permit: &crate::gate::ForegroundPermit, hwnd: i64) -> bool
     crate::gate::set_foreground(permit, hwnd)
 }
 
-/// Window-resolution outcome: target hwnd, human error, or disambiguation
-/// candidates when the selector matches several windows.
-type ResolveOut = (
-    Option<HWND>,
-    Option<String>,
-    Option<Vec<Map<String, Value>>>,
-);
-
 /// Element-match outcome: the entry, a typed error, or disambiguation
 /// candidates when the selector matches several controls.
 type MatchOut = (
@@ -1791,30 +1854,44 @@ type MatchOut = (
     Option<Vec<Map<String, Value>>>,
 );
 
-/// _resolve_window with untyped action values (puppet.py:625-636).
-fn resolve_window_val(title: Option<&Value>, hwnd: Option<&Value>) -> ResolveOut {
-    if let Some(hv) = hwnd {
-        match py_int(hv) {
-            Ok(h) => return resolve_selector(&format!("hwnd:{h}")),
-            Err(e) => {
-                return (
-                    None,
-                    Some(format!("bad_window: bad hwnd {}: {}", py_str(hv), e)),
-                    None,
-                );
-            }
+/// `focus_window`'s legacy `title`/`hwnd` arguments resolved to the SAME
+/// `TargetLock` every other verb uses. A bare hwnd is a recyclable handle:
+/// `IsWindow` on it can be true for a *different* window than the caller
+/// meant, so focus goes through the lock (pid + process creation time +
+/// image + class) and is revalidated immediately before the focus call —
+/// the same seam `screenshot`'s legacy `window:` selector uses.
+fn focus_lock(
+    title: Option<&Value>,
+    hwnd: Option<&Value>,
+) -> Result<crate::target::TargetLock, crate::target::TargetError> {
+    let h = match hwnd {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(py_int(v).map_err(|e| crate::target::TargetError {
+            code: crate::target::BAD,
+            message: format!("bad_window: bad hwnd {}: {e}", py_str(v)),
+            candidates: None,
+        })?),
+    };
+    let t = title.filter(|v| py_truthy(v)).map(py_str);
+    crate::cap::lock_legacy(h, t.as_deref())
+}
+
+/// A `focus_window` refusal in the per-action shape: the target error's own
+/// fields (`code`, `error`, `candidates`) inside the action envelope.
+fn target_failure(
+    i: usize,
+    typ_v: &Value,
+    t0: &Instant,
+    e: &crate::target::TargetError,
+) -> Map<String, Value> {
+    let mut d = base_entry(i, typ_v, false, elapsed_ms(t0));
+    for (k, v) in e.to_map() {
+        if k != "ok" {
+            d.insert(k, v);
         }
     }
-    if let Some(tv) = title {
-        if py_truthy(tv) {
-            return resolve_selector(&py_str(tv));
-        }
-    }
-    (
-        None,
-        Some("bad_window: need title or hwnd".to_string()),
-        None,
-    )
+    d.insert("via".to_string(), Value::from("none"));
+    d
 }
 
 // ---------------------------------------------------------------- invoke matching (puppet.py:1334-1388)
@@ -2294,6 +2371,8 @@ impl Burst {
         gap_ms: u64,
         dry_run: bool,
         t0: Instant,
+        t_all: Instant,
+        budget: std::time::Duration,
         cancelled: &dyn Fn() -> bool,
     ) -> Option<Map<String, Value>> {
         self.marked.push(i);
@@ -2312,7 +2391,21 @@ impl Burst {
                 return Some(d);
             }
             self.marked.clear();
-            if (!dry_run && hold_ms > 0 && sleep_cancellable(hold_ms)) || cancelled() {
+            let hold_cancelled = if !dry_run && hold_ms > 0 {
+                // Held key: the sleep is clamped to the burst budget, and an
+                // exhausted budget releases the key instead of continuing.
+                match bounded_pause(&t_all, budget, hold_ms) {
+                    Some(h) => sleep_cancellable(h),
+                    None => {
+                        self.pending.extend(key_up_inputs(code));
+                        let _ = self.flush();
+                        return Some(budget_stop(i, typ_v, &t0, budget, "a held key"));
+                    }
+                }
+            } else {
+                false
+            };
+            if hold_cancelled || cancelled() {
                 // Release the held key (+Shift) before reporting: no exit
                 // path leaves a key down.
                 self.pending.extend(key_up_inputs(code));
@@ -2331,14 +2424,18 @@ impl Burst {
                 return Some(d);
             }
             self.marked.clear();
-            if r + 1 < repeat
-                && !dry_run
-                && gap_ms > 0
-                && (sleep_cancellable(gap_ms) || cancelled())
-            {
-                let mut d = base_entry(i, typ_v, false, elapsed_ms(&t0));
-                d.insert("error".to_string(), Value::from("cancelled"));
-                return Some(d);
+            if r + 1 < repeat && !dry_run && gap_ms > 0 {
+                // The inter-press gap is bounded the same way: `repeat` 1..100
+                // at `gap_ms` 60000 is 99 minutes of wall clock otherwise.
+                let gap = match bounded_pause(&t_all, budget, gap_ms) {
+                    Some(g) => g,
+                    None => return Some(budget_stop(i, typ_v, &t0, budget, "a key repeat gap")),
+                };
+                if sleep_cancellable(gap) || cancelled() {
+                    let mut d = base_entry(i, typ_v, false, elapsed_ms(&t0));
+                    d.insert("error".to_string(), Value::from("cancelled"));
+                    return Some(d);
+                }
             }
         }
         None
@@ -2632,6 +2729,7 @@ pub fn do_burst(args: &DoArgs) -> String {
     let dry_run = args.dry_run;
     let desktop = args.desktop.clone();
     let t_all = Instant::now();
+    let budget = burst_budget();
     let focus_before = fg_now();
     let cursor_before = cursor_now();
 
@@ -2812,14 +2910,14 @@ pub fn do_burst(args: &DoArgs) -> String {
         // Wall-clock budget: checked before every action, so a chain of waits
         // cannot outlive the call. Reported as a per-action-shaped failure
         // naming the limit and what is left unrun.
-        if t_all.elapsed() >= BURST_BUDGET {
+        if t_all.elapsed() >= budget {
             let mut m = base_entry(i, &Value::from("burst"), false, 0.0);
             m.insert("code".to_string(), Value::from("burst_budget_exceeded"));
             m.insert(
                 "error".to_string(),
                 Value::from(format!(
                     "burst_budget_exceeded: the {}-second burst budget expired before action {i}; {} action(s) not run",
-                    BURST_BUDGET.as_secs(),
+                    budget.as_secs_f64(),
                     actions.len() - i
                 )),
             );
@@ -3362,7 +3460,33 @@ pub fn do_burst(args: &DoArgs) -> String {
                 // the documented target convention (physical pixels) and goes
                 // through the one geometry gate, which refuses an empty rect.
                 let centre = element_centre_client(tgt, &entry);
+                // The guard runs BEFORE the dry-run return: a dry run that
+                // reports ok for an element the live path refuses is a lie
+                // about what the call would do.
                 if dry_run {
+                    if let Err(r) = centre {
+                        // A UIA-backed control with a live pattern needs no
+                        // pixel, so only the pixel path is refused here: the
+                        // dry run reports the refusal the live call would hit.
+                        if model.backend != "uia" {
+                            d.insert("ok".to_string(), Value::from(false));
+                            d.insert("via".to_string(), Value::from("none"));
+                            d.insert(
+                                "code".to_string(),
+                                Value::from(if r == RectRefusal::Offscreen {
+                                    crate::gate::OFFSCREEN_ELEMENT
+                                } else {
+                                    crate::gate::BACKGROUND_UNAVAILABLE
+                                }),
+                            );
+                            d.insert(
+                                "error".to_string(),
+                                Value::from(rect_refusal_message(&entry, r)),
+                            );
+                            d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
+                            return Ok(Some(d));
+                        }
+                    }
                     d.insert(
                         "via".to_string(),
                         Value::from(if model.backend == "uia" {
@@ -3673,15 +3797,31 @@ pub fn do_burst(args: &DoArgs) -> String {
                 }
                 let mut d = base_entry(i, &typ_v, true, 0.0);
                 st.marked.push(i);
-                let chunks: Vec<String> = {
-                    let chars: Vec<char> = text.chars().collect();
-                    chars
-                        .chunks(cc as usize)
-                        .map(|c| c.iter().collect())
-                        .collect()
-                };
-                for (ci, ch) in chunks.iter().enumerate() {
-                    for unit in utf16_units(ch) {
+                // Chunked pacing: every chunk is checked against the burst
+                // budget BEFORE it is sent and between chunks only the
+                // clamped remainder is slept, so `chunk_chars:1` over a 1 MiB
+                // text at `chunk_ms:60000` ends typed instead of holding the
+                // global input lock for days.
+                let chars: Vec<char> = text.chars().collect();
+                let total = chars.len().div_ceil(cc as usize);
+                for (ci, ch) in chars.chunks(cc as usize).enumerate() {
+                    if budget_left_ms(&t_all, budget) <= 0 {
+                        st.marked.retain(|&m| m != i);
+                        d.insert("ok".to_string(), Value::from(false));
+                        let stop = budget_stop(i, &typ_v, &t0, budget, "chunked typing");
+                        d.insert("code".to_string(), stop["code"].clone());
+                        d.insert(
+                            "error".to_string(),
+                            Value::from(format!(
+                                "{} (chunk {} of {total})",
+                                stop["error"].as_str().unwrap_or("burst_budget_exceeded"),
+                                ci + 1
+                            )),
+                        );
+                        d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
+                        return Ok(Some(d));
+                    }
+                    for unit in utf16_units_chars(ch) {
                         st.pending.push(ki(0, unit, K_UNICODE));
                         st.pending.push(ki(0, unit, K_UNICODE | K_UP));
                     }
@@ -3694,13 +3834,24 @@ pub fn do_burst(args: &DoArgs) -> String {
                         break;
                     }
                     st.marked.clear();
-                    if ci + 1 < chunks.len() {
+                    if ci + 1 < total {
                         st.marked.push(i);
-                        if cm != 0 && !dry_run && sleep_cancellable(cm as u64) {
-                            d.insert("ok".to_string(), Value::from(false));
-                            d.insert("error".to_string(), Value::from("cancelled"));
-                            d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
-                            return Ok(Some(d));
+                        if cm != 0 && !dry_run {
+                            let pause = match bounded_pause(&t_all, budget, cm as u64) {
+                                Some(p) => p,
+                                None => {
+                                    st.marked.retain(|&m| m != i);
+                                    let stop =
+                                        budget_stop(i, &typ_v, &t0, budget, "chunked typing");
+                                    return Ok(Some(stop));
+                                }
+                            };
+                            if sleep_cancellable(pause) {
+                                d.insert("ok".to_string(), Value::from(false));
+                                d.insert("error".to_string(), Value::from("cancelled"));
+                                d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
+                                return Ok(Some(d));
+                            }
                         }
                         if crate::cancel::cancelled() {
                             d.insert("ok".to_string(), Value::from(false));
@@ -3756,6 +3907,8 @@ pub fn do_burst(args: &DoArgs) -> String {
                     gap_ms as u64,
                     dry_run,
                     t0h,
+                    t_all,
+                    budget,
                     &crate::cancel::cancelled,
                 ) {
                     return Ok(Some(d));
@@ -4347,7 +4500,7 @@ pub fn do_burst(args: &DoArgs) -> String {
                 }
                 // A wait that would outlive the burst budget is refused before
                 // sleeping, with the same typed result a failed action carries.
-                let left_ms = BURST_BUDGET.saturating_sub(t_all.elapsed()).as_millis() as i64;
+                let left_ms = budget_left_ms(&t_all, budget);
                 if wait_n > left_ms {
                     let mut m = base_entry(i, &typ_v, false, elapsed_ms(&t0));
                     m.insert("code".to_string(), Value::from("burst_budget_exceeded"));
@@ -4355,7 +4508,7 @@ pub fn do_burst(args: &DoArgs) -> String {
                         "error".to_string(),
                         Value::from(format!(
                             "burst_budget_exceeded: wait {wait_n}ms exceeds the remaining {left_ms}ms of the {}-second burst budget",
-                            BURST_BUDGET.as_secs()
+                            budget.as_secs_f64()
                         )),
                     );
                     return Ok(Some(m));
@@ -4377,7 +4530,7 @@ pub fn do_burst(args: &DoArgs) -> String {
                 // The poll loop is bounded by the remaining burst budget. When
                 // that cut it short, name the budget instead of reporting a
                 // plain unsatisfied timeout.
-                let left_ms = BURST_BUDGET.saturating_sub(t_all.elapsed()).as_millis() as i64;
+                let left_ms = budget_left_ms(&t_all, budget);
                 let want_ms = opt_py_int(ad, "timeout_ms", 5000).unwrap_or(5000);
                 let wf_action: Map<String, Value> = if want_ms > left_ms {
                     let mut m = ad.clone();
@@ -4404,7 +4557,7 @@ pub fn do_burst(args: &DoArgs) -> String {
                         "error".to_string(),
                         Value::from(format!(
                             "burst_budget_exceeded: wait_for timeout {want_ms}ms exceeds the remaining {left_ms}ms of the {}-second burst budget",
-                            BURST_BUDGET.as_secs()
+                            budget.as_secs_f64()
                         )),
                     );
                 }
@@ -4417,17 +4570,16 @@ pub fn do_burst(args: &DoArgs) -> String {
                 } else {
                     st.marked.clear();
                 }
-                let (hr, err, cands) = resolve_window_val(ad.get("title"), ad.get("hwnd"));
-                if hr.is_none() {
-                    let mut d = base_entry(i, &typ_v, false, elapsed_ms(&t0));
-                    d.insert("error".to_string(), Value::from(err.unwrap()));
-                    if let Some(c) = cands {
-                        d.insert(
-                            "candidates".to_string(),
-                            Value::from(c.into_iter().map(Value::Object).collect::<Vec<_>>()),
-                        );
-                    }
-                    return Ok(Some(d));
+                let lock = match focus_lock(ad.get("title"), ad.get("hwnd")) {
+                    Ok(l) => l,
+                    Err(e) => return Ok(Some(target_failure(i, &typ_v, &t0, &e))),
+                };
+                // Revalidate immediately before focusing: a handle that was
+                // recycled (or a window that closed) since the lock resolved
+                // is the typed target_gone, never a focus on whatever now
+                // owns that handle.
+                if let Err(e) = lock.revalidate() {
+                    return Ok(Some(target_failure(i, &typ_v, &t0, &e)));
                 }
                 // Gate already refused this verb without allow_foreground;
                 // the permit below is therefore always present here.
@@ -4441,7 +4593,7 @@ pub fn do_burst(args: &DoArgs) -> String {
                     );
                     return Ok(Some(d));
                 };
-                let r = focus_hwmd(fg_permit, hr.unwrap());
+                let r = focus_hwmd(fg_permit, lock.hwnd as HWND);
                 let mut d = base_entry(
                     i,
                     &typ_v,
@@ -4478,8 +4630,15 @@ pub fn do_burst(args: &DoArgs) -> String {
     } else {
         st.marked.clear();
     }
+    // The trailing settle is a sleep like any other: clamped to what is left
+    // of the budget, so `settle_ms:60000` at the end of a long burst cannot
+    // hold the global input lock past the budget it already spent.
+    let mut settle_applied: i64 = 0;
     if settle_n != 0 && !crate::cancel::cancelled() {
-        sleep_cancellable(settle_n as u64);
+        if let Some(p) = bounded_pause(&t_all, budget, settle_n as u64) {
+            settle_applied = p as i64;
+            sleep_cancellable(p);
+        }
     }
     let total_ms = t_all.elapsed().as_secs_f64() * 1000.0;
     let mut focus_after = fg_now();
@@ -4707,6 +4866,12 @@ pub fn do_burst(args: &DoArgs) -> String {
         ),
     );
     payload.insert("total_ms".to_string(), Value::from(py_round_n(total_ms, 3)));
+    if settle_n != 0 {
+        // Honest settle accounting: what was asked for and what the budget
+        // allowed. Divergence is named, never silent.
+        payload.insert("settle_requested_ms".to_string(), Value::from(settle_n));
+        payload.insert("settle_ms".to_string(), Value::from(settle_applied));
+    }
     payload.insert("sendinput_calls".to_string(), Value::from(st.calls));
     payload.insert(
         "sendinput_ms".to_string(),
@@ -4894,6 +5059,108 @@ mod tests {
             "no synthetic input may be sent"
         );
         println!("OFFSCREEN_CLICK_REFUSED_OK code=offscreen_element posts=0 rect={rect}");
+    }
+
+    /// P2 dry-run honesty: a dry run must report the refusal the live path
+    /// gives. It used to return `ok:true` for an element the live click
+    /// refuses with `offscreen_element`, so a caller who dry-ran a burst got a
+    /// green light for a click that could never land.
+    #[test]
+    fn dry_run_click_on_an_element_without_a_rect_is_refused_like_the_live_path() {
+        let _g = crate::fixture::desktop();
+        let fx = crate::fixture::Fixture::new();
+        let hwnd = fx.hwnd_i64();
+        for child in [fx.edit(), fx.edit_ro(), fx.button()] {
+            let moved = unsafe {
+                windows_sys::Win32::UI::WindowsAndMessaging::SetWindowPos(
+                    child,
+                    std::ptr::null_mut(),
+                    0,
+                    0,
+                    0,
+                    0,
+                    windows_sys::Win32::UI::WindowsAndMessaging::SWP_NOMOVE
+                        | windows_sys::Win32::UI::WindowsAndMessaging::SWP_NOZORDER
+                        | windows_sys::Win32::UI::WindowsAndMessaging::SWP_NOACTIVATE,
+                )
+            };
+            assert_ne!(moved, 0, "collapse a fixture child");
+        }
+        let path = {
+            let t0 = std::time::Instant::now();
+            loop {
+                let m = element_model(fx.hwnd(), crate::UIA_DEPTH_LIMIT, 0);
+                if let Some(e) = m
+                    .entries
+                    .iter()
+                    .find(|e| e.get("offscreen") == Some(&Value::from(true)))
+                {
+                    break entry_str(e, "path");
+                }
+                if t0.elapsed() > std::time::Duration::from_secs(10) {
+                    panic!("no zero-area entry appeared: {:?}", m.entries);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        };
+        let actions = vec![serde_json::json!({"type": "click", "element": format!("path:{path}")})];
+        let out = do_burst(&DoArgs {
+            dry_run: true,
+            target: Some(serde_json::json!({ "hwnd": hwnd })),
+            ..DoArgs::new(&actions)
+        });
+        let payload = sc(&out);
+        let r = payload["results"][0].clone();
+        assert_eq!(
+            r["ok"],
+            Value::from(false),
+            "a dry run must not report a click the live path would refuse: {r}"
+        );
+        assert_eq!(r["code"], Value::from("offscreen_element"), "{r}");
+        assert_ne!(
+            r["via"],
+            Value::from("posted-click"),
+            "no click may be claimed: {r}"
+        );
+        assert_eq!(
+            payload["sendinput_calls"],
+            Value::from(0),
+            "a dry run sends nothing either way"
+        );
+        println!("OFFSCREEN_CLICK_DRY_RUN_REFUSED_OK code=offscreen_element");
+    }
+
+    /// P1 focus_window lock: a `hwnd` that names no window is refused with the
+    /// TARGET vocabulary (`target_gone`, the same code every other verb
+    /// reports) because the verb now resolves through `cap::lock_legacy` and
+    /// revalidates, instead of a bare `IsWindow` poke whose refusal carried no
+    /// code at all.
+    #[test]
+    fn focus_window_refuses_an_unresolvable_handle_with_the_target_code() {
+        let _g = crate::fixture::desktop();
+        let actions = vec![serde_json::json!({"type": "focus_window", "hwnd": 0})];
+        let out = do_burst(&DoArgs {
+            allow_foreground: true,
+            ..DoArgs::new(&actions)
+        });
+        let payload = sc(&out);
+        let r = payload["results"][0].clone();
+        assert_eq!(r["ok"], Value::from(false), "nothing may be focused: {r}");
+        assert_eq!(
+            r["code"],
+            Value::from("target_gone"),
+            "the refusal must carry the target lock's code: {r}"
+        );
+        let err = r["error"].as_str().unwrap_or("");
+        assert!(
+            err.starts_with("target_gone:") && err.contains("hwnd 0"),
+            "the refusal must name the lock's finding: {err}"
+        );
+        assert_eq!(r["via"], Value::from("none"), "{r}");
+        assert_eq!(
+            payload["focus_before"], payload["focus_after"],
+            "a refused focus must not change the foreground window"
+        );
     }
 
     fn burst_first(actions: &[Value]) -> Map<String, Value> {
@@ -5217,7 +5484,19 @@ mod tests {
         };
         let typ_v = Value::from("key");
         let code = vk_of("a").expect("a resolves");
-        let out = st.run_hold_repeats(0, &typ_v, &code, 3, 50, 10, true, Instant::now(), &pred);
+        let out = st.run_hold_repeats(
+            0,
+            &typ_v,
+            &code,
+            3,
+            50,
+            10,
+            true,
+            Instant::now(),
+            Instant::now(),
+            BURST_BUDGET,
+            &pred,
+        );
         let d = out.expect("cancelled run must return early");
         assert_eq!(d.get("ok"), Some(&Value::from(false)));
         assert!(

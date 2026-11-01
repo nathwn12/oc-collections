@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [6.1.3] - 2026-11-02
+
+### Fixed
+- The `do` wall-clock budget now bounds the SLEEPS, not only the action loop.
+  The trailing `settle_ms`, the chunked `type` pacing (`chunk_chars` /
+  `chunk_ms`) and the `key` hold/repeat pacing (`hold_ms` / `gap_ms` ×
+  `repeat` 1..100) each sleep without consulting the budget before, so one
+  action could hold the global input lock for hours while the budget read as
+  enforced. Every pacing sleep is now clamped to what is left of the budget,
+  an exhausted budget ends the action with the typed
+  `burst_budget_exceeded` result, and the settle reports both what was asked
+  (`settle_requested_ms`) and what the budget allowed (`settle_ms`). A 1 MiB
+  text at `chunk_chars:1, chunk_ms:60000` now ends typed instead of holding
+  the lock.
+- Every cross-process COM / `PrintWindow` entry point is bounded, not just
+  the three that were. `uia_is_enabled`, `uia_expand_collapse`,
+  `uia_expand_state`, `uia_range_value`, `uia_scroll` and `uia_element_text`
+  now run under the same `deadline::bound` UIA deadline (and therefore honour
+  `PUPPET_UIA_TIMEOUT_MS`), returning the typed `uia_timeout` line instead of
+  wedging a worker on a provider that stops answering. The hidden-desktop
+  capture cannot move off its own desktop thread, so its wait takes the same
+  `Capture` family deadline (`PUPPET_CAPTURE_TIMEOUT_MS`) and reports the
+  typed `capture_timeout` line.
+- `do`'s `focus_window` action resolved its `hwnd` with a bare `IsWindow`
+  check and focused whatever owned that handle. It now resolves through the
+  same `TargetSpec`/`TargetLock` every other verb uses (`hwnd` -> `{hwnd}`,
+  `title` -> `{titleContains}`) and revalidates pid, process creation time,
+  image and class immediately before the focus call, so a recycled handle is
+  the typed `target_gone` (with the target's own `code`) instead of a focus
+  on the wrong window.
+- A `dry_run` burst reported `ok:true` for a `click` on an element the live
+  path refuses with `offscreen_element`. The geometry guard now runs before
+  the dry-run return, so a dry run reports the refusal the live call would
+  give (UIA-pattern controls, which need no pixel, are unaffected).
+- `screenshot` adopted the POST-render rect as `source` before the recapture
+  that re-renders the pixels had succeeded. On a failed recapture the image
+  still came from the pre-capture rect while `source` (and `rect_source`)
+  described where the window had moved to, so a caller mapped stale pixels
+  through the current geometry. A failed recapture now keeps the pre-capture
+  rect and adds a `note` naming both rects.
+- `puppet-mcp` (npm launcher) died with `EPERM` when two launchers started
+  the same version at once: both staged and both renamed, and Windows refuses
+  the loser's directory rename onto the winner's (observed live as
+  `Connection closed ... rename staging-34508 -> 6.1.2-e8f96a59`, breaking an
+  MCP session mid-handshake). Provisioning is now concurrency-safe: the
+  `.ready` marker is written inside the staging dir so a published directory
+  is verifiable the instant it appears, and a lost rename is retried briefly
+  and then ADOPTED once the sibling's cache verifies against the manifest. A
+  failing attempt never deletes a cache a sibling published. Covered by
+  `npm test` (`node --test npm/test/`).
+
 ## [6.1.2] - 2026-11-01
 
 ### Fixed
@@ -76,7 +127,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Exceeding either returns a typed `burst_budget_exceeded` result naming the
   limit and the actual value in the same per-result shape as a failed action;
   a `wait`/`wait_for` that would outlive the remaining budget is refused or
-  clamped, so the global input lock cannot be held past the budget.
+  clamped.
 
 ## [6.0.1] - 2026-10-28
 ### Changed

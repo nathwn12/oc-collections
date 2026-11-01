@@ -17,8 +17,17 @@
 //!
 //! Live-gated like the rest of the desktop suite (`PUPPET_LIVE_DESKTOP=1`):
 //! it needs a real window to walk and capture.
+//!
+//! The COVERAGE of that discipline is pinned statically (no desktop needed):
+//! `every_com_entry_point_is_bounded` reads the sources and fails when a UIA
+//! or PrintWindow entry point stops routing through `deadline::bound` /
+//! `deadline::limit`. That is what closed the 6.1.3 gap: `uia_is_enabled`,
+//! `uia_expand_collapse`, `uia_expand_state`, `uia_range_value`, `uia_scroll`,
+//! `uia_element_text` and the hidden-desktop capture were unbounded while the
+//! three originally wrapped calls were not.
 
 use std::io::{BufRead, BufReader, Write};
+use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
@@ -284,4 +293,76 @@ fn capture_times_out_typed_and_the_worker_recovers() {
         second_elapsed < Duration::from_millis(CAPTURE_DEADLINE_MS),
         "the recovered capture must not wait for a deadline: {second_elapsed:?}"
     );
+}
+
+// --- static coverage of the boundedness discipline ------------------------
+
+fn src_text(name: &str) -> String {
+    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("src")
+        .join(name);
+    std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("read {}: {e}", p.display()))
+}
+
+/// The text from a `pub fn <name>` signature to the end of its first
+/// statement block: enough to see whether the body opens with `bound(`.
+fn fn_body_slice(text: &str, name: &str) -> String {
+    // Matches `fn name(` so a `pub unsafe fn` (the capture path) is covered
+    // too; `name_inner` cannot match because the following char is not `(`.
+    let sig = format!("fn {name}(");
+    let at = text
+        .find(&sig)
+        .unwrap_or_else(|| panic!("src no longer declares `{sig}`: update this audit"));
+    // 1200 chars covers the signature + the wrapping prologue of every entry
+    // point here; the inner `_inner` call is what follows.
+    text[at..(at + 1200).min(text.len())].to_string()
+}
+
+/// Every UIA / PrintWindow entry point runs under the deadline module. The
+/// gap this pins: only `uia_element_list`, `uia_activate` and `uia_set_value`
+/// were bounded, so a provider that stopped answering wedged the worker in
+/// six other verbs and in the hidden-desktop capture.
+#[test]
+fn every_com_entry_point_is_bounded() {
+    let uia = src_text("uia.rs");
+    for name in [
+        "uia_element_list",
+        "uia_activate",
+        "uia_set_value",
+        "uia_is_enabled",
+        "uia_expand_collapse",
+        "uia_expand_state",
+        "uia_range_value",
+        "uia_scroll",
+        "uia_element_text",
+    ] {
+        let body = fn_body_slice(&uia, name);
+        assert!(
+            body.contains("deadline::bound("),
+            "{name} must route through deadline::bound, its body starts: {}",
+            body.lines().take(6).collect::<Vec<_>>().join(" | ")
+        );
+        assert!(
+            body.contains(&format!("\"{name}\"")),
+            "{name} must name its own operation in the deadline line"
+        );
+    }
+    // The window capture (PrintWindow) is bounded the same way...
+    let shot = src_text("shot.rs");
+    assert!(
+        fn_body_slice(&shot, "capture_window").contains("deadline::bound("),
+        "shot::capture_window must route through deadline::bound"
+    );
+    // ...and the hidden-desktop capture cannot move off its desktop thread,
+    // so it takes the SAME family deadline on the caller side.
+    let hidden = src_text("hidden.rs");
+    assert!(
+        hidden.contains("crate::deadline::limit(crate::deadline::Family::Capture)"),
+        "the hidden-desktop capture wait must use the Capture family deadline"
+    );
+    assert!(
+        hidden.contains("crate::deadline::timeout_text("),
+        "a stalled hidden-desktop capture must return the typed line"
+    );
+    println!("COM_ENTRY_POINTS_BOUNDED_OK uia=9 capture=1 hidden=1");
 }
