@@ -5,7 +5,7 @@
 // stderr. Every session is killed on transport close, SIGINT, SIGTERM and
 // normal exit, so no PTY outlives the server.
 
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 import { createServer } from '../lib/server.js';
 
 const { server, manager } = createServer();
