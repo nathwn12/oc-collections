@@ -10,7 +10,7 @@ use crate::{
 use base64::Engine as _;
 use serde_json::{Map, Value};
 use std::time::Instant;
-use windows_sys::Win32::Foundation::POINT;
+use windows_sys::Win32::Foundation::{HWND, POINT};
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 /// Grab-size bound: no single BitBlt/DXGI capture may exceed this edge.
@@ -449,8 +449,55 @@ fn dxgi_match_output(display: i64, mons: &[[i32; 4]]) -> Result<(u32, u32), Stri
     pick_output(rect, hmon, &device, &outputs)
 }
 
+// Test seam: the foreground values `foreground_window()` returns, in order.
+// The last value sticks once the script runs dry; an empty script means the
+// real `GetForegroundWindow()`. Thread-local so each `#[test]` scripts only
+// its own call, and so a test can force the ambient foreground to move
+// mid-call and prove the reply never mixes two samples.
+#[cfg(test)]
+thread_local! {
+    static FG_SCRIPT: std::cell::RefCell<Vec<i64>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[cfg(test)]
+fn next_scripted_fg() -> Option<i64> {
+    FG_SCRIPT.with(|s| {
+        let mut q = s.borrow_mut();
+        match q.len() {
+            0 => None,
+            1 => Some(q[0]),
+            _ => Some(q.remove(0)),
+        }
+    })
+}
+
+#[cfg(test)]
+fn script_foreground(values: &[i64]) {
+    FG_SCRIPT.with(|s| *s.borrow_mut() = values.to_vec());
+}
+
+/// The window this call treats as foreground, sampled ONCE and carried.
+///
+/// A desktop/region capture's element block is the foreground window's, not
+/// the image's, so the payload has to name that window too. Taking the handle
+/// here and threading it through both the `elements_window` metadata and the
+/// element walk makes "the name is the window the block describes" true by
+/// construction: there is no second read for a foreground switch to land
+/// between (a CI runner with nothing held open switches freely).
+fn foreground_window() -> HWND {
+    #[cfg(test)]
+    if let Some(h) = next_scripted_fg() {
+        return h as HWND;
+    }
+    unsafe { GetForegroundWindow() }
+}
+
 pub fn screenshot_desktop(a: &ShotArgs) -> String {
-    let fg_before = unsafe { GetForegroundWindow() as i64 };
+    // One sample for the whole call: the elements path below names and walks
+    // this exact handle, and `foregroundUnchanged` measures against it.
+    let fg_at_entry = foreground_window();
+    let fg_before = fg_at_entry as i64;
     let mut cur0 = POINT { x: 0, y: 0 };
     let cur_before = unsafe {
         if GetCursorPos(&mut cur0) != 0 {
@@ -720,25 +767,25 @@ pub fn screenshot_desktop(a: &ShotArgs) -> String {
     };
     cmap.insert(
         "foregroundUnchanged".to_string(),
-        Value::from(unsafe { GetForegroundWindow() as i64 } == fg_before),
+        Value::from(foreground_window() as i64 == fg_before),
     );
     cmap.insert(
         "cursorUnchanged".to_string(),
         Value::from(cur_after == cur_before),
     );
     cmap.insert("formula".to_string(), Value::from(FORMULA));
-    // The element block is built from GetForegroundWindow(), not from the
-    // image: with display/region the image is the desktop but the elements
-    // are the foreground window's. Name that window in the payload so the
-    // third block is never mistaken for the captured image's window.
+    // The element block describes `fg_at_entry`, not the image: with
+    // display/region the image is the desktop but the elements are that
+    // window's. Naming it from the same handle the walk receives is the whole
+    // point - a second read here is how the reply came to name one window and
+    // enumerate another on a CI runner whose foreground moved mid-call.
     let elements_hwnd = if a.elements {
-        let fg = unsafe { GetForegroundWindow() };
-        if fg.is_null() {
+        if fg_at_entry.is_null() {
             return shot_err_list(vec![
                 "error: bad_window: elements needs a window (no foreground window)".to_string(),
             ]);
         }
-        Some(fg)
+        Some(fg_at_entry)
     } else {
         None
     };
@@ -928,14 +975,14 @@ mod tests {
 
     /// A desktop/region capture with elements:true names the FOREGROUND window
     /// the element block describes, so it cannot be mistaken for the image's
-    /// window.
+    /// window. The foreground is forced through the seam, never read ambient:
+    /// the assertion is about the handle the call carried, so it means the same
+    /// thing on a CI runner whose foreground moves under it.
     #[test]
     fn desktop_screenshot_names_the_elements_window() {
-        let fg = unsafe { GetForegroundWindow() };
-        if fg.is_null() {
-            println!("FG_SKIP: no foreground window; elements_window path not exercised");
-            return;
-        }
+        let f = crate::fixture::Fixture::new();
+        let hwnd = f.hwnd_i64();
+        script_foreground(&[hwnd]);
         let out = screenshot_desktop(&ShotArgs {
             display: -1,
             region: Some(vec![
@@ -962,13 +1009,81 @@ mod tests {
             .expect("elements:true must add elements_window to the payload");
         assert_eq!(
             ew.get("hwnd").and_then(|v| v.as_i64()),
-            Some(fg as i64),
+            Some(hwnd),
             "elements_window must be the window the element block describes"
         );
         for k in ["exe", "title"] {
             assert!(
                 ew.get(k).and_then(|v| v.as_str()).is_some(),
                 "elements_window needs {k}: {ew}"
+            );
+        }
+    }
+
+    /// Regression, CI run 41311923165: the call sampled `GetForegroundWindow()`
+    /// for the element walk and again for the `elements_window` name, so a
+    /// runner whose foreground moved between the two reads described one
+    /// window and named another. The foreground is now sampled ONCE and
+    /// carried; the seam moves the ambient value after that first read, which
+    /// is exactly what a second read would pick up.
+    #[test]
+    fn elements_window_keeps_the_handle_sampled_at_call_start() {
+        let f = crate::fixture::Fixture::new();
+        let hwnd = f.hwnd_i64();
+        let g = crate::fixture::Fixture::new();
+        let moved = g.hwnd_i64();
+        script_foreground(&[hwnd, moved]);
+        let out = screenshot_desktop(&ShotArgs {
+            display: -1,
+            region: Some(vec![
+                Value::from(0),
+                Value::from(0),
+                Value::from(64),
+                Value::from(64),
+            ]),
+            window: None,
+            max_px: Some(64),
+            fmt: "png".to_string(),
+            quality: Some(80),
+            grid: false,
+            allow_crop_fallback: false,
+            elements: true,
+            target: None,
+        });
+        let outer: Value = serde_json::from_str(&out).expect("outer frame");
+        let sc = outer
+            .get("structuredContent")
+            .expect("structuredContent carries the coordinate map");
+        let ew = sc
+            .get("elements_window")
+            .expect("elements:true must add elements_window to the payload");
+        assert_eq!(
+            ew.get("hwnd").and_then(|v| v.as_i64()),
+            Some(hwnd),
+            "a foreground switch after the first sample must not re-name the block; \
+             got {ew}"
+        );
+        // Same handle on both halves of the reply: the appended block
+        // enumerates the window the payload named.
+        let blocks = outer["content"].as_array().expect("content blocks");
+        let block: Value = serde_json::from_str(
+            blocks
+                .last()
+                .and_then(|b| b["text"].as_str())
+                .expect("the element block is the last content block"),
+        )
+        .expect("element block is JSON");
+        let entries = block["elements"].as_array().expect("elements array");
+        assert!(
+            !entries.is_empty(),
+            "the fixture window has controls; an empty walk would make this \
+             assertion vacuous"
+        );
+        for e in entries {
+            assert_eq!(
+                e["win"].as_i64(),
+                Some(hwnd),
+                "every entry must belong to the named window: {e}"
             );
         }
     }

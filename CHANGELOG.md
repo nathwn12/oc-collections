@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [6.1.1] - 2026-11-01
+
+### Fixed
+- `screenshot` with `elements:true` (desktop/region) samples the foreground
+  window once per call and carries that handle through both the element walk
+  and `elements_window`. It previously read `GetForegroundWindow()` again when
+  naming the window, so a foreground switch between the two reads could make
+  the reply enumerate one window and name another; the release suite
+  (`cargo test --release --locked`) caught it on a CI runner.
+
 ## [6.1.0] - 2026-11-01
 
 ### Added
