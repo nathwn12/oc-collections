@@ -733,6 +733,21 @@ fn structured_of_text(s: &str) -> Option<Value> {
     }
 }
 
+/// `isError` rule shared by every envelope: a payload is a tool error when
+/// its top-level `ok` is false, except a `do` burst, which is a tool error
+/// only when none of its per-action results succeeded (continue-always).
+pub(crate) fn payload_is_err(sc: &Value) -> bool {
+    match sc.get("ok") {
+        Some(Value::Bool(false)) => match sc.get("results").and_then(|r| r.as_array()) {
+            Some(results) => !results
+                .iter()
+                .any(|r| r.get("ok") == Some(&Value::Bool(true))),
+            None => true,
+        },
+        _ => false,
+    }
+}
+
 fn wrapped_text(s: &str) -> String {
     let Some(sc) = structured_of_text(s) else {
         return tool_err_blocks(&[text_block(
@@ -741,10 +756,11 @@ fn wrapped_text(s: &str) -> String {
     };
     // Tool-level failure is signalled by the payload itself: any object
     // with top-level `"ok": false` (window resolve/action errors, elements
-    // resolve errors, cursor read errors) is `isError: true`. The `do`
-    // burst payload has no top-level `ok` (per-action `ok` only), so its
-    // continue-always contract stays `isError: false`.
-    let is_err = sc.get("ok") == Some(&Value::Bool(false));
+    // resolve errors, cursor read errors) is `isError: true`. `do` is the one
+    // exception by contract: its `ok` is false when ANY action failed, but a
+    // burst is continue-always, so only a burst where NOTHING succeeded (its
+    // `results` carry no `ok:true`) is a tool error.
+    let is_err = payload_is_err(&sc);
     format!(
         "{{\"content\":[{}],\"isError\":{},\"structuredContent\":{}}}",
         text_block(s),
@@ -770,7 +786,7 @@ pub(crate) fn wrapped_text_with_image(s: &str, png_b64: &str, mime: &str) -> Str
             "error: internal: tool payload is not a JSON object or array",
         )]);
     };
-    let is_err = sc.get("ok") == Some(&Value::Bool(false));
+    let is_err = payload_is_err(&sc);
     format!(
         "{{\"content\":[{},{}],\"isError\":{},\"structuredContent\":{}}}",
         text_block(s),

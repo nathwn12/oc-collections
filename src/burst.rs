@@ -4597,6 +4597,18 @@ pub fn do_burst(args: &DoArgs) -> String {
         hidden_meta = Some(hd);
     }
     let mut payload = Map::new();
+    // Envelope truth: `do` continues past a failed action, so a per-action
+    // `ok` is not a tool verdict. These two fields are: `ok` is true only
+    // when EVERY action succeeded, `failed` counts the ones that did not,
+    // and the tool envelope reports isError only when NOTHING succeeded
+    // (see `wrapped_text`). Per-action fields are untouched.
+    let failed = st
+        .results
+        .iter()
+        .filter(|r| r.get("ok") != Some(&Value::from(true)))
+        .count();
+    payload.insert("ok".to_string(), Value::from(failed == 0));
+    payload.insert("failed".to_string(), Value::from(failed as i64));
     payload.insert(
         "results".to_string(),
         Value::from(
