@@ -43,10 +43,13 @@
     "test": "node --test \"test/**/*.test.js\"",
     "prepublishOnly": "npm run check && npm run test"
   },
-  "dependencies": {
-    "@opencode/plugin": "^2.2.5"
-  },
   "publishConfig": {
     "access": "public"
+  },
+  "devDependencies": {
+    "@opencode/plugin": "^2.2.5"
+  },
+  "peerDependencies": {
+    "@opencode/plugin": "^2.2.5"
   }
 }
