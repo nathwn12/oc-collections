@@ -1,6 +1,6 @@
 //! screenshot tool handlers (window + desktop paths).
 
-use crate::cap::{bitblt_grab, finalize, resolve_selector, Img};
+use crate::cap::{bitblt_grab, finalize, Img};
 use crate::dxgi::{dxgi_grab, dxgi_outputs, pick_output};
 use crate::shot::{capture_window, elements_block};
 use crate::{
@@ -188,9 +188,16 @@ pub fn screenshot_window(a: &ShotArgs) -> String {
     // Target lock first: one window, resolved once, and KEPT as a lock so the
     // identity can be revalidated immediately before the capture (the handle
     // alone would let a recycled hwnd be captured as somebody else's window).
+    // `window:` is parsed with the SAME grammar as `target:` (a plain string
+    // is a TargetSpec), so the two arguments differ only in spelling.
+    let spec_v: Option<Value> = match (a.target.as_ref(), a.window.as_ref()) {
+        (Some(v), _) => Some(v.clone()),
+        (None, Some(sel)) => Some(Value::String(sel.clone())),
+        (None, None) => None,
+    };
     let mut locked: Option<crate::target::TargetLock> = None;
-    let (hwnd, err, cands): WindowResolve = match a.target.as_ref() {
-        Some(v) => match crate::target::TargetSpec::parse(v) {
+    let (hwnd, err, cands): WindowResolve = match spec_v {
+        Some(v) => match crate::target::TargetSpec::parse(&v) {
             Err(e) => (None, Some(e.text()), e.candidates.clone()),
             Ok(spec) => match crate::target::lock(&spec) {
                 Err(e) => (None, Some(e.text()), e.candidates.clone()),
@@ -201,14 +208,11 @@ pub fn screenshot_window(a: &ShotArgs) -> String {
                 }
             },
         },
-        None => match a.window.as_ref() {
-            Some(sel) => resolve_selector(sel),
-            None => (
-                None,
-                Some("error: bad_window: need window or target".to_string()),
-                None,
-            ),
-        },
+        None => (
+            None,
+            Some("error: bad_window: need window or target".to_string()),
+            None,
+        ),
     };
     if hwnd.is_none() {
         let mut items = vec![format!("error: {}", err.unwrap())];
@@ -350,6 +354,10 @@ pub fn screenshot_window(a: &ShotArgs) -> String {
     );
     capt.insert("detector".to_string(), Value::from(cap.detector));
     capt.insert("stale".to_string(), Value::from(cap.stale));
+    capt.insert(
+        "moved_during_capture".to_string(),
+        Value::from(cap.moved_during_capture),
+    );
     capt.insert(
         "note".to_string(),
         match cap.note {
@@ -784,6 +792,36 @@ mod tests {
         assert!(
             rev_walk < walk,
             "revalidate_locked must precede elements_block on the path"
+        );
+    }
+
+    /// `window:` is parsed as a TargetSpec, so a dead handle is the typed
+    /// target_gone the `target:` path already produced — never the old bare
+    /// IsWindow bad_window, and never a capture of whatever reused the handle.
+    #[test]
+    fn window_selector_uses_the_target_lock() {
+        let f = crate::fixture::Fixture::new();
+        let hwnd = f.hwnd_i64();
+        drop(f);
+        let out = screenshot_window(&ShotArgs {
+            display: -1,
+            region: None,
+            window: Some(format!("hwnd:{hwnd}")),
+            max_px: Some(320),
+            fmt: "png".to_string(),
+            quality: Some(80),
+            grid: false,
+            allow_crop_fallback: false,
+            elements: false,
+            target: None,
+        });
+        assert!(
+            out.contains("target_gone"),
+            "window: must route through the target lock, got: {out}"
+        );
+        assert!(
+            !out.contains("bad_window"),
+            "the bare-handle legacy path must be gone, got: {out}"
         );
     }
 
