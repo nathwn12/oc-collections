@@ -20,7 +20,12 @@ const TIMEOUT_MS = 20000;
 const READ_DEFAULT_LIMIT = 20;
 const READ_MAX_LIMIT = 100;
 
-let registered = false;
+// The one live tool-transform registration, or null when nothing is registered.
+// A plugin reload re-runs setup on this cached module instance after the host has
+// disposed the old registration, so this handle — not a one-shot boolean — is the
+// truth about what is live: setup disposes it before re-registering, which leaves
+// exactly one active transform per call, never zero and never two.
+let registration = null;
 
 function fail(error, reason, candidates, truncated) {
   const out = { error, reason };
@@ -314,12 +319,23 @@ function deliveryOf(args, fallback) {
   return { ok: false, error: 'bad_request', reason: 'delivery must be "steer" or "queue"' };
 }
 
+// Dispose the live registration, if any, and forget it. Safe to call when there
+// is none, and safe to call on a registration the host already disposed on unload
+// (the host's dispose is an idempotent finalizer).
+function dropRegistration() {
+  const current = registration;
+  registration = null;
+  if (current && typeof current.dispose === 'function') return current.dispose();
+  return undefined;
+}
+
 async function ensureTools(ctx) {
-  if (registered) return;
   const transform = ctx && ctx.tool && ctx.tool.transform;
-  if (typeof transform !== 'function') return;
-  registered = true;
-  await ctx.tool.transform((tools) => {
+  if (typeof transform !== 'function') return null;
+  // Dispose before re-registering: a reload, or the server path after setup, must
+  // replace the transform instead of stacking a second one or skipping the call.
+  await dropRegistration();
+  registration = await transform((tools) => {
     tools.add({
       name: 'session_list',
       description:
@@ -750,6 +766,7 @@ async function ensureTools(ctx) {
       },
     });
   });
+  return registration;
 }
 
 export { doneRefusal, ensureTools, listSessions, resolveTarget, setApiRunner, stripPrefix };
@@ -758,8 +775,15 @@ export default {
   id: 'oc-talk',
   // V2 config loader: requires id + setup|effect; registers tools when the
   // host exposes the tool domain here, otherwise server retries below.
+  //
+  // The returned cleanup disposes this call's registration so an unload leaves
+  // nothing behind. It only touches the registration it created: if a newer
+  // setup has already replaced it, that one is the live one and is left alone.
   setup(ctx) {
-    return ensureTools(ctx);
+    return ensureTools(ctx).then((mine) => () => {
+      if (!mine || registration !== mine) return undefined;
+      return dropRegistration();
+    });
   },
   // Server runtime: same registration gate; no hooks to dispatch.
   server: async (ctx) => {
