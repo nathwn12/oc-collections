@@ -6,7 +6,7 @@ use crate::schemas::{
 };
 use crate::screen::{dispatch_screenshot, ShotArgs};
 use crate::shot::{compact_entry, element_model, elements_object};
-use crate::winop::{do_cursor, do_list_windows, do_window, WinArgs};
+use crate::winop::{do_cursor, do_window, WinArgs};
 use crate::{
     check_no_extra, coerce_int, coerce_str, display_monitors, err_result_text, missing_arg,
     opt_int, opt_str, py_dumps, req_bool, req_int, req_str, verr_text, wrapped_text, ALL_VERSIONS,
@@ -710,6 +710,16 @@ fn call_noargs(tool: &str, args: &Map<String, Value>) -> Option<String> {
     None
 }
 
+fn call_list_windows(args: &Map<String, Value>) -> String {
+    let mut errs = Vec::new();
+    check_no_extra(args, &mut errs, &["include_app_ids"]);
+    let include_app_ids = req_bool(args, &mut errs, "include_app_ids");
+    if !errs.is_empty() {
+        return err_result_text(&verr_text("list_windows", &errs));
+    }
+    crate::winop::do_list_windows(include_app_ids.unwrap())
+}
+
 fn tools_call(params: &Value) -> String {
     let name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
     let args: Map<String, Value> = match params.get("arguments") {
@@ -718,10 +728,7 @@ fn tools_call(params: &Value) -> String {
     };
     match name {
         "screenshot" => call_screenshot(&args),
-        "list_windows" => match call_noargs("list_windows", &args) {
-            Some(e) => e,
-            None => do_list_windows(),
-        },
+        "list_windows" => call_list_windows(&args),
         "window" => call_window(&args),
         "do" => call_do(&args),
         "cursor" => match call_noargs("cursor", &args) {
@@ -1729,6 +1736,65 @@ mod tests {
         assert!(
             s.contains("does not fit in i64") && s.contains("int_parsing"),
             "overflow hwnd needs the shared range message, got: {s}"
+        );
+    }
+
+    /// The `do` schema declares the element fields the `type` action already
+    /// accepts (a UIA ValuePattern.SetValue path exists at runtime), and the
+    /// 256-action cap. Runtime behaviour is unchanged by this declaration.
+    #[test]
+    fn do_type_action_schema_declares_element_index_and_expect_fp() {
+        let t: Value = serde_json::from_str(crate::schemas::TOOL_DO).expect("TOOL_DO JSON");
+        let actions = &t["inputSchema"]["properties"]["actions"];
+        assert_eq!(
+            actions.get("maxItems"),
+            Some(&Value::from(256)),
+            "the action cap must be declared, not only enforced at runtime"
+        );
+        let variants = actions["items"]["oneOf"]
+            .as_array()
+            .expect("do.actions.items.oneOf");
+        let ty = variants
+            .iter()
+            .find(|v| v["properties"]["type"]["const"].as_str() == Some("type"))
+            .expect("a type action variant");
+        for k in ["element", "index", "expect_fp"] {
+            assert!(
+                ty["properties"]
+                    .as_object()
+                    .expect("type properties")
+                    .contains_key(k),
+                "the type action schema must declare {k}: {ty}"
+            );
+        }
+    }
+
+    /// The elements/screenshot descriptions must describe what the runtime
+    /// actually emits: `offscreen`, `moved_during_capture`, `elements_window`.
+    #[test]
+    fn tool_descriptions_declare_the_new_payload_fields() {
+        let el: Value = serde_json::from_str(crate::schemas::TOOL_ELEMENTS).expect("elements");
+        let d = el["description"].as_str().expect("description");
+        assert!(
+            d.contains("offscreen"),
+            "elements must describe the offscreen flag: {d}"
+        );
+        let ss: Value = serde_json::from_str(crate::schemas::TOOL_SCREENSHOT).expect("screenshot");
+        let d = ss["description"].as_str().expect("description");
+        for k in ["moved_during_capture", "elements_window"] {
+            assert!(d.contains(k), "screenshot must describe {k}: {d}");
+        }
+        let lw: Value =
+            serde_json::from_str(crate::schemas::TOOL_LIST_WINDOWS).expect("list_windows");
+        assert_eq!(
+            lw["inputSchema"]["properties"]["include_app_ids"]["default"],
+            Value::from(false),
+            "include_app_ids must be declared opt-in"
+        );
+        let d = lw["description"].as_str().expect("description");
+        assert!(
+            d.contains("include_app_ids") && d.contains("appId"),
+            "list_windows must document the flag: {d}"
         );
     }
 

@@ -47,6 +47,14 @@ const BG_NOTE: &str = "background PostMessage delivery is best-effort: it is NOT
 const BG_SUFFIX: &str = "; omit background for real SendInput delivery";
 const MAX_CLICK_COUNT: i64 = 100;
 const MAX_STABLE_EDGE: i64 = 4096;
+/// Hard ceiling on one burst. Every action runs under the global input lock,
+/// so a huge batch can hold the desktop for hours; 256 is far past any real
+/// UI flow and small enough that a stuck burst is a bounded stall.
+pub const BURST_MAX_ACTIONS: usize = 256;
+/// Total wall-clock budget for one burst call. Checked before every action
+/// and used to clamp `wait`/`wait_for`, so an unbounded sleep chain cannot
+/// hold the lock past it.
+pub const BURST_BUDGET: std::time::Duration = std::time::Duration::from_secs(300);
 
 /// Whole-call typed refusal for a target that could not be locked (nothing
 /// ran): rendered as an MCP tool error carrying `{ok:false, code, error,
@@ -2611,7 +2619,12 @@ impl<'a> DoArgs<'a> {
 }
 
 pub fn do_burst(args: &DoArgs) -> String {
-    let actions = args.actions;
+    let actions: &[Value] = if args.actions.len() > BURST_MAX_ACTIONS {
+        // Refused below as a typed per-result failure; nothing runs.
+        &[]
+    } else {
+        args.actions
+    };
     let background = args.background.clone();
     let background_args = args.background_args.clone();
     let focus_guard = args.focus_guard;
@@ -2625,6 +2638,26 @@ pub fn do_burst(args: &DoArgs) -> String {
     // Boot phase (puppet.py:2693-2746). Top-level wire types are validated in
     // serve.rs; only the range clamps are live here.
     let mut boot_errors: Vec<Map<String, Value>> = Vec::new();
+    if args.actions.len() > BURST_MAX_ACTIONS {
+        // A burst is not just a list: every action runs under the global input
+        // lock, so an unbounded batch can hold the desktop for hours. Refuse
+        // the whole call as a per-action-shaped failure (same envelope as a
+        // failed action) instead of silently truncating it.
+        let mut m = Map::new();
+        m.insert("index".to_string(), Value::from(0));
+        m.insert("type".to_string(), Value::from("burst"));
+        m.insert("ok".to_string(), Value::from(false));
+        m.insert("ms".to_string(), Value::from(0.0));
+        m.insert("code".to_string(), Value::from("burst_budget_exceeded"));
+        m.insert(
+            "error".to_string(),
+            Value::from(format!(
+                "burst_budget_exceeded: {} actions exceed the {BURST_MAX_ACTIONS}-action burst cap; nothing was run",
+                args.actions.len()
+            )),
+        );
+        boot_errors.push(m);
+    }
     let mut settle_n = settle_ms;
     if settle_n < 0 {
         settle_n = 0;
@@ -2776,6 +2809,23 @@ pub fn do_burst(args: &DoArgs) -> String {
     };
 
     for (i, a) in actions.iter().enumerate() {
+        // Wall-clock budget: checked before every action, so a chain of waits
+        // cannot outlive the call. Reported as a per-action-shaped failure
+        // naming the limit and what is left unrun.
+        if t_all.elapsed() >= BURST_BUDGET {
+            let mut m = base_entry(i, &Value::from("burst"), false, 0.0);
+            m.insert("code".to_string(), Value::from("burst_budget_exceeded"));
+            m.insert(
+                "error".to_string(),
+                Value::from(format!(
+                    "burst_budget_exceeded: the {}-second burst budget expired before action {i}; {} action(s) not run",
+                    BURST_BUDGET.as_secs(),
+                    actions.len() - i
+                )),
+            );
+            st.results.push(m);
+            break;
+        }
         // P1b: the `do` action loop is cancellable between actions so a
         // `notifications/cancelled` stops the burst promptly (no late reply).
         if crate::cancel::cancelled() {
@@ -4295,6 +4345,21 @@ pub fn do_burst(args: &DoArgs) -> String {
                 } else if wait_n > 60000 {
                     return Err(format!("wait ms absurd (>60000): {wait_n}"));
                 }
+                // A wait that would outlive the burst budget is refused before
+                // sleeping, with the same typed result a failed action carries.
+                let left_ms = BURST_BUDGET.saturating_sub(t_all.elapsed()).as_millis() as i64;
+                if wait_n > left_ms {
+                    let mut m = base_entry(i, &typ_v, false, elapsed_ms(&t0));
+                    m.insert("code".to_string(), Value::from("burst_budget_exceeded"));
+                    m.insert(
+                        "error".to_string(),
+                        Value::from(format!(
+                            "burst_budget_exceeded: wait {wait_n}ms exceeds the remaining {left_ms}ms of the {}-second burst budget",
+                            BURST_BUDGET.as_secs()
+                        )),
+                    );
+                    return Ok(Some(m));
+                }
                 if sleep_cancellable(wait_n as u64) {
                     let mut m = base_entry(i, &typ_v, false, elapsed_ms(&t0));
                     m.insert("error".to_string(), Value::from("cancelled"));
@@ -4309,7 +4374,19 @@ pub fn do_burst(args: &DoArgs) -> String {
                 } else {
                     st.marked.clear();
                 }
-                let wr = wait_for(ad, &t0);
+                // The poll loop is bounded by the remaining burst budget. When
+                // that cut it short, name the budget instead of reporting a
+                // plain unsatisfied timeout.
+                let left_ms = BURST_BUDGET.saturating_sub(t_all.elapsed()).as_millis() as i64;
+                let want_ms = opt_py_int(ad, "timeout_ms", 5000).unwrap_or(5000);
+                let wf_action: Map<String, Value> = if want_ms > left_ms {
+                    let mut m = ad.clone();
+                    m.insert("timeout_ms".to_string(), Value::from(left_ms.max(0)));
+                    m
+                } else {
+                    ad.clone()
+                };
+                let wr = wait_for(&wf_action, &t0);
                 let mut d = Map::new();
                 d.insert("index".to_string(), Value::from(i as i64));
                 d.insert("type".to_string(), typ_v.clone());
@@ -4319,6 +4396,17 @@ pub fn do_burst(args: &DoArgs) -> String {
                 d.insert("ms".to_string(), wr["waited_ms"].clone());
                 if let Some(e) = wr.get("error") {
                     d.insert("error".to_string(), e.clone());
+                }
+                if want_ms > left_ms && wr.get("satisfied") != Some(&Value::from(true)) {
+                    d.insert("ok".to_string(), Value::from(false));
+                    d.insert("code".to_string(), Value::from("burst_budget_exceeded"));
+                    d.insert(
+                        "error".to_string(),
+                        Value::from(format!(
+                            "burst_budget_exceeded: wait_for timeout {want_ms}ms exceeds the remaining {left_ms}ms of the {}-second burst budget",
+                            BURST_BUDGET.as_secs()
+                        )),
+                    );
                 }
                 return Ok(Some(d));
             }
@@ -5420,6 +5508,57 @@ mod tests {
                 .contains("1048576"),
             "over-cap set must name the bound, got: {first:?}"
         );
+    }
+
+    /// A burst over the 256-action cap is refused whole with a typed
+    /// per-result failure naming the limit; nothing runs (no wait sleeps).
+    #[test]
+    fn burst_over_the_action_cap_is_a_typed_refusal() {
+        let actions: Vec<Value> = (0..=BURST_MAX_ACTIONS)
+            .map(|_| serde_json::json!({"type": "wait", "ms": 0}))
+            .collect();
+        assert_eq!(actions.len(), BURST_MAX_ACTIONS + 1);
+        let out = do_burst(&DoArgs::new(&actions));
+        let outer: Value = serde_json::from_str(&out).expect("outer frame");
+        let sc = outer.get("structuredContent").expect("payload");
+        assert_eq!(sc.get("ok"), Some(&Value::from(false)));
+        let results = sc["results"].as_array().expect("results");
+        assert_eq!(results.len(), 1, "a refused burst runs nothing");
+        assert_eq!(
+            results[0].get("code"),
+            Some(&Value::from("burst_budget_exceeded")),
+            "the cap needs the typed code, got: {:?}",
+            results[0]
+        );
+        assert!(
+            results[0]
+                .get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .contains("256"),
+            "the refusal must name the limit, got: {:?}",
+            results[0]
+        );
+    }
+
+    /// Exactly the cap still runs: the refusal is off-by-one-free.
+    #[test]
+    fn burst_at_the_action_cap_still_runs() {
+        let actions: Vec<Value> = (0..BURST_MAX_ACTIONS)
+            .map(|_| serde_json::json!({"type": "wait", "ms": 0}))
+            .collect();
+        let out = do_burst(&DoArgs {
+            settle_ms: 0,
+            ..DoArgs::new(&actions)
+        });
+        let outer: Value = serde_json::from_str(&out).expect("outer frame");
+        let sc = outer.get("structuredContent").expect("payload");
+        assert_eq!(
+            sc["results"].as_array().map(|a| a.len()),
+            Some(BURST_MAX_ACTIONS),
+            "a burst at the cap must run every action"
+        );
+        assert_eq!(sc.get("failed"), Some(&Value::from(0)));
     }
 
     #[test]

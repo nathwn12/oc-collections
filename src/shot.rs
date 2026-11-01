@@ -216,8 +216,7 @@ pub unsafe fn capture_window(hwnd: HWND, allow_crop_fallback: bool) -> Result<Ca
                         if im2.w == pww && im2.h == pwh && !detector_verdict(&im2).rejected {
                             img = im2;
                             print_flags = Some(pf2);
-                            rect_source =
-                                if post_fb { "gwr_fallback" } else { "dwm" }.to_string();
+                            rect_source = if post_fb { "gwr_fallback" } else { "dwm" }.to_string();
                             // One recapture only: whatever rect the window
                             // holds after it is what the caller is told.
                             let (last_v, last_fb) = dwm_rect(hwnd);

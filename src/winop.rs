@@ -615,10 +615,10 @@ pub fn do_window(a: &WinArgs) -> String {
     wrapped_text(&crate::py_dumps(&payload))
 }
 
-pub fn do_list_windows() -> String {
+pub fn do_list_windows(include_app_ids: bool) -> String {
     let mut out: Vec<Map<String, Value>> = Vec::new();
     for h in enum_windows() {
-        if let Some(info) = window_info(h) {
+        if let Some(info) = window_info(h, include_app_ids) {
             out.push(info);
         }
     }
@@ -657,7 +657,7 @@ mod tests {
     /// from an unresponsive one.
     #[test]
     fn list_windows_entries_carry_elevated_flag() {
-        let out = do_list_windows();
+        let out = do_list_windows(false);
         let outer: Value = serde_json::from_str(&out).expect("outer frame");
         let sc = outer.get("structuredContent").expect("structuredContent");
         assert!(
@@ -677,6 +677,45 @@ mod tests {
             );
         }
         println!("ELEVATED_FLAG_WINDOWS={}", wins.len());
+    }
+
+    /// `include_app_ids` is opt-in: the key is absent by default, and when
+    /// requested every entry carries it as a string or null (never a guess).
+    /// The read is a per-window property-store COM call, hence the flag.
+    #[test]
+    fn list_windows_app_ids_only_when_requested() {
+        let out = do_list_windows(false);
+        let outer: Value = serde_json::from_str(&out).expect("outer frame");
+        let wins = outer["structuredContent"]["windows"]
+            .as_array()
+            .expect("windows array");
+        assert!(
+            !wins.is_empty(),
+            "a desktop has at least one visible window"
+        );
+        for w in wins {
+            assert!(
+                !w.as_object().expect("window object").contains_key("appId"),
+                "appId must be absent unless include_app_ids:true, got: {w}"
+            );
+        }
+
+        let out = do_list_windows(true);
+        let outer: Value = serde_json::from_str(&out).expect("outer frame");
+        let wins = outer["structuredContent"]["windows"]
+            .as_array()
+            .expect("windows array");
+        for w in wins {
+            let v = w
+                .as_object()
+                .expect("window object")
+                .get("appId")
+                .expect("include_app_ids must add appId to every entry");
+            assert!(
+                v.is_null() || v.as_str().is_some(),
+                "appId is a string or null, got: {v}"
+            );
+        }
     }
 
     /// Legacy `hwnd` is the same lock as `target:`: a dead/recycled handle is

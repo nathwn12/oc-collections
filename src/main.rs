@@ -1231,7 +1231,7 @@ fn is_maximized(hwnd: HWND) -> bool {
 
 // ---------------------------------------------------------------- window model
 
-fn window_info(hwnd: HWND) -> Option<Map<String, Value>> {
+fn window_info(hwnd: HWND, include_app_ids: bool) -> Option<Map<String, Value>> {
     unsafe {
         if IsWindowVisible(hwnd) == 0 {
             return None;
@@ -1248,6 +1248,18 @@ fn window_info(hwnd: HWND) -> Option<Map<String, Value>> {
         m.insert("hwnd".to_string(), Value::from(hwnd as i64));
         m.insert("pid".to_string(), Value::from(pid as i64));
         m.insert("exe".to_string(), Value::from(exe_of_pid(pid)));
+        // Opt-in: the AppUserModelID comes from the window's property store,
+        // which is a per-window COM read, so it is only paid for on request.
+        // null (never a guess) when the store or property is unavailable.
+        if include_app_ids {
+            m.insert(
+                "appId".to_string(),
+                match crate::target::app_id_of(hwnd as i64) {
+                    Some(a) => Value::from(a),
+                    None => Value::Null,
+                },
+            );
+        }
         m.insert("title".to_string(), Value::from(title));
         m.insert("class".to_string(), Value::from(class));
         m.insert(

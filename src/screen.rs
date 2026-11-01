@@ -160,9 +160,20 @@ fn monitors_block() -> (Vec<[i32; 4]>, i64, VirtualRect) {
     (mons, n, (vx, vy, vr, vb))
 }
 
-fn cmaps_monitors(n: i64, v: VirtualRect) -> Map<String, Value> {
+fn cmaps_monitors(n: i64, v: VirtualRect, rects: &[[i32; 4]]) -> Map<String, Value> {
     let mut m = Map::new();
     m.insert("count".to_string(), Value::from(n));
+    // Per-monitor rects, in the same [l,t,r,b] shape `cursor.screens` uses,
+    // so a caller can map a monitor index without a second round-trip.
+    m.insert(
+        "rects".to_string(),
+        Value::from(
+            rects
+                .iter()
+                .map(|r| Value::from(vec![r[0] as i64, r[1] as i64, r[2] as i64, r[3] as i64]))
+                .collect::<Vec<_>>(),
+        ),
+    );
     m.insert(
         "origin".to_string(),
         Value::from(vec![v.0 as i64, v.1 as i64]),
@@ -286,7 +297,7 @@ pub fn screenshot_window(a: &ShotArgs) -> String {
         Err(e) => return shot_err_list(vec![e]),
     };
     let (curx, cury) = cursor_xy((dl, dt));
-    let (_, n_mon, vrt) = monitors_block();
+    let (mons, n_mon, vrt) = monitors_block();
     let mut cmap = Map::new();
     let mut im = Map::new();
     im.insert("w".to_string(), Value::from(iw));
@@ -333,7 +344,7 @@ pub fn screenshot_window(a: &ShotArgs) -> String {
     cmap.insert("scale".to_string(), Value::from(scale));
     cmap.insert(
         "monitors".to_string(),
-        Value::from(cmaps_monitors(n_mon, vrt)),
+        Value::from(cmaps_monitors(n_mon, vrt, &mons)),
     );
     let mut cur = Map::new();
     cur.insert("x".to_string(), Value::from(curx));
@@ -684,7 +695,7 @@ pub fn screenshot_desktop(a: &ShotArgs) -> String {
     cmap.insert("scale".to_string(), Value::from(scale));
     cmap.insert(
         "monitors".to_string(),
-        Value::from(cmaps_monitors(n_mon, (vx, vy, vr, vb))),
+        Value::from(cmaps_monitors(n_mon, (vx, vy, vr, vb), &mons)),
     );
     let mut cur = Map::new();
     cur.insert("x".to_string(), Value::from(curx));
@@ -716,6 +727,34 @@ pub fn screenshot_desktop(a: &ShotArgs) -> String {
         Value::from(cur_after == cur_before),
     );
     cmap.insert("formula".to_string(), Value::from(FORMULA));
+    // The element block is built from GetForegroundWindow(), not from the
+    // image: with display/region the image is the desktop but the elements
+    // are the foreground window's. Name that window in the payload so the
+    // third block is never mistaken for the captured image's window.
+    let elements_hwnd = if a.elements {
+        let fg = unsafe { GetForegroundWindow() };
+        if fg.is_null() {
+            return shot_err_list(vec![
+                "error: bad_window: elements needs a window (no foreground window)".to_string(),
+            ]);
+        }
+        Some(fg)
+    } else {
+        None
+    };
+    if let Some(fg) = elements_hwnd {
+        let mut ew = Map::new();
+        ew.insert("hwnd".to_string(), Value::from(fg as i64));
+        ew.insert(
+            "exe".to_string(),
+            Value::from(crate::exe_of_pid(crate::pid_of(fg))),
+        );
+        ew.insert(
+            "title".to_string(),
+            Value::from(unsafe { crate::win_text(fg) }),
+        );
+        cmap.insert("elements_window".to_string(), Value::from(ew));
+    }
     let mime = if f == "png" {
         "image/png"
     } else {
@@ -728,13 +767,7 @@ pub fn screenshot_desktop(a: &ShotArgs) -> String {
         ),
         text_block(&crate::py_dumps(&Value::Object(cmap.clone()))),
     ];
-    if a.elements {
-        let fg = unsafe { GetForegroundWindow() };
-        if fg.is_null() {
-            return shot_err_list(vec![
-                "error: bad_window: elements needs a window (no foreground window)".to_string(),
-            ]);
-        }
+    if let Some(fg) = elements_hwnd {
         blocks.push(text_block(&elements_block(fg)));
     }
     screenshot_ok(&blocks, &Value::Object(cmap))
@@ -852,6 +885,92 @@ mod tests {
 
     fn two_mons() -> Vec<[i32; 4]> {
         vec![[0, 0, 1920, 1080], [1920, 0, 3840, 1080]]
+    }
+
+    /// `monitors` carries per-monitor rects in the same [l,t,r,b] shape
+    /// `cursor.screens` uses, so a caller can map a display index without a
+    /// second round-trip.
+    #[test]
+    fn monitor_block_carries_per_monitor_rects() {
+        let rects = two_mons();
+        let o = cmaps_monitors(2, (0, 0, 3840, 1080), &rects);
+        assert_eq!(o.get("count"), Some(&Value::from(2)));
+        assert_eq!(
+            o.get("origin"),
+            Some(&serde_json::json!([0, 0])),
+            "origin is the virtual-desktop top-left"
+        );
+        assert_eq!(
+            o.get("virtual"),
+            Some(&serde_json::json!([0, 0, 3840, 1080]))
+        );
+        let got: Vec<Vec<i64>> = o["rects"]
+            .as_array()
+            .expect("monitors.rects")
+            .iter()
+            .map(|r| {
+                r.as_array()
+                    .expect("rect array")
+                    .iter()
+                    .map(|v| v.as_i64().expect("int edge"))
+                    .collect()
+            })
+            .collect();
+        let want: Vec<Vec<i64>> = rects
+            .iter()
+            .map(|r| vec![r[0] as i64, r[1] as i64, r[2] as i64, r[3] as i64])
+            .collect();
+        assert_eq!(
+            got, want,
+            "monitors.rects must mirror cursor.screens: [l,t,r,b] per monitor"
+        );
+    }
+
+    /// A desktop/region capture with elements:true names the FOREGROUND window
+    /// the element block describes, so it cannot be mistaken for the image's
+    /// window.
+    #[test]
+    fn desktop_screenshot_names_the_elements_window() {
+        let fg = unsafe { GetForegroundWindow() };
+        if fg.is_null() {
+            println!("FG_SKIP: no foreground window; elements_window path not exercised");
+            return;
+        }
+        let out = screenshot_desktop(&ShotArgs {
+            display: -1,
+            region: Some(vec![
+                Value::from(0),
+                Value::from(0),
+                Value::from(64),
+                Value::from(64),
+            ]),
+            window: None,
+            max_px: Some(64),
+            fmt: "png".to_string(),
+            quality: Some(80),
+            grid: false,
+            allow_crop_fallback: false,
+            elements: true,
+            target: None,
+        });
+        let outer: Value = serde_json::from_str(&out).expect("outer frame");
+        let sc = outer
+            .get("structuredContent")
+            .expect("structuredContent carries the coordinate map");
+        let ew = sc
+            .get("elements_window")
+            .expect("elements:true must add elements_window to the payload");
+        assert_eq!(
+            ew.get("hwnd").and_then(|v| v.as_i64()),
+            Some(fg as i64),
+            "elements_window must be the window the element block describes"
+        );
+        for k in ["exe", "title"] {
+            assert!(
+                ew.get(k).and_then(|v| v.as_str()).is_some(),
+                "elements_window needs {k}: {ew}"
+            );
+        }
     }
 
     #[test]
