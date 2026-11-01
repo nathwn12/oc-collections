@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [6.1.4] - 2026-11-02
+
+### Fixed
+- Packaging-only: `npm/package.json` restored to the two guards. 6.1.3 added a
+  `"test": "node --test test/"` script, and the release gate fails closed on
+  any script beyond the global-install-refusal `preinstall`/`postinstall`
+  pair, so the tag run died at `assert versions + fill manifest`. The test file
+  stays and documents its direct command (`node --test npm/test/`). No runtime
+  change: the crate and the launcher are byte-identical in behaviour to 6.1.3.
+
 ## [6.1.3] - 2026-11-02
 
 ### Fixed
