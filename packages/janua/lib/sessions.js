@@ -25,6 +25,8 @@ import {
 
 export const DEFAULT_COLS = 80;
 export const DEFAULT_ROWS = 24;
+// The same bound pty_spawn's schema enforces on a terminal dimension.
+export const MAX_DIMENSION = 1000;
 export const DEFAULT_MAX_SESSIONS = 16;
 export const DEFAULT_MAX_BUFFER_BYTES = 1024 * 1024;
 export const DEFAULT_LIST_LIMIT = 50;
@@ -188,6 +190,17 @@ function resolveCwd(cwd) {
   return cwd;
 }
 
+// A resize dimension: an omitted one keeps the size in force, so a caller that
+// only widens a TUI does not have to restate its height. Anything given must be
+// the same 1..1000 integer pty_spawn's schema accepts.
+function resolveDimension(name, given, current) {
+  if (given === undefined || given === null) return current;
+  if (!Number.isInteger(given) || given < 1 || given > MAX_DIMENSION) {
+    throw invalidArgs(`${name} must be an integer between 1 and ${MAX_DIMENSION}, got ${describeCause(given)}`);
+  }
+  return given;
+}
+
 // node-pty keeps a worker thread draining the ConPTY console socket after the
 // child exits, which pins the Node event loop open. Disposing it (a private
 // field, guarded) is what lets a short-lived process or a test runner exit
@@ -277,6 +290,23 @@ function compileMatch(match) {
   }
 }
 
+// A resize requested before the terminal reports ready is held on the session
+// rather than handed to node-pty: on Windows node-pty queues it and replays it
+// from inside its own socket callback, where a child that exited in the meantime
+// throws with nothing above it to catch, which would take the whole server down.
+// Replaying it here can only ever fail quietly, because there is no caller left
+// to answer and a child that has gone has no terminal to resize.
+function flushResize(session) {
+  const pending = session.pendingResize;
+  session.pendingResize = null;
+  if (!pending || session.exited) return;
+  try {
+    session.term.resize(pending.cols, pending.rows);
+  } catch {
+    // the child went away between the queue and its first byte
+  }
+}
+
 function waitForChange(session, ms) {
   return new Promise((resolve) => {
     const done = () => {
@@ -362,9 +392,13 @@ export class SessionManager {
       exitCode: null,
       ring: new OutputRing(this.#maxBufferBytes),
       waiters: new Set(),
+      pendingResize: null,
     };
 
     term.onData((chunk) => {
+      // The first chunk is also what makes a Windows terminal ready for a resize,
+      // so a geometry change asked for before it is applied here.
+      if (session.pendingResize) flushResize(session);
       session.ring.append(chunk);
       this.#notify(session);
     });
@@ -397,6 +431,57 @@ export class SessionManager {
       );
     }
     return { ok: true };
+  }
+
+  // Change the geometry of a running terminal. node-pty handles both halves of
+  // what a TUI needs: on POSIX it ioctls TIOCSWINSZ, which makes the kernel send
+  // SIGWINCH to the foreground process group, and on Windows it resizes the
+  // ConPTY pseudo console, which is what the child's console APIs then read.
+  // The reply is the geometry now in force, so a resize that names only one
+  // dimension still tells the caller both. A Windows terminal that has not
+  // produced its first byte yet takes the size as soon as it does (flushResize).
+  resize(sessionId, input = {}) {
+    const session = this.#get(sessionId);
+    if ((input.cols === undefined || input.cols === null)
+      && (input.rows === undefined || input.rows === null)) {
+      throw invalidArgs(
+        `give cols, rows, or both: an omitted dimension keeps the current one, `
+        + `but a resize with neither has nothing to apply (session is ${session.cols}x${session.rows})`,
+      );
+    }
+    const cols = resolveDimension('cols', input.cols, session.cols);
+    const rows = resolveDimension('rows', input.rows, session.rows);
+    // Checked before the call: node-pty refuses a pty that has already exited,
+    // and on Windows it raises that from inside its own queued callback, where
+    // it would escape as an unhandled throw instead of a typed tool error.
+    if (session.exited) {
+      throw new JanuaError(
+        ERROR_CODES.PTY_RESIZE_FAILED,
+        `session ${sessionId} has exited (exit code ${session.exitCode}); there is no terminal left to resize`,
+      );
+    }
+    try {
+      // `_isReady` is node-pty's private Windows flag, and it is the only way to
+      // tell "this runs now" from "this gets queued inside the dependency". It
+      // is read as exactly false so a renamed internal can only fall back to the
+      // old behaviour, never to a crash.
+      if (session.term._isReady === false) {
+        session.pendingResize = { cols, rows };
+      } else {
+        session.term.resize(cols, rows);
+      }
+    } catch (err) {
+      throw new JanuaError(
+        ERROR_CODES.PTY_RESIZE_FAILED,
+        `resize of session ${sessionId} to ${cols}x${rows} failed: ${describeCause(err)}`,
+      );
+    }
+    // Tracked rather than read back from term.cols: a resize held until the
+    // terminal reports ready has not reached it yet, so the getter would still
+    // show the old size while the new one is queued.
+    session.cols = cols;
+    session.rows = rows;
+    return { ok: true, cols, rows };
   }
 
   async read(sessionId, options = {}) {

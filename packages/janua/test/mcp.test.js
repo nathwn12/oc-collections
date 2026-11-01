@@ -7,7 +7,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const BIN = join(here, '..', 'bin', 'janua.js');
-const TOOL_NAMES = ['pty_kill', 'pty_list', 'pty_read', 'pty_spawn', 'pty_write'];
+const TOOL_NAMES = ['pty_kill', 'pty_list', 'pty_read', 'pty_resize', 'pty_spawn', 'pty_write'];
 const MISSING_ID = '22222222-2222-2222-2222-222222222222';
 
 function textOf(result) {
@@ -46,6 +46,8 @@ test('MCP handshake: tools/list, then spawn, read and kill over stdio', async (t
   assert.equal(byName.pty_list.annotations.readOnlyHint, true);
   assert.equal(byName.pty_spawn.annotations.readOnlyHint, false);
   assert.equal(byName.pty_write.annotations.readOnlyHint, false);
+  assert.equal(byName.pty_resize.annotations.readOnlyHint, false);
+  assert.equal(byName.pty_resize.annotations.destructiveHint, false);
   assert.equal(byName.pty_kill.annotations.destructiveHint, true);
   assert.equal(byName.pty_spawn.annotations.destructiveHint, false);
   assert.deepEqual(
@@ -82,6 +84,17 @@ test('MCP handshake: tools/list, then spawn, read and kill over stdio', async (t
   }
   assert.match(data, /JANUA_MCP_OK/);
 
+  // The running session can be resized over the wire, and the reply states the
+  // geometry in force: one dimension given, the other keeps its spawn-time size.
+  const resized = await client.callTool({
+    name: 'pty_resize',
+    arguments: { sessionId: spawnPayload.sessionId, cols: 100 },
+  });
+  const resizePayload = JSON.parse(textOf(resized));
+  console.log(`pty_resize -> ${JSON.stringify(resizePayload)}`);
+  assert.deepEqual(resizePayload, { ok: true, cols: 100, rows: 24 });
+  assert.deepEqual(resized.structuredContent, resizePayload, 'structuredContent must match the payload');
+
   const killed = await client.callTool({
     name: 'pty_kill',
     arguments: { sessionId: spawnPayload.sessionId },
@@ -113,8 +126,8 @@ test('MCP handshake: tools/list, then spawn, read and kill over stdio', async (t
   assert.equal(typeof page.sessions[0].description, 'string', 'pty_list must return the description');
   assert.equal(page.sessions[0].description, 'handshake smoke test child process');
   assert.deepEqual(page.sessions[0].args, ['-e', "process.stdout.write('JANUA_MCP_OK'); setInterval(() => {}, 1000)"]);
-  assert.equal(page.sessions[0].cols, 80);
-  assert.equal(page.sessions[0].rows, 24);
+  assert.equal(page.sessions[0].cols, 100, 'pty_list must report the columns pty_resize applied');
+  assert.equal(page.sessions[0].rows, 24, 'the dimension the resize left alone must not move');
   assert.equal(typeof page.sessions[0].cwd, 'string');
   assert.deepEqual(listedAfter.structuredContent, page, 'structuredContent must match the payload');
 

@@ -42,13 +42,14 @@ On Windows, if your client cannot launch `npx` directly, wrap it in the command 
 }
 ```
 
-## The five tools
+## The six tools
 
 | Tool | What it does |
 | --- | --- |
 | `pty_spawn` | Start `command` with `args` in a new PTY. Takes an optional `cwd`, `env`, `cols`/`rows` (defaults 80x24), `title`, and an optional `description` (5-10 words is the useful length, at most 200 characters; defaults to the title). Returns `{sessionId, pid, title}`. No shell string: command and args are passed as given, there is no `shell: true`. On Windows a bare name is resolved through `PATH` x `PATHEXT` and a batch shim runs through `cmd /c` (see Windows notes). |
 | `pty_write` | Send `data` to a session. `newline` (default true) appends a carriage return, which is what a prompt is waiting for. Returns `{ok}`. Add `waitMs` (and optionally `match`, `cursor`, `maxBytes`, `stripAnsi`, with the same meaning as in `pty_read`) to read the reply in the same call: the response then also carries `{data, cursor, exited, exitCode, dropped, matched}`. |
 | `pty_read` | Read output from `cursor` onward, up to `maxBytes` (default 8000). `waitMs` waits up to 10 s for new output; `stripAnsi` (default true) removes colour and cursor-control sequences; `match` (a regex of at most 200 characters) makes the read wait until the text from `cursor` matches it. Returns `{data, cursor, exited, exitCode, dropped, matched}`. |
+| `pty_resize` | Change the size of a running session's terminal. `cols` and `rows` are integers 1-1000: give both, or give one and the other keeps the size in force. The program itself is told (SIGWINCH on POSIX, a resize of the ConPTY on Windows), so a full-screen program redraws at the new size instead of staying at the geometry it was spawned with. Returns `{ok, cols, rows}` for the geometry now in force, which `pty_list` reports from then on. A call naming neither dimension is `invalid_args`; resizing a session whose program has already exited is `pty_resize_failed`. |
 | `pty_kill` | Terminate the program and confirm it. Idempotent. `signal` defaults to `SIGTERM` and is honoured on POSIX; Windows terminates the process tree. Returns `{ok, exited, exitCode, pid}`: `exited` is the state observed after the kill, so `ok: false` with an `error` naming the pid (and the fallback to use) means the process survived. |
 | `pty_list` | Sessions newest last, one page at a time: `limit` (1-200, default 50) and `offset` (default 0). Returns `{sessions, total, nextOffset}`, where `total` counts every session known and `nextOffset` is null on the last page. Each session carries `sessionId`, `pid`, `title`, `command`, `args`, `cwd`, `description`, `cols`, `rows`, `exited`, `exitCode`, `bytes` and `createdAt`. |
 
@@ -78,8 +79,8 @@ timeout while still returning whatever arrived — so give it a non-zero `waitMs
 ### Errors
 
 Tool failures come back as an `isError` result carrying a typed code, never as a thrown exception:
-`invalid_args`, `session_not_found`, `spawn_failed`, `pty_write_failed`, `too_many_sessions`, and a
-`pty_kill_failed` marker inside `pty_kill`'s `error` field.
+`invalid_args`, `session_not_found`, `spawn_failed`, `pty_write_failed`, `pty_resize_failed`,
+`too_many_sessions`, and a `pty_kill_failed` marker inside `pty_kill`'s `error` field.
 Every tool also declares its success shape as an output schema, so a client validates
 `structuredContent`; a failure carries its typed code in the text content only, because a payload
 that contradicted the declared shape would be rejected by a validating client.

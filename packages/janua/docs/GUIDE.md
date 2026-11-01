@@ -73,6 +73,24 @@ command rather than a server you restart: on Windows a bare name is resolved thr
 are quoted for that line, so `{"command":"npm","args":["run","build","--","--outDir","my dir"]}`
 arrives as five arguments with the space intact.
 
+**Too small for a full-screen program.** A TUI (a dashboard, a test runner's watch mode, `vim`)
+draws at whatever size the terminal was when it started, and 80x24 is usually not it. Resize the
+session instead of spawning a replacement, which would lose its state:
+
+```jsonc
+// pty_resize - the running program is told, not just janua's bookkeeping
+{"sessionId":"6f1c...","cols":160,"rows":48}
+// -> {"ok":true,"cols":160,"rows":48}
+
+// One dimension is enough: rows stays where it was, and the reply says so
+{"sessionId":"6f1c...","cols":120}
+// -> {"ok":true,"cols":120,"rows":48}
+```
+
+`pty_list` reports the new geometry from then on, so a later call can recall it. Values are
+integers 1-1000; a resize naming neither dimension is `invalid_args`, and one aimed at a program
+that has already exited is `pty_resize_failed` — there is no terminal left to resize.
+
 ---
 
 ## 2. Answering an interactive prompt
@@ -154,5 +172,8 @@ End it with Ctrl+D (end of input) or kill the session:
 - Keep `description` meaningful (5-10 words is a good length; it is optional and defaults to the
   title). `pty_list` returns it with `args`, `cwd`, `cols` and `rows`, so a list of sessions reads
   as a list of jobs rather than a list of pids.
+- A full-screen program keeps the geometry it was spawned with: `pty_resize` changes the size of a
+  running session, and `pty_list` reports it afterwards. Resize the session rather than respawning
+  it and losing its state.
 - Kill what you started. A session lives until it exits or the server does.
 - 16 sessions is the default cap; `too_many_sessions` means kill one first.

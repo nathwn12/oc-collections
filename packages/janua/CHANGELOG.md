@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-01
+
+### Added
+
+- `pty_resize` changes the size of a running session's terminal, the one thing `pty_spawn`'s
+  `cols`/`rows` could not reach: a full-screen program started at 80x24 used to stay there for the
+  life of the session. `cols` and `rows` are integers 1-1000; give both, or give one and the other
+  keeps the size in force. The size reaches the program itself — SIGWINCH on POSIX, a resize of the
+  ConPTY on Windows — so a TUI redraws instead of drawing off the old edge. The reply is
+  `{ok, cols, rows}` for the geometry now in force, which `pty_list` reports from then on. A call
+  naming neither dimension is `invalid_args`; resizing a session whose program has already exited is
+  `pty_resize_failed` rather than a crash, and a Windows resize requested before the terminal has
+  produced its first byte is applied when it does.
+
 ## [0.2.1] - 2026-11-01
 
 ### Fixed

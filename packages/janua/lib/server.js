@@ -1,6 +1,6 @@
-// MCP server surface: exactly five tools.
+// MCP server surface: exactly six tools.
 //
-// pty_spawn / pty_write / pty_read / pty_kill / pty_list.
+// pty_spawn / pty_write / pty_read / pty_resize / pty_kill / pty_list.
 // Every handler funnels through wrap(), so a throw becomes a typed tool error
 // and never escapes into the JSON-RPC transport.
 
@@ -16,7 +16,8 @@ const { version } = require('../package.json');
 const INSTRUCTIONS = [
   'janua gives you persistent interactive terminals. Use pty_spawn for programs you need to talk to over time',
   '(dev servers, REPLs, anything that prompts), not for one-shot commands. Keep the returned sessionId, read with',
-  'pty_read using the cursor it returns so output is never duplicated, write with pty_write, and pty_kill when done.',
+  'pty_read using the cursor it returns so output is never duplicated, write with pty_write, resize with pty_resize',
+  'when a full-screen program finds the terminal too small, and pty_kill when done.',
 ].join(' ');
 
 /** Wrap a handler so success is a payload and every throw is a typed tool error. */
@@ -57,6 +58,11 @@ const WRITE_OUTPUT = z.object({
   exitCode: z.number().nullable().optional().describe('Exit code once exited, otherwise null; present only when waitMs > 0.'),
   dropped: z.number().optional().describe('Bytes the buffer discarded before this read; present only when waitMs > 0.'),
   matched: z.boolean().optional().describe('Whether the text matched `match`; present only when waitMs > 0.'),
+});
+const RESIZE_OUTPUT = z.object({
+  ok: z.boolean().describe('True when the size was applied.'),
+  cols: z.number().describe('Terminal columns now in force.'),
+  rows: z.number().describe('Terminal rows now in force.'),
 });
 const KILL_OUTPUT = z.object({
   ok: z.boolean().describe('True when the program is gone.'),
@@ -196,6 +202,28 @@ export function createServer(options = {}) {
   );
 
   server.registerTool(
+    'pty_resize',
+    {
+      title: 'Resize terminal',
+      description:
+        'Change the size of a running session\'s terminal, so a full-screen program stops being pinned to the '
+        + 'geometry it was spawned with. cols and rows are integers 1..1000; give both, or give one and the other '
+        + 'keeps the size in force. The program is told at once: on POSIX it receives SIGWINCH, on Windows the '
+        + 'ConPTY itself is resized, so a TUI redraws at the new size instead of staying at the old one. Returns '
+        + '{ok, cols, rows} for the size now in force, which pty_list also reports. A call naming neither dimension '
+        + 'is invalid_args; resizing a session whose program has already exited is pty_resize_failed.',
+      inputSchema: z.object({
+        sessionId: z.string().describe('Session id returned by pty_spawn.'),
+        cols: z.number().int().min(1).max(1000).optional().describe('Terminal columns to apply. Omit to keep the current columns; at least one of cols and rows is required.'),
+        rows: z.number().int().min(1).max(1000).optional().describe('Terminal rows to apply. Omit to keep the current rows; at least one of cols and rows is required.'),
+      }),
+      outputSchema: RESIZE_OUTPUT,
+      annotations: MUTATING,
+    },
+    wrap(async ({ sessionId, cols, rows }) => manager.resize(sessionId, { cols, rows })),
+  );
+
+  server.registerTool(
     'pty_kill',
     {
       title: 'Kill terminal',
@@ -221,7 +249,8 @@ export function createServer(options = {}) {
       title: 'List terminals',
       description:
         'List sessions this server knows about, newest last, one page at a time: sessionId, pid, title, command, '
-        + 'args, cwd, description, cols, rows, exited, exitCode, bytes emitted, and createdAt. Returns '
+        + 'args, cwd, description, cols, rows, exited, exitCode, bytes emitted, and createdAt. cols and rows are the '
+        + 'size in force now, so a session resized with pty_resize reports the new geometry here. Returns '
         + '{sessions, total, nextOffset}: total counts every session known, and nextOffset is null on the last page. '
         + 'Use it to recover a session id you lost, or to recall what an existing session was for.',
       inputSchema: z.object({
