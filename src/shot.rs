@@ -886,6 +886,12 @@ mod tests {
 
     #[test]
     fn live_stationary_capture_reports_the_current_rect() {
+        if std::env::var("PUPPET_LIVE_DESKTOP").as_deref() != Ok("1") {
+            println!(
+                "SKIP live_stationary_capture_reports_the_current_rect: set PUPPET_LIVE_DESKTOP=1 to run (needs an interactive Windows session)"
+            );
+            return;
+        }
         let _g = crate::fixture::desktop();
         let f = crate::fixture::Fixture::new();
         let cap = unsafe { capture_window(f.hwnd(), false) }.expect("fixture captures");
