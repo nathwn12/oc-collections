@@ -47,9 +47,14 @@
     "access": "public"
   },
   "devDependencies": {
-    "@opencode/plugin": "^2.2.5"
+    "@opencode/plugin": "2.2.5"
   },
   "peerDependencies": {
-    "@opencode/plugin": "^2.2.5"
+    "@opencode/plugin": ">=2.1.1 <3"
+  },
+  "peerDependenciesMeta": {
+    "@opencode/plugin": {
+      "optional": true
+    }
   }
 }
