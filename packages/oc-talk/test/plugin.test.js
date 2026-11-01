@@ -19,8 +19,8 @@ import { pathToFileURL } from 'node:url';
 const ENTRY = path.join(import.meta.dirname, '..', 'src', 'index.js');
 
 let loads = 0;
-// Fresh module instance per test: the registration guard is per-instance, and a
-// cached module would make the second registration test pass vacuously.
+// Fresh module instance per test: the live registration handle is per-instance
+// state, and a cached module would carry one test's registration into the next.
 const load = () => import(pathToFileURL(ENTRY).href + '?n=' + ++loads);
 
 const NINE = [
@@ -393,3 +393,64 @@ test('descriptions stay at three sentences or fewer and state the delivery rule'
     assert.equal(tool.input.properties.delivery.type, 'string', tool.name + ' must accept a delivery argument');
   }
 });
+
+// A reload-shaped host: `transform` records every registration it hands out and
+// the tools each one added, so a test can see what is live and what was disposed.
+function reloadHost() {
+  const registrations = [];
+  const ctx = {
+    tool: {
+      transform: async (fn) => {
+        const entry = { added: [], disposed: 0 };
+        fn({ add: (tool) => entry.added.push(tool) });
+        registrations.push(entry);
+        return { dispose: async () => { entry.disposed++; } };
+      },
+    },
+  };
+  return { ctx, registrations };
+}
+
+test('a reload re-registers tools: setup twice leaves exactly one live registration', async () => {
+  const mod = await load();
+  const { ctx, registrations } = reloadHost();
+
+  await mod.ensureTools(ctx);
+  assert.equal(registrations.length, 1, 'the first call must register');
+  assert.deepEqual(registrations[0].added.map((t) => t.name), NINE);
+  assert.equal(registrations[0].disposed, 0, 'the first registration starts live');
+
+  // The reload shape: the host disposed the previous transform and re-ran setup
+  // on the same cached module instance. A one-shot guard returned here and left
+  // zero tools, so the second call must register again rather than skip.
+  await mod.ensureTools(ctx);
+  assert.equal(registrations.length, 2, 'a reload must register again, not skip');
+  assert.equal(registrations[0].disposed, 1, 'the previous registration must be disposed');
+  assert.equal(registrations[1].disposed, 0, 'the new registration must be the live one');
+  assert.deepEqual(registrations[1].added.map((t) => t.name), NINE);
+
+  // The same shape through the public surface the host actually calls.
+  const viaSetup = reloadHost();
+  await mod.default.setup(viaSetup.ctx);
+  await mod.default.setup(viaSetup.ctx);
+  assert.equal(viaSetup.registrations.length, 2, 'setup must re-register on reload');
+  assert.equal(viaSetup.registrations[0].disposed, 1);
+  assert.equal(viaSetup.registrations[1].disposed, 0);
+});
+
+test('the cleanup setup returns disposes its registration, and a later setup registers again', async () => {
+  const mod = await load();
+  const { ctx, registrations } = reloadHost();
+
+  const cleanup = await mod.default.setup(ctx);
+  assert.equal(typeof cleanup, 'function', 'setup must return a cleanup');
+  await cleanup();
+  assert.equal(registrations[0].disposed, 1, 'an unload must leave nothing behind');
+
+  // The handle was forgotten by the cleanup, so the next setup registers rather
+  // than believing a dead registration is still live.
+  await mod.default.setup(ctx);
+  assert.equal(registrations.length, 2, 'setup after a cleanup must register again');
+  assert.equal(registrations[1].disposed, 0);
+});
+

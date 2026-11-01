@@ -5,6 +5,12 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4] - 2026-11-01
+
+### Fixed
+
+- Registering tools is idempotent across a plugin reload: `setup` disposes the previous tool-transform registration before creating a new one, so a reload leaves exactly one live registration instead of zero tools until a full restart. The cleanup `setup` returns disposes that registration on unload.
+
 ## [0.1.3] - 2026-11-01
 
 ### Added
