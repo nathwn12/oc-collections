@@ -1,7 +1,6 @@
 //! JSON-RPC stdio loop + per-tool validation (pydantic-shaped) + dispatch.
 
 use crate::burst::do_burst;
-use crate::cap::resolve_selector;
 use crate::schemas::{
     TOOL_CURSOR, TOOL_DO, TOOL_ELEMENTS, TOOL_LIST_WINDOWS, TOOL_SCREENSHOT, TOOL_WINDOW,
 };
@@ -304,14 +303,13 @@ fn call_elements(args: &Map<String, Value>) -> String {
                 }
             },
         },
-        None => match (h, t) {
-            (Some(v), _) => resolve_selector(&format!("hwnd:{v}")),
-            (None, Some(v)) if !v.is_empty() => resolve_selector(&v),
-            _ => (
-                None,
-                Some("bad_window: need title or hwnd".to_string()),
-                None,
-            ),
+        None => match crate::cap::lock_legacy(h, t.as_deref()) {
+            Ok(l) => {
+                let hw = l.hwnd as windows_sys::Win32::Foundation::HWND;
+                locked = Some(l);
+                (Some(hw), None, None)
+            }
+            Err(e) => (None, Some(e.text()), e.candidates.clone()),
         },
     };
     if hwnd_r.is_none() {
@@ -1699,6 +1697,24 @@ mod tests {
         assert!(
             s.contains("unexpected_keyword_argument"),
             "unknown arg needs the shared extra-key type, got: {s}"
+        );
+    }
+
+    /// `elements`' legacy hwnd argument is the target lock, so a dead handle
+    /// is the typed target_gone rather than a bare IsWindow bad_window.
+    #[test]
+    fn elements_legacy_hwnd_uses_the_target_lock() {
+        let f = crate::fixture::Fixture::new();
+        let hwnd = f.hwnd_i64();
+        drop(f);
+        let s = call_elements(&elements_args(&[("hwnd", Value::from(hwnd))]));
+        assert!(
+            s.contains("target_gone"),
+            "elements hwnd must route through the target lock, got: {s}"
+        );
+        assert!(
+            !s.contains("bad_window"),
+            "the bare-handle legacy path must be gone, got: {s}"
         );
     }
 

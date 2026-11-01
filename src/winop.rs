@@ -1,6 +1,5 @@
 //! window ops + list_windows + cursor tools.
 
-use crate::cap::resolve_window;
 use crate::{display_monitors, enum_windows, window_info, wrapped_text};
 use serde_json::{Map, Value};
 use windows_sys::Win32::Foundation::{GetLastError, HWND, POINT, RECT};
@@ -167,7 +166,18 @@ pub fn do_window(a: &WinArgs) -> String {
     // fallback.
     let mut locked: Option<crate::target::TargetLock> = None;
     let (hwnd_r, err, cands) = match a.target.as_ref() {
-        None | Some(Value::Null) => resolve_window(a.title.as_deref(), a.hwnd),
+        None | Some(Value::Null) => {
+            // Legacy title/hwnd are the SAME lock as target: hwnd -> {hwnd},
+            // title -> {titleContains}. Never a bare IsWindow handle.
+            match crate::cap::lock_legacy(a.hwnd, a.title.as_deref()) {
+                Ok(l) => {
+                    let h = l.hwnd as HWND;
+                    locked = Some(l);
+                    (Some(h), None, None)
+                }
+                Err(e) => (None, Some(e.text()), e.candidates.clone()),
+            }
+        }
         Some(v) => match crate::target::TargetSpec::parse(v) {
             Err(e) => (None, Some(e.text()), None),
             Ok(spec) => match crate::target::lock(&spec) {
@@ -667,6 +677,34 @@ mod tests {
             );
         }
         println!("ELEVATED_FLAG_WINDOWS={}", wins.len());
+    }
+
+    /// Legacy `hwnd` is the same lock as `target:`: a dead/recycled handle is
+    /// typed target_gone before the action, never a bare IsWindow bad_window.
+    #[test]
+    fn window_legacy_hwnd_uses_the_target_lock() {
+        let f = crate::fixture::Fixture::new();
+        let hwnd = f.hwnd_i64();
+        drop(f);
+        let out = do_window(&WinArgs {
+            action: "minimize".to_string(),
+            title: None,
+            hwnd: Some(hwnd),
+            x: None,
+            y: None,
+            width: None,
+            height: None,
+            target: None,
+            allow_foreground: false,
+        });
+        assert!(
+            out.contains("target_gone"),
+            "legacy hwnd must route through the target lock, got: {out}"
+        );
+        assert!(
+            !out.contains("bad_window"),
+            "the bare-handle legacy path must be gone, got: {out}"
+        );
     }
 
     /// A maximized window necessarily covers the monitor, so every test that
