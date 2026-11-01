@@ -41,40 +41,36 @@ const DESCRIPTIONS = {
     'Fire when you need to find a peer session to talk to, or to turn a title into an id. ' +
     'Lists only: it never sends, reads, wakes, or steers anything.',
   session_send:
-    'Deliver one text message to another session by id (ses_...) or unambiguous title substring, then let its loop run; ' +
-    'resume defaults to true because the reply is the point. ' +
-    'Fire instead of dispatching a lane whenever a peer must act. ' +
-    'Sends one message only: it never reads history, and it never guesses — a missing or ambiguous title fails with candidates. ' +
-    'Refuses a `done ` session with a typed error; session_open is the only revival path.',
+    'Deliver one text message to another session by id (ses_...) or unambiguous title substring, with resume defaulting to true. ' +
+    'Fire instead of dispatching a lane whenever a peer must act; `delivery` is `queue` by default so the peer finishes its turn, and `steer` preempts that turn instead. ' +
+    'Refuses a `done ` session with a typed error, and never guesses: a missing or ambiguous title fails with candidates.',
   session_read:
-    "Read another session's newest messages by id (ses_...) or unambiguous title substring, newest first, default 20, text verbatim including newlines. " +
+    "Read another session's newest messages by id (ses_...) or unambiguous title substring, newest first, default 20, text verbatim. " +
     'Fire when you need what a peer actually said. ' +
-    'Reads only: it never sends, wakes, or steers the other session, and it never guesses — a missing or ambiguous title fails with candidates.',
+    'Reads only: it never sends, wakes, or steers the other session, and never guesses — a missing or ambiguous title fails with candidates.',
   session_close:
-    'Close a finished session in one call: set its title to `done <work>` then compact it. ' +
-    'Queues rename (PATCH title to `done <current title>` unless an explicit title is given, never double-prefixing `done `, reporting `already-closed` when already done) then compact (POST compact); one call, never two commands typed by hand. ' +
-    'An explicit title is normalized to the same `done ` prefix, so a closed session never reads as live.',
+    'Close a finished session in one call: rewrite its title to `done <work>`, then compact it, in that order. ' +
+    'An explicit title is normalized to the same `done ` prefix, and an already-closed session is left byte-identical and reported `already-closed`. ' +
+    'Fire when a session is finished and must stop reading as live.',
   session_open:
-    'Create a session titled `active <work>`, optionally delivering one prompt; resume defaults to true so the loop runs. ' +
-    'The only verb that may lift `done`: when exactly one live session title contains <work> it reopens that session to `active <work>` instead of creating. ' +
-    'Zero matches create; several matches fail ambiguous with candidates. ' +
-    'A scan that hit its page cap never revives: it creates instead, reporting truncated.',
+    'Create a session titled `active <work>`, optionally delivering one prompt, or revive the one live session whose title contains <work>; `delivery` is `queue` by default so the peer finishes its turn, `steer` to preempt it. ' +
+    'The only verb that may lift `done`; zero matches create, several fail ambiguous with candidates, and a capped scan creates instead of reviving. ' +
+    'Fire when work needs a fresh lane, or a closed one revived.',
   session_kick:
-    'Wake a live session with one message; resume defaults to true because the reply is the point. ' +
-    'Renames to `active <work>` (prefix replaced, never stacked) then delivers the message. ' +
+    'Wake a live session with one message, renaming it to `active <work>` first; `delivery` is `queue` by default so the peer finishes its turn, `steer` to preempt that turn. ' +
+    'Fire when a peer already exists and must act now. ' +
     'Refuses a `done ` session with a typed error: reopen it with session_open instead.',
   session_park:
-    'Park a live session: rewrite its title to `parked <work>` (prefix replaced, never stacked) and return. ' +
-    'Prefix only — no message is sent and no compaction runs. ' +
+    'Park a live session: rewrite its title to `parked <work>` and return. ' +
+    'Fire when a session should stop reading as active without being closed; prefix only, so no message is sent and no compaction runs. ' +
     'Refuses a `done ` session with a typed error; session_open is the only revival path.',
   session_kill:
-    'Stop a live session hard: rewrite its title to `parked <work>` (prefix replaced, never stacked), then interrupt its active execution. ' +
-    'Park is graceful, kill is hard. ' +
+    'Stop a live session hard: rewrite its title to `parked <work>`, then interrupt its active execution; park is graceful, kill is hard. ' +
     'The interrupt covers only the target session: cascaded is always false and live child sessions return as children ids, never claimed stopped. ' +
     'Refuses a `done ` session with a typed error; session_open is the only revival path.',
   session_await:
-    'Send one message (resume forced true) then wait for the reply: poll the session messages about once per second up to timeoutMs (default 60s, cap 300s) for an assistant message created after the send. ' +
-    'Returns {text, messageId} on success or {timeout: true, lastSeen} on expiry; never hangs past its timeout. ' +
+    'Send one message then wait for the reply, polling the session messages about once per second up to timeoutMs (default 60s, cap 300s), returning {text, messageId} or {timeout: true, lastSeen}. ' +
+    'Fire when you are blocked on the answer; `delivery` is `steer` by default so the message preempts the peer\'s current turn, and `queue` waits behind it. ' +
     'Refuses a `done ` session with a typed error; session_open is the only revival path.',
 };
 
@@ -299,4 +295,101 @@ test('source carries no credential, localhost reference or removal verb', () => 
   // No removal capability in any spelling: the surface is nine verbs, none of
   // which removes a session.
   assert.doesNotMatch(src, /delete/i);
+});
+
+// A recording backend: every call is captured and each verb answers with the
+// smallest payload its caller needs, so a whole tool execute runs offline with
+// no peer, no CLI and no network.
+function recorder(session = { id: 'ses_a', title: 'active work' }) {
+  const calls = [];
+  const run = async (args) => {
+    calls.push(args);
+    const [verb, target] = args;
+    if (verb === 'session.get') return { ok: true, json: { data: session } };
+    if (verb === 'session.list') return { ok: true, json: { data: [] } };
+    if (verb === 'patch') return { ok: true, json: { data: {} } };
+    if (verb === 'session.message.list') {
+      return { ok: true, json: { data: [{ id: 'msg_reply', type: 'assistant', time: { created: Date.now() + 5000 }, text: 'done' }] } };
+    }
+    if (verb === 'post' && String(target).endsWith('/prompt')) {
+      return { ok: true, json: { data: { id: 'msg_sent', sessionID: session.id, time: { created: 1 } } } };
+    }
+    if (verb === 'post' && target === '/api/session') return { ok: true, json: { data: { id: 'ses_new' } } };
+    return { ok: true, json: { data: {} } };
+  };
+  return { calls, run };
+}
+
+// One fresh module, one registered tool, pointed at a recording backend.
+async function toolWith(name) {
+  const mod = await load();
+  const rec = recorder();
+  mod.setApiRunner(rec.run);
+  const { ctx, added } = host();
+  await mod.default.setup(ctx);
+  return { tool: added.find((t) => t.name === name), calls: rec.calls };
+}
+
+// The prompt body the backend actually received, parsed: the payload, not the
+// intent, is what these cases assert on.
+function promptBody(calls) {
+  const call = calls.find((a) => a[0] === 'post' && String(a[1]).endsWith('/prompt'));
+  return call ? JSON.parse(call[3]) : null;
+}
+
+// tool -> the delivery its caller means by default, plus a minimal valid input.
+const DELIVERY_DEFAULTS = [
+  { tool: 'session_send', input: { to: 'ses_a', text: 'hi' }, want: 'queue' },
+  { tool: 'session_kick', input: { to: 'ses_a', text: 'hi' }, want: 'queue' },
+  { tool: 'session_open', input: { work: 'api-smoke-tests', text: 'hi' }, want: 'queue' },
+  { tool: 'session_await', input: { to: 'ses_a', text: 'hi' }, want: 'steer' },
+];
+
+test('each prompt tool sends its own default delivery, and an explicit value wins', async () => {
+  for (const c of DELIVERY_DEFAULTS) {
+    const byDefault = await toolWith(c.tool);
+    assert.ok(byDefault.tool, c.tool + ' must register');
+    const out = await byDefault.tool.execute(c.input);
+    assert.equal(JSON.parse(out.content).error, undefined, c.tool + ' default run failed: ' + out.content);
+    const body = promptBody(byDefault.calls);
+    assert.ok(body, c.tool + ' must post a prompt');
+    assert.equal(body.delivery, c.want, c.tool + ' default delivery must be ' + c.want);
+
+    // The other value is honoured: an explicit argument always wins.
+    const other = c.want === 'queue' ? 'steer' : 'queue';
+    const explicit = await toolWith(c.tool);
+    const out2 = await explicit.tool.execute({ ...c.input, delivery: other });
+    assert.equal(JSON.parse(out2.content).error, undefined, c.tool + ' override run failed: ' + out2.content);
+    assert.equal(promptBody(explicit.calls).delivery, other, c.tool + ' must honour an explicit ' + other);
+  }
+});
+
+test('an invalid delivery is a typed bad_request, never a silent default', async () => {
+  for (const c of DELIVERY_DEFAULTS) {
+    const { tool, calls } = await toolWith(c.tool);
+    const out = await tool.execute({ ...c.input, delivery: 'later' });
+    assert.deepEqual(JSON.parse(out.content), {
+      error: 'bad_request',
+      reason: 'delivery must be "steer" or "queue"',
+    }, c.tool + ' must refuse an invalid delivery');
+    assert.equal(calls.length, 0, c.tool + ' must refuse before any backend call');
+  }
+});
+
+test('descriptions stay at three sentences or fewer and state the delivery rule', async () => {
+  const { ctx, added } = host();
+  await (await load()).default.setup(ctx);
+  const sentences = (d) => d.split(/(?<=[.!?])\s+/).filter(Boolean).length;
+
+  for (const tool of added) {
+    const n = sentences(tool.description);
+    assert.ok(n <= 3, tool.name + ' description is ' + n + ' sentences: ' + tool.description);
+    if (!DELIVERY_DEFAULTS.some((c) => c.tool === tool.name)) continue;
+    // The two states and this tool's own default, in one clause.
+    assert.match(tool.description, /`steer`/, tool.name + ' must name steer');
+    assert.match(tool.description, /`queue`/, tool.name + ' must name queue');
+    const want = DELIVERY_DEFAULTS.find((c) => c.tool === tool.name).want;
+    assert.ok(tool.description.includes('`' + want + '` by default'), tool.name + ' must state its ' + want + ' default');
+    assert.equal(tool.input.properties.delivery.type, 'string', tool.name + ' must accept a delivery argument');
+  }
 });

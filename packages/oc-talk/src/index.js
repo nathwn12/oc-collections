@@ -43,7 +43,7 @@ function pickBin() {
 // One authenticated round-trip through the harness's own CLI, which discovers
 // and authenticates with the background server itself. No credential file is
 // read, no port is resolved, no secret ever crosses this module.
-function runApi(args) {
+function spawnApi(args) {
   return new Promise((resolve) => {
     execFile(pickBin(), ['api', ...args], { timeout: TIMEOUT_MS, windowsHide: true }, (error, stdout, stderr) => {
       const out = String(stdout || '');
@@ -85,6 +85,19 @@ function runApi(args) {
       resolve({ ok: false, code: 'backend_error', detail: String(stderr || error.message || 'request failed').trim().slice(-200) });
     });
   });
+}
+
+// Every backend call goes through this seam so the offline suite can swap in a
+// recording backend and prove the exact prompt payload without a peer. Production
+// never calls setApiRunner, so the runner is always spawnApi there.
+let apiRunner = spawnApi;
+
+function runApi(args) {
+  return apiRunner(args);
+}
+
+function setApiRunner(fn) {
+  apiRunner = typeof fn === 'function' ? fn : spawnApi;
 }
 
 const ID_RE = /^ses_/;
@@ -291,6 +304,16 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// `delivery` decides whether a prompt preempts the peer's running turn (steer)
+// or waits behind it (queue). Each verb states its own default; an explicit
+// value always wins, and anything else is a typed refusal, never a fallback.
+function deliveryOf(args, fallback) {
+  const v = args.delivery;
+  if (v === undefined) return { ok: true, value: fallback };
+  if (v === 'steer' || v === 'queue') return { ok: true, value: v };
+  return { ok: false, error: 'bad_request', reason: 'delivery must be "steer" or "queue"' };
+}
+
 async function ensureTools(ctx) {
   if (registered) return;
   const transform = ctx && ctx.tool && ctx.tool.transform;
@@ -329,17 +352,16 @@ async function ensureTools(ctx) {
     tools.add({
       name: 'session_send',
       description:
-        'Deliver one text message to another session by id (ses_...) or unambiguous title substring, then let its loop run; ' +
-        'resume defaults to true because the reply is the point. ' +
-        'Fire instead of dispatching a lane whenever a peer must act. ' +
-        'Sends one message only: it never reads history, and it never guesses — a missing or ambiguous title fails with candidates. ' +
-        'Refuses a `done ` session with a typed error; session_open is the only revival path.',
+        'Deliver one text message to another session by id (ses_...) or unambiguous title substring, with resume defaulting to true. ' +
+        'Fire instead of dispatching a lane whenever a peer must act; `delivery` is `queue` by default so the peer finishes its turn, and `steer` preempts that turn instead. ' +
+        'Refuses a `done ` session with a typed error, and never guesses: a missing or ambiguous title fails with candidates.',
       input: {
         type: 'object',
         properties: {
           to: { type: 'string', description: 'Session id (ses_...) or exact title substring' },
           text: { type: 'string', description: 'Message text, delivered verbatim' },
           resume: { type: 'boolean', description: 'Let the receiver loop run; default true' },
+          delivery: { type: 'string', description: '`steer` preempts the peer\'s current turn, `queue` waits for it; default queue' },
         },
         required: ['to', 'text'],
         additionalProperties: false,
@@ -350,6 +372,8 @@ async function ensureTools(ctx) {
         if (typeof args.text !== 'string' || !args.text) {
           return fail('bad_request', 'text must be a non-empty string');
         }
+        const dlv = deliveryOf(args, 'queue');
+        if (!dlv.ok) return fail(dlv.error, dlv.reason);
         const resume = args.resume === undefined ? true : !!args.resume;
         const t = await resolveTarget(args.to);
         if (!t.ok) return fail(t.error, t.reason, t.candidates, t.truncated);
@@ -361,7 +385,7 @@ async function ensureTools(ctx) {
         // `done` is a lock: a prompt must not reach a closed session.
         const lock = doneRefusal(f.session);
         if (lock) return fail(lock.error, lock.reason);
-        const r = await runApi(['post', '/api/session/' + t.id + '/prompt', '--data', JSON.stringify({ text: args.text, resume })]);
+        const r = await runApi(['post', '/api/session/' + t.id + '/prompt', '--data', JSON.stringify({ text: args.text, resume, delivery: dlv.value })]);
         if (!r.ok) {
           if (r.code === 'session_not_found') return fail('session_not_found', 'session ' + t.id + ' is gone: ' + r.detail);
           return fail(r.code, 'send failed: ' + r.detail);
@@ -374,9 +398,9 @@ async function ensureTools(ctx) {
     tools.add({
       name: 'session_read',
       description:
-        'Read another session\'s newest messages by id (ses_...) or unambiguous title substring, newest first, default 20, text verbatim including newlines. ' +
+        'Read another session\'s newest messages by id (ses_...) or unambiguous title substring, newest first, default 20, text verbatim. ' +
         'Fire when you need what a peer actually said. ' +
-        'Reads only: it never sends, wakes, or steers the other session, and it never guesses — a missing or ambiguous title fails with candidates.',
+        'Reads only: it never sends, wakes, or steers the other session, and never guesses — a missing or ambiguous title fails with candidates.',
       input: {
         type: 'object',
         properties: {
@@ -407,9 +431,9 @@ async function ensureTools(ctx) {
     tools.add({
       name: 'session_close',
       description:
-        'Close a finished session in one call: set its title to `done <work>` then compact it. ' +
-        'Queues rename (PATCH title to `done <current title>` unless an explicit title is given, never double-prefixing `done `, reporting `already-closed` when already done) then compact (POST compact); one call, never two commands typed by hand. ' +
-        'An explicit title is normalized to the same `done ` prefix, so a closed session never reads as live.',
+        'Close a finished session in one call: rewrite its title to `done <work>`, then compact it, in that order. ' +
+        'An explicit title is normalized to the same `done ` prefix, and an already-closed session is left byte-identical and reported `already-closed`. ' +
+        'Fire when a session is finished and must stop reading as live.',
       input: {
         type: 'object',
         properties: {
@@ -460,16 +484,16 @@ async function ensureTools(ctx) {
     tools.add({
       name: 'session_open',
       description:
-        'Create a session titled `active <work>`, optionally delivering one prompt; resume defaults to true so the loop runs. ' +
-        'The only verb that may lift `done`: when exactly one live session title contains <work> it reopens that session to `active <work>` instead of creating. ' +
-        'Zero matches create; several matches fail ambiguous with candidates. ' +
-        'A scan that hit its page cap never revives: it creates instead, reporting truncated.',
+        'Create a session titled `active <work>`, optionally delivering one prompt, or revive the one live session whose title contains <work>; `delivery` is `queue` by default so the peer finishes its turn, `steer` to preempt it. ' +
+        'The only verb that may lift `done`; zero matches create, several fail ambiguous with candidates, and a capped scan creates instead of reviving. ' +
+        'Fire when work needs a fresh lane, or a closed one revived.',
       input: {
         type: 'object',
         properties: {
           work: { type: 'string', description: 'Short work label; new title becomes `active <work>`' },
           text: { type: 'string', description: 'Optional one-shot prompt delivered after open' },
           resume: { type: 'boolean', description: 'Let the receiver loop run after the prompt; default true' },
+          delivery: { type: 'string', description: '`steer` preempts the peer\'s current turn, `queue` waits for it; default queue (applies only when text is given)' },
         },
         required: ['work'],
         additionalProperties: false,
@@ -480,6 +504,8 @@ async function ensureTools(ctx) {
         if (typeof args.work !== 'string' || !args.work) {
           return fail('bad_request', 'work must be a non-empty string');
         }
+        const dlv = deliveryOf(args, 'queue');
+        if (!dlv.ok) return fail(dlv.error, dlv.reason);
         const resume = args.resume === undefined ? true : !!args.resume;
         const scanned = await scanSessions();
         if (!scanned.ok) return fail(scanned.code, 'list failed: ' + scanned.detail);
@@ -516,7 +542,7 @@ async function ensureTools(ctx) {
         }
         let messageID = '';
         if (typeof args.text === 'string' && args.text) {
-          const rp = await runApi(['post', '/api/session/' + id + '/prompt', '--data', JSON.stringify({ text: args.text, resume })]);
+          const rp = await runApi(['post', '/api/session/' + id + '/prompt', '--data', JSON.stringify({ text: args.text, resume, delivery: dlv.value })]);
           if (!rp.ok) {
             if (rp.code === 'session_not_found') return fail('session_not_found', 'session ' + id + ' is gone: ' + rp.detail);
             return fail(rp.code, 'send failed: ' + rp.detail);
@@ -530,8 +556,8 @@ async function ensureTools(ctx) {
     tools.add({
       name: 'session_kick',
       description:
-        'Wake a live session with one message; resume defaults to true because the reply is the point. ' +
-        'Renames to `active <work>` (prefix replaced, never stacked) then delivers the message. ' +
+        'Wake a live session with one message, renaming it to `active <work>` first; `delivery` is `queue` by default so the peer finishes its turn, `steer` to preempt that turn. ' +
+        'Fire when a peer already exists and must act now. ' +
         'Refuses a `done ` session with a typed error: reopen it with session_open instead.',
       input: {
         type: 'object',
@@ -539,6 +565,7 @@ async function ensureTools(ctx) {
           to: { type: 'string', description: 'Session id (ses_...) or exact title substring' },
           text: { type: 'string', description: 'Message text, delivered verbatim' },
           resume: { type: 'boolean', description: 'Let the receiver loop run; default true' },
+          delivery: { type: 'string', description: '`steer` preempts the peer\'s current turn, `queue` waits for it; default queue' },
         },
         required: ['to', 'text'],
         additionalProperties: false,
@@ -549,6 +576,8 @@ async function ensureTools(ctx) {
         if (typeof args.text !== 'string' || !args.text) {
           return fail('bad_request', 'text must be a non-empty string');
         }
+        const dlv = deliveryOf(args, 'queue');
+        if (!dlv.ok) return fail(dlv.error, dlv.reason);
         const resume = args.resume === undefined ? true : !!args.resume;
         const t = await resolveTarget(args.to);
         if (!t.ok) return fail(t.error, t.reason, t.candidates, t.truncated);
@@ -564,7 +593,7 @@ async function ensureTools(ctx) {
           if (rt.code === 'session_not_found') return fail('session_not_found', 'session ' + t.id + ' is gone: ' + rt.detail);
           return fail(rt.code, 'rename failed: ' + rt.detail);
         }
-        const r = await runApi(['post', '/api/session/' + t.id + '/prompt', '--data', JSON.stringify({ text: args.text, resume })]);
+        const r = await runApi(['post', '/api/session/' + t.id + '/prompt', '--data', JSON.stringify({ text: args.text, resume, delivery: dlv.value })]);
         if (!r.ok) {
           if (r.code === 'session_not_found') return fail('session_not_found', 'session ' + t.id + ' is gone: ' + r.detail);
           return fail(r.code, 'send failed: ' + r.detail);
@@ -577,8 +606,8 @@ async function ensureTools(ctx) {
     tools.add({
       name: 'session_park',
       description:
-        'Park a live session: rewrite its title to `parked <work>` (prefix replaced, never stacked) and return. ' +
-        'Prefix only — no message is sent and no compaction runs. ' +
+        'Park a live session: rewrite its title to `parked <work>` and return. ' +
+        'Fire when a session should stop reading as active without being closed; prefix only, so no message is sent and no compaction runs. ' +
         'Refuses a `done ` session with a typed error; session_open is the only revival path.',
       input: {
         type: 'object',
@@ -612,8 +641,7 @@ async function ensureTools(ctx) {
     tools.add({
       name: 'session_kill',
       description:
-        'Stop a live session hard: rewrite its title to `parked <work>` (prefix replaced, never stacked), then interrupt its active execution. ' +
-        'Park is graceful, kill is hard. ' +
+        'Stop a live session hard: rewrite its title to `parked <work>`, then interrupt its active execution; park is graceful, kill is hard. ' +
         'The interrupt covers only the target session: cascaded is always false and live child sessions return as children ids, never claimed stopped. ' +
         'Refuses a `done ` session with a typed error; session_open is the only revival path.',
       input: {
@@ -656,8 +684,8 @@ async function ensureTools(ctx) {
     tools.add({
       name: 'session_await',
       description:
-        'Send one message (resume forced true) then wait for the reply: poll the session messages about once per second up to timeoutMs (default 60s, cap 300s) for an assistant message created after the send. ' +
-        'Returns {text, messageId} on success or {timeout: true, lastSeen} on expiry; never hangs past its timeout. ' +
+        'Send one message then wait for the reply, polling the session messages about once per second up to timeoutMs (default 60s, cap 300s), returning {text, messageId} or {timeout: true, lastSeen}. ' +
+        'Fire when you are blocked on the answer; `delivery` is `steer` by default so the message preempts the peer\'s current turn, and `queue` waits behind it. ' +
         'Refuses a `done ` session with a typed error; session_open is the only revival path.',
       input: {
         type: 'object',
@@ -665,6 +693,7 @@ async function ensureTools(ctx) {
           to: { type: 'string', description: 'Session id (ses_...) or exact title substring' },
           text: { type: 'string', description: 'Message text, delivered verbatim' },
           timeoutMs: { type: 'number', description: 'Wait budget in ms; default 60000, capped at 300000' },
+          delivery: { type: 'string', description: '`steer` preempts the peer\'s current turn, `queue` waits for it; default steer' },
         },
         required: ['to', 'text'],
         additionalProperties: false,
@@ -675,6 +704,8 @@ async function ensureTools(ctx) {
         if (typeof args.text !== 'string' || !args.text) {
           return fail('bad_request', 'text must be a non-empty string');
         }
+        const dlv = deliveryOf(args, 'steer');
+        if (!dlv.ok) return fail(dlv.error, dlv.reason);
         let budget = args.timeoutMs === undefined ? AWAIT_DEFAULT_MS : Math.floor(args.timeoutMs);
         if (!Number.isFinite(budget)) return fail('bad_request', 'timeoutMs must be a number');
         budget = Math.min(Math.max(budget, 1), AWAIT_MAX_MS);
@@ -688,7 +719,7 @@ async function ensureTools(ctx) {
         const lock = doneRefusal(f.session);
         if (lock) return fail(lock.error, lock.reason);
         const sentAt = Date.now();
-        const r = await runApi(['post', '/api/session/' + t.id + '/prompt', '--data', JSON.stringify({ text: args.text, resume: true })]);
+        const r = await runApi(['post', '/api/session/' + t.id + '/prompt', '--data', JSON.stringify({ text: args.text, resume: true, delivery: dlv.value })]);
         if (!r.ok) {
           if (r.code === 'session_not_found') return fail('session_not_found', 'session ' + t.id + ' is gone: ' + r.detail);
           return fail(r.code, 'send failed: ' + r.detail);
@@ -721,7 +752,7 @@ async function ensureTools(ctx) {
   });
 }
 
-export { doneRefusal, ensureTools, listSessions, resolveTarget, stripPrefix };
+export { doneRefusal, ensureTools, listSessions, resolveTarget, setApiRunner, stripPrefix };
 
 export default {
   id: 'oc-talk',
