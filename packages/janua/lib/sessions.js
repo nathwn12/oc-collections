@@ -224,6 +224,27 @@ function terminate(term, signal) {
   term.kill(signal ?? 'SIGTERM');
 }
 
+export const MAX_MATCH_PATTERN = 200;
+
+// A match pattern is a regular expression source, compiled once per read so a
+// bad one is a typed invalid_args naming the problem, never a SyntaxError
+// escaping across the tool boundary.
+function compileMatch(match) {
+  if (match === undefined || match === null) return null;
+  if (typeof match !== 'string') {
+    throw invalidArgs('match must be a string holding a regular expression');
+  }
+  if (match === '') throw invalidArgs('match must not be empty');
+  if (match.length > MAX_MATCH_PATTERN) {
+    throw invalidArgs(`match must be at most ${MAX_MATCH_PATTERN} characters, got ${match.length}`);
+  }
+  try {
+    return new RegExp(match);
+  } catch (err) {
+    throw invalidArgs(`match is not a valid regular expression: ${describeCause(err)}`);
+  }
+}
+
 function waitForChange(session, ms) {
   return new Promise((resolve) => {
     const done = () => {
@@ -353,6 +374,7 @@ export class SessionManager {
     const requested = Number.isInteger(options.cursor) ? options.cursor : session.ring.base;
     if (requested < 0) throw invalidArgs('cursor must be a non-negative byte offset');
 
+    const pattern = compileMatch(options.match);
     const raw = options.stripAnsi === false;
     const deadline = Date.now() + waitMs;
     for (;;) {
@@ -363,20 +385,37 @@ export class SessionManager {
       const slice = session.ring.read(requested, maxBytes);
       const text = slice.data.toString('utf8');
       const data = raw ? text : stripAnsi(text);
+      const matched = pattern === null ? true : pattern.test(data);
+      const atDeadline = Date.now() >= deadline;
+      const result = {
+        data,
+        cursor: slice.end,
+        exited: session.exited,
+        exitCode: session.exitCode,
+        dropped: slice.dropped,
+        matched,
+      };
+
+      if (pattern !== null) {
+        // A pattern turns the read into a wait for the prompt itself, on the
+        // same wait path: it returns when the text from the caller's cursor
+        // matches, the child exits, the deadline passes, or the window is full
+        // and the pattern is not in it — the caller then reads on from the
+        // returned cursor, so a pattern past the window is not silently lost.
+        const windowFull = slice.end < session.ring.total;
+        if (matched || result.exited || atDeadline || windowFull) return result;
+        await waitForChange(session, deadline - Date.now());
+        continue;
+      }
+
       // A ConPTY opens with escape-only chunks (mode set, focus reporting), so
       // the bytes arrive while the visible text has not. Returning "" there
       // reads as a silent terminal, so a stripped read keeps waiting from the
       // same absolute cursor until something visible lands, the child exits, or
       // the deadline passes. A raw read still returns the first bytes, escapes
       // and all, and a slice that carried no bytes has nothing to wait for.
-      if (raw || data !== '' || slice.end === requested || session.exited || Date.now() >= deadline) {
-        return {
-          data,
-          cursor: slice.end,
-          exited: session.exited,
-          exitCode: session.exitCode,
-          dropped: slice.dropped,
-        };
+      if (raw || data !== '' || slice.end === requested || result.exited || atDeadline) {
+        return result;
       }
       await waitForChange(session, deadline - Date.now());
     }

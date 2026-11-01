@@ -51,6 +51,7 @@ const READ_SHAPE = {
   exited: z.boolean().describe('Whether the program has exited.'),
   exitCode: z.number().nullable().describe('Exit code once exited, otherwise null.'),
   dropped: z.number().describe('Bytes the buffer discarded before this read.'),
+  matched: z.boolean().describe('True when match was given and the text matched, or when no match was given.'),
 };
 const SESSION_SHAPE = {
   sessionId: z.string(),
@@ -125,27 +126,32 @@ export function createServer(options = {}) {
     {
       title: 'Read terminal output',
       description:
-        'Read output from a session, starting at cursor, and return {data, cursor, exited, exitCode, dropped}. '
+        'Read output from a session, starting at cursor, and return {data, cursor, exited, exitCode, dropped, matched}. '
         + 'Pass the cursor from the previous read to get only new output; omit it to read from the oldest byte '
         + 'still buffered. dropped > 0 means the ring buffer discarded that many bytes before this read. '
         + 'waitMs waits for the session to produce output (or exit) before returning; with stripAnsi '
-        + 'a chunk holding only escape sequences does not count, so the read keeps waiting for visible text.',
+        + 'a chunk holding only escape sequences does not count, so the read keeps waiting for visible text. '
+        + 'match is a regular expression that makes the read wait until the text from cursor matches it, or the '
+        + 'session exits, or waitMs runs out, then reports matched: false on timeout — so a non-zero waitMs is what '
+        + 'makes match useful.',
       inputSchema: {
         sessionId: z.string().describe('Session id returned by pty_spawn.'),
         cursor: z.number().int().min(0).optional().describe('Byte offset from the previous read. Omit to read from the start of the buffer.'),
         maxBytes: z.number().int().min(1).max(1048576).optional().describe('Maximum bytes to return (default 8000).'),
         waitMs: z.number().int().min(0).max(10000).optional().describe('Wait up to this many milliseconds for new output (default 0).'),
         stripAnsi: z.boolean().optional().describe('Remove ANSI escape sequences from data (default true). The cursor still counts raw bytes.'),
+        match: z.string().optional().describe('Regular expression (at most 200 characters) the text from cursor must match before the read returns; with stripAnsi false it matches the raw text.'),
       },
       outputSchema: READ_SHAPE,
       annotations: READ_ONLY,
     },
-    wrap(async ({ sessionId, cursor, maxBytes, waitMs, stripAnsi }) =>
+    wrap(async ({ sessionId, cursor, maxBytes, waitMs, stripAnsi, match }) =>
       manager.read(sessionId, {
         cursor,
         maxBytes: maxBytes ?? 8000,
         waitMs: waitMs ?? 0,
         stripAnsi: stripAnsi ?? true,
+        match,
       })),
   );
 
