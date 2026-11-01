@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [6.1.2] - 2026-11-01
+
+### Fixed
+- Test-only change: the live capture test is gated behind `PUPPET_LIVE_DESKTOP`
+  because CI renders the offscreen fixture black; no runtime change.
+
 ## [6.1.1] - 2026-11-01
 
 ### Fixed
