@@ -1,38 +1,53 @@
 # Release lane
 
-One dispatch, many packages. `.github/workflows/release.yml` derives every
-version from the commits, so nothing here takes a version from a human.
+A merge to `main` is the release. `.github/workflows/release.yml` derives every
+package version from the commits since its highest `<package>@<version>` tag, so
+nothing here takes a version from a human and nothing is committed.
 
-## Batch or single
+## Push
 
-- Dispatch with **no package** and the run releases every package whose history
-  has a pending release: `node scripts/derive-release.mjs --all` lists each one
-  with its derived version and the refusal codes it would hit.
-- Dispatch with **a package name** and the run is the single-package lane: the
-  plan enforces every refusal and a refusal fails the dispatch.
+On every push to `main`, `node scripts/derive-release.mjs --all` lists each
+package whose history has a releasable commit, with its derived version and tag.
+A package with no releasable commit is skipped; when every package is skipped
+the run prints `nothing to release` and exits 0.
 
-Both modes fan out over one matrix, so a single package is a matrix of one.
+Per package, in its own job, in this order:
 
-## Per package
-
-Each package gets its own job, in this order:
-
-1. derive the version from the commits since its highest `<package>@<version>` tag,
+1. derive the version from the commits since its highest tag,
 2. refuse a version that moved since the plan,
-3. close the package changelog at the derived version,
-4. install, build, test, pack and cleanroom-install,
-5. assert the manifest, the index cell and the lockfile,
-6. commit the closed changelog to `main`,
-7. tag `<package>@<version>`,
-8. publish over OIDC with provenance,
-9. verify the version on the registry.
+3. skip the package when `<package>@<version>` already exists (a tag is never
+   moved),
+4. install, then close the package changelog at the derived version,
+5. write the derived version into the package manifest, the root index cell and
+   the lockfile workspace entry,
+6. build, test, pack and cleanroom-install the tarballs,
+7. assert the three version cells,
+8. tag `<package>@<version>` at the pushed commit,
+9. publish over OIDC with provenance,
+10. verify the version on the registry,
+11. restore every tracked file and prove `git status --porcelain` is empty.
 
-A refusal at the derivation or at the version check stops that package only: the
-job records `refused` and the other packages carry on. The run's summary names
-every package as `released`, `would release (dry run)` or `refused`. A failure
-past the refusal — a broken build, a failed publish — still fails the run.
+Steps 4-5 run only in the runner: the tarball carries the closed changelog and
+the derived version, but the commit, the index and the lockfile on `main` are
+byte-identical to the pushed commit. No commit, no PR, no dispatch.
 
-Legs run one at a time, because each one commits to `main` and pushes a tag.
+A refusal at the derivation, a version mismatch with the plan, or an existing
+tag stops that package only: the job records the outcome and the other packages
+carry on. The run's summary names every package as `released`,
+`would release (dry run)`, `skipped (tag exists)` or `refused`. A failure past
+the refusal - a broken build, a failed publish - still fails the run.
+
+Legs run one at a time, because each one pushes a tag.
+
+## Dispatch
+
+`workflow_dispatch` is the escape hatch, not the normal lane:
+
+- no package releases every package with a pending release (the same plan as a
+  push),
+- a package name forces that single package,
+- `dry_run` (default on) runs the whole lane through the pack and a
+  `npm publish --dry-run`, and stops before the tag and the publish.
 
 ## Cleanroom install
 
@@ -46,8 +61,9 @@ fixtures, including one that must be refused.
 ## Proving it locally
 
 ```bash
-node scripts/derive-release.mjs --check    # derivation fixtures
-node scripts/derive-release.mjs --all      # today's pending release set
+node scripts/derive-release.mjs --check    # derivation, writer and tag fixtures
+node scripts/derive-release.mjs --all      # what a push to main would release
+node scripts/derive-release.mjs --tag-exists '@nathwn12/janua@0.3.1'  # 0: exists, skip
 node scripts/cleanroom.mjs --check         # harness green and red-on-broken
 npm run build && node scripts/cleanroom.mjs
 ```

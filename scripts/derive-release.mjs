@@ -27,19 +27,33 @@
  *                      there is no section for the derived version
  *   MANIFEST_MISMATCH  the derived version is not the package manifest version
  *
+ * `release:` is an ignored type, not an unknown one: this repository wrote
+ * `release: <package> <version>` commits before the derivation existed, and
+ * they stay in a package's range until its next tag. Any other unknown type is
+ * still refused, because a typo such as `feats:` would ship as no change.
+ *
  * Modes:
  *   --package <name>              derive and enforce every refusal (release gate)
+ *   --package <name> --prepare    the release lane will close the changelog and
+ *                                 write the manifest, index cell and lockfile
+ *                                 in the runner, so CHANGELOG_EMPTY and
+ *                                 MANIFEST_MISMATCH become notes, never refusals
  *   --package <name> --dry-run    print the derivation, list refusals as
  *                                 "would refuse", exit 0
  *   --package <name> --json       the same result as one JSON object
  *   --all                         every releasable package with a derived
- *                                 version, in the allowlist order; a package
- *                                 with no releasable commit is listed as
- *                                 skipped, never as a release
+ *                                 version, in the allowlist order; the push
+ *                                 lane's plan, so it implies --prepare
  *   --all --json                  `{ packages: [...], skipped: [...] }`
+ *   --package <name> --version <v> --write-cells
+ *                                 write <v> into the package manifest, the root
+ *                                 index cell and the lockfile cell (runner only;
+ *                                 the caller restores them, never commits)
  *   --package <name> --version <v> --assert-cells
  *                                 assert the package manifest, the root index
  *                                 cell and the lockfile cell all carry <v>
+ *   --tag-exists <tag>            exit 0 when the local tag exists, 1 when it
+ *                                 does not (the release lane's never-retag guard)
  *   --check                       run the offline fixtures
  *
  * `--all` is the batch lane's plan: it reports each package's own refusals but
@@ -76,6 +90,10 @@ const TYPES = {
   style: "ignore",
   test: "ignore",
   revert: "ignore",
+  // Housekeeping commits this repo already wrote before the derivation
+  // existed (`release: janua 0.1.2 and oc-talk 0.1.2`). Ignored, not unknown:
+  // they are still inside a package's tag range until its next release.
+  release: "ignore",
 }
 
 const LEVEL_RANK = { patch: 1, minor: 2, major: 3 }
@@ -117,6 +135,11 @@ export function highestTag(tags, name) {
 /** Read the tags git knows about, local and nothing else. */
 export function readTags() {
   return git(["tag", "--list"]).split(/\r?\n/).filter(Boolean)
+}
+
+/** Exact membership: a prefix or a similar tag is never a match. */
+export function hasTag(tags, tag) {
+  return tags.includes(tag)
 }
 
 /** Commits in `<base>..HEAD`, or all of HEAD when there is no base commit. */
@@ -205,7 +228,7 @@ export function readChangelog(text, version) {
  * changelog file.
  */
 export function evaluate(input) {
-  const { name, dir, manifestVersion, baseVersion, baseSource, baseRef, range, commits, changelog } = input
+  const { name, dir, manifestVersion, baseVersion, baseSource, baseRef, range, commits, changelog, prepare = false } = input
   const refusals = []
   const notes = []
   const classified = classify(commits)
@@ -240,23 +263,35 @@ export function evaluate(input) {
   }
 
   const changelogState = changelog === null ? null : readChangelog(changelog.text, version)
+  // With --prepare the lane itself supplies the changelog close and the three
+  // version cells in the runner, so a manifest that is behind and a changelog
+  // whose [Unreleased] is still empty are facts to report, never blockers.
+  const supplied = prepare ? notes : refusals
   if (version !== null) {
     if (!changelog) {
-      refusals.push(refusal("CHANGELOG_EMPTY", `no ${dir}/CHANGELOG.md: write the changelog entry for ${version} first`))
+      supplied.push(
+        prepare
+          ? `no ${dir}/CHANGELOG.md: the release lane has nothing to close`
+          : refusal("CHANGELOG_EMPTY", `no ${dir}/CHANGELOG.md: write the changelog entry for ${version} first`),
+      )
     } else if (!changelogState.versionSection && changelogState.unreleasedEntries === 0) {
-      refusals.push(
-        refusal(
-          "CHANGELOG_EMPTY",
-          `${changelog.path} has no entry under "## [Unreleased]" and no "## [${version}]" section: write the entry before releasing`,
-        ),
+      supplied.push(
+        prepare
+          ? `${changelog.path} has no entry for ${version}: the release lane closes an empty section`
+          : refusal(
+              "CHANGELOG_EMPTY",
+              `${changelog.path} has no entry under "## [Unreleased]" and no "## [${version}]" section: write the entry before releasing`,
+            ),
       )
     }
     if (version !== manifestVersion) {
-      refusals.push(
-        refusal(
-          "MANIFEST_MISMATCH",
-          `derived ${version} != ${dir}/package.json version ${manifestVersion}: set the manifest, the root index cell and the lockfile to ${version}`,
-        ),
+      supplied.push(
+        prepare
+          ? `${dir}/package.json carries ${manifestVersion}: the release lane writes ${version} in the runner`
+          : refusal(
+              "MANIFEST_MISMATCH",
+              `derived ${version} != ${dir}/package.json version ${manifestVersion}: set the manifest, the root index cell and the lockfile to ${version}`,
+            ),
       )
     }
   }
@@ -279,7 +314,7 @@ export function evaluate(input) {
 }
 
 /** Everything the git-backed path needs, assembled from the working tree. */
-export function runDerivation(name) {
+export function runDerivation(name, prepare = false) {
   const target = resolvePackage(name)
   const dir = path.relative(ROOT, target.dir).split(path.sep).join("/")
   const tags = readTags()
@@ -302,6 +337,7 @@ export function runDerivation(name) {
     range,
     commits,
     changelog,
+    prepare,
   })
 }
 
@@ -385,9 +421,11 @@ export function selectAll(results) {
   }
 }
 
-/** Derive every releasable package, in the allowlist order. */
-export function deriveAll() {
-  return selectAll(ALLOWED.map((name) => runDerivation(name)))
+/** Derive every releasable package, in the allowlist order. `--all` is the
+ *  push lane's plan, so it prepares (the lane writes the cells and closes the
+ *  changelog in the runner). */
+export function deriveAll(prepare = true) {
+  return selectAll(ALLOWED.map((name) => runDerivation(name, prepare)))
 }
 
 export function renderAll({ release, skipped }) {
@@ -395,6 +433,10 @@ export function renderAll({ release, skipped }) {
   lines.push(
     `all: ${release.length + skipped.length} package(s): ${release.length} with a derived version, ${skipped.length} with none`,
   )
+  if (release.length === 0) {
+    lines.push("all: nothing to release")
+    return lines.join("\n")
+  }
   for (const result of release) {
     const codes = result.refusals.map((item) => item.code)
     lines.push(
@@ -411,6 +453,69 @@ export function renderAll({ release, skipped }) {
 }
 
 /** Assert the three cells that carry the version, each read from its own file. */
+const escapeRe = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+
+/**
+ * Replace one index table row's version cell (the fourth pipe field). The row,
+ * its other cells and the file's line endings stay byte-identical; a missing
+ * row or an unrecognised cell throws instead of guessing.
+ */
+export function setIndexCell(text, label, version) {
+  if (!VERSION_RE.test(String(version))) throw new Error(`"${version}" is not X.Y.Z`)
+  const eol = text.includes("\r\n") ? "\r\n" : "\n"
+  const lines = text.split(/\r?\n/)
+  const row = new RegExp(`^\\|\\s*${escapeRe(label)}\\s*\\|`)
+  const at = lines.findIndex((line) => row.test(line))
+  if (at < 0) throw new Error(`README.md has no row for ${label}`)
+  const cells = lines[at].split("|")
+  if (cells.length < 5) throw new Error(`README.md ${label} row is not a 5-column table row`)
+  if (!/^\s*`[^`]+`\s*$/.test(cells[3])) throw new Error(`README.md ${label} version cell is not a backticked value`)
+  cells[3] = ` \`${version}\` `
+  lines[at] = cells.join("|")
+  return lines.join(eol)
+}
+
+/**
+ * Write the derived version into the three cells a release has to agree on:
+ * the package manifest (the tarball's version), the root index row and the
+ * lockfile workspace entry. Idempotent. The release lane runs this in the
+ * runner and restores the files afterwards; nothing here is committed.
+ */
+export function writeCells(name, version) {
+  if (!VERSION_RE.test(String(version))) throw new Error(`"${version}" is not X.Y.Z`)
+  const target = resolvePackage(name)
+  const dir = path.relative(ROOT, target.dir).split(path.sep).join("/")
+  const changes = []
+
+  const manifestPath = path.join(target.dir, "package.json")
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"))
+  if (manifest.version !== version) {
+    manifest.version = version
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n")
+    changes.push(`${dir}/package.json`)
+  }
+
+  const readmePath = path.join(ROOT, "README.md")
+  const readme = fs.readFileSync(readmePath, "utf8")
+  const rewritten = setIndexCell(readme, name.replace(/^@[^/]+\//, ""), version)
+  if (rewritten !== readme) {
+    fs.writeFileSync(readmePath, rewritten)
+    changes.push("README.md")
+  }
+
+  const lockPath = path.join(ROOT, "package-lock.json")
+  const lock = JSON.parse(fs.readFileSync(lockPath, "utf8"))
+  const locked = lock.packages?.[dir]
+  if (!locked) throw new Error(`package-lock.json has no packages["${dir}"] entry`)
+  if (locked.version !== version) {
+    locked.version = version
+    fs.writeFileSync(lockPath, JSON.stringify(lock, null, 2) + "\n")
+    changes.push("package-lock.json")
+  }
+
+  return { name, version, dir, changes }
+}
+
 export function assertCells(name, version) {
   const target = resolvePackage(name)
   const dir = path.relative(ROOT, target.dir).split(path.sep).join("/")
@@ -604,6 +709,36 @@ const FIXTURES = [
     changelog: EMPTY_CHANGELOG,
     expect: { ok: false, codes: ["CHANGELOG_EMPTY"], version: "1.3.0" },
   },
+  {
+    name: "prepare-supplies-the-cells",
+    baseVersion: "1.2.3",
+    baseSource: "tag",
+    commits: [{ sha: "p1", subject: "feat: add a reader" }],
+    manifestVersion: "1.2.3",
+    changelog: FIXTURE_CHANGELOG,
+    prepare: true,
+    expect: { ok: true, version: "1.3.0", note: "the release lane writes 1.3.0 in the runner" },
+  },
+  {
+    name: "prepare-closes-an-empty-changelog",
+    baseVersion: "1.2.3",
+    baseSource: "tag",
+    commits: [{ sha: "p2", subject: "fix: hold the tail" }],
+    manifestVersion: "1.2.4",
+    changelog: EMPTY_CHANGELOG,
+    prepare: true,
+    expect: { ok: true, version: "1.2.4", note: "closes an empty section" },
+  },
+  {
+    name: "prepare-still-refuses-a-typo-type",
+    baseVersion: "1.2.3",
+    baseSource: "tag",
+    commits: [{ sha: "p3", subject: "feats: add a reader" }],
+    manifestVersion: "1.3.0",
+    changelog: FIXTURE_CHANGELOG,
+    prepare: true,
+    expect: { ok: false, codes: ["NON_CONVENTIONAL"] },
+  },
 ]
 
 export function runFixtures() {
@@ -621,6 +756,7 @@ export function runFixtures() {
       range: fixture.baseSource === "tag" ? `@fixture/unit@${fixture.baseVersion}..HEAD` : "HEAD",
       commits: fixture.commits,
       changelog: fixture.changelog === null ? null : { path: "packages/fixture/CHANGELOG.md", text: fixture.changelog },
+      prepare: fixture.prepare === true,
     })
     const problems = []
     const expect = fixture.expect
@@ -662,7 +798,7 @@ export function runFixtures() {
   // a decided fact too: a package with no releasable commit is skipped, never
   // attempted, and a package with a derived version is listed even when its own
   // gate would refuse it.
-  const allCase = (commits) =>
+  const allCase = (commits, options = {}) =>
     evaluate({
       name: "@fixture/unit",
       dir: "packages/fixture",
@@ -673,6 +809,7 @@ export function runFixtures() {
       range: "@fixture/unit@1.2.3..HEAD",
       commits,
       changelog: { path: "packages/fixture/CHANGELOG.md", text: FIXTURE_CHANGELOG },
+      ...options,
     })
   const ALL_CASES = [
     {
@@ -685,6 +822,17 @@ export function runFixtures() {
       results: [allCase([{ sha: "n1", subject: "chore: sync the lockfile" }])],
       expect: { release: 0, skipped: 1 },
     },
+    {
+      name: "all-prepares-the-cells",
+      results: [
+        allCase([{ sha: "n2", subject: "feat: add a reader" }], {
+          manifestVersion: "1.2.3",
+          changelog: { path: "packages/fixture/CHANGELOG.md", text: EMPTY_CHANGELOG },
+          prepare: true,
+        }),
+      ],
+      expect: { release: 1, skipped: 0, ok: true },
+    },
   ]
   for (const fixture of ALL_CASES) {
     total++
@@ -696,12 +844,64 @@ export function runFixtures() {
     if (split.skipped.length !== fixture.expect.skipped) {
       problems.push(`skipped=${split.skipped.length}, expected ${fixture.expect.skipped}`)
     }
+    if ("ok" in fixture.expect && split.release[0]?.ok !== fixture.expect.ok) {
+      problems.push(`ok=${split.release[0]?.ok}, expected ${fixture.expect.ok}`)
+    }
     if (problems.length > 0) {
       failures.push({ name: fixture.name, problems })
       console.log(`FAIL ${fixture.name}: ${problems.join("; ")}`)
     } else {
       passed++
       console.log(`PASS ${fixture.name}: ${split.release.length} to release, ${split.skipped.length} skipped`)
+    }
+  }
+  // The runner-write step and the never-retag guard are pure functions here, so
+  // both can fail offline: a wrong row or a similar tag must never pass.
+  const README_FIXTURE = "| janua | MCP | `0.3.1` | x |\n| oc-talk | plugin | `0.1.7` | y |\n"
+  const CELL_CASES = [
+    {
+      name: "cell-replaces-one-version",
+      label: "janua",
+      version: "0.4.0",
+      expect: "| janua | MCP | `0.4.0` | x |\n| oc-talk | plugin | `0.1.7` | y |\n",
+    },
+    { name: "cell-idempotent", label: "janua", version: "0.3.1", expect: README_FIXTURE },
+    { name: "cell-refuses-an-unknown-row", label: "nope", version: "1.0.0", throws: true },
+    { name: "cell-refuses-a-bad-version", label: "janua", version: "0.4", throws: true },
+  ]
+  for (const fixture of CELL_CASES) {
+    total++
+    const problems = []
+    let result
+    try {
+      result = setIndexCell(README_FIXTURE, fixture.label, fixture.version)
+    } catch (error) {
+      if (!fixture.throws) problems.push(`threw: ${error.message}`)
+    }
+    if (fixture.throws && result !== undefined) problems.push("did not throw")
+    if (!fixture.throws && result !== fixture.expect) problems.push("text differs from the expected index")
+    if (problems.length > 0) {
+      failures.push({ name: fixture.name, problems })
+      console.log(`FAIL ${fixture.name}: ${problems.join("; ")}`)
+    } else {
+      passed++
+      console.log(`PASS ${fixture.name}: ${fixture.throws ? "refused" : "written"}`)
+    }
+  }
+  const TAG_CASES = [
+    { name: "tag-exists", tags: ["oc-talk@0.1.7", "v0.2.6"], tag: "oc-talk@0.1.7", expect: true },
+    { name: "tag-absent", tags: ["oc-talk@0.1.7"], tag: "oc-talk@0.1.8", expect: false },
+    { name: "tag-exact-not-prefix", tags: ["oc-talk@0.1.7"], tag: "oc-talk@0.1", expect: false },
+  ]
+  for (const fixture of TAG_CASES) {
+    total++
+    const actual = hasTag(fixture.tags, fixture.tag)
+    if (actual !== fixture.expect) {
+      failures.push({ name: fixture.name, problems: [`hasTag=${actual}, expected ${fixture.expect}`] })
+      console.log(`FAIL ${fixture.name}: hasTag=${actual}, expected ${fixture.expect}`)
+    } else {
+      passed++
+      console.log(`PASS ${fixture.name}: ${actual ? "exists (skip)" : "absent (release)"}`)
     }
   }
   total += FIXTURES.length
@@ -711,26 +911,42 @@ export function runFixtures() {
 
 function usage() {
   return [
-    "usage: derive-release.mjs --package <name> [--dry-run] [--json]",
+    "usage: derive-release.mjs --package <name> [--prepare] [--dry-run] [--json]",
     "       derive-release.mjs --all [--json]",
+    "       derive-release.mjs --package <name> --version <v> --write-cells",
     "       derive-release.mjs --package <name> --version <v> --assert-cells",
+    "       derive-release.mjs --tag-exists <tag>",
     "       derive-release.mjs --check",
   ].join("\n")
 }
 
 /** Argument parsing kept separate so `--check` stays dependency-free. */
 function parseArgs(argv) {
-  const options = { mode: "derive", packageName: null, version: null, dryRun: false, json: false, all: false }
+  const options = {
+    mode: "derive",
+    packageName: null,
+    version: null,
+    tag: null,
+    dryRun: false,
+    json: false,
+    all: false,
+    prepare: false,
+  }
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
     if (arg === "--check") options.mode = "check"
     else if (arg === "--assert-cells") options.mode = "assert-cells"
+    else if (arg === "--write-cells") options.mode = "write-cells"
     else if (arg === "--all") options.all = true
+    else if (arg === "--prepare") options.prepare = true
     else if (arg === "--dry-run") options.dryRun = true
     else if (arg === "--json") options.json = true
     else if (arg === "--package" && argv[i + 1]) options.packageName = argv[++i]
     else if (arg === "--version" && argv[i + 1]) options.version = argv[++i]
-    else throw new Error(`unknown argument "${arg}"\n${usage()}`)
+    else if (arg === "--tag-exists" && argv[i + 1]) {
+      options.mode = "tag-exists"
+      options.tag = argv[++i]
+    } else throw new Error(`unknown argument "${arg}"\n${usage()}`)
   }
   return options
 }
@@ -748,6 +964,31 @@ function main() {
   try {
     if (options.mode === "check") {
       if (!runFixtures()) process.exitCode = 1
+      return
+    }
+
+    if (options.mode === "tag-exists") {
+      if (!options.tag) {
+        console.error(`derive-release: --tag-exists needs a tag\n${usage()}`)
+        process.exitCode = 2
+        return
+      }
+      const exists = hasTag(readTags(), options.tag)
+      console.log(`tag: ${options.tag} ${exists ? "exists" : "absent"}`)
+      if (!exists) process.exitCode = 1
+      return
+    }
+
+    if (options.mode === "write-cells") {
+      if (!options.packageName || !options.version) {
+        console.error(`derive-release: --write-cells needs --package and --version\n${usage()}`)
+        process.exitCode = 2
+        return
+      }
+      const written = writeCells(options.packageName, options.version)
+      for (const where of written.changes) console.log(`cells: wrote ${written.version} to ${where}`)
+      if (written.changes.length === 0) console.log(`cells: ${written.name} already carries ${written.version}`)
+      console.log(`cells: ${written.name} ${written.version} in the runner only; nothing was committed`)
       return
     }
 
@@ -789,7 +1030,7 @@ function main() {
       process.exitCode = 2
       return
     }
-    const result = runDerivation(options.packageName)
+    const result = runDerivation(options.packageName, options.prepare)
     if (options.json) console.log(JSON.stringify(result, null, 2))
     else console.log(render(result))
 
