@@ -1,5 +1,6 @@
 //! Window-selector resolution + screen capture (desktop + PrintWindow paths).
 
+use crate::target::{TargetError, TargetLock, TargetSpec};
 use crate::{cand_public, candidates, py_repr_str, py_round_half_even, py_round_n, Cand};
 use serde_json::{Map, Value};
 use windows_sys::Win32::Foundation::HWND;
@@ -258,20 +259,38 @@ pub fn resolve_selector(sel: &str) -> Resolve {
     }
 }
 
-pub fn resolve_window(title: Option<&str>, hwnd: Option<i64>) -> Resolve {
+/// The legacy `hwnd`/`title` arguments are the SAME selector grammar as
+/// `target`: `hwnd` -> `{hwnd}`, `title` -> `{titleContains}`. Routing them
+/// through `TargetSpec` is what gives the old verbs the full target lock
+/// (pid + process creation time + image + class, revalidated before acting)
+/// instead of a bare `IsWindow` check on a recyclable handle.
+pub fn legacy_spec(hwnd: Option<i64>, title: Option<&str>) -> Result<TargetSpec, TargetError> {
     if let Some(h) = hwnd {
-        return resolve_selector(&format!("hwnd:{h}"));
+        return Ok(TargetSpec {
+            hwnd: Some(h),
+            ..TargetSpec::default()
+        });
     }
     if let Some(t) = title {
-        if !t.is_empty() {
-            return resolve_selector(t);
+        if !t.trim().is_empty() {
+            return Ok(TargetSpec {
+                title_contains: Some(t.to_string()),
+                ..TargetSpec::default()
+            });
         }
     }
-    (
-        None,
-        Some("bad_window: need title or hwnd".to_string()),
-        None,
-    )
+    Err(TargetError {
+        code: crate::target::BAD,
+        message: "bad_window: need title or hwnd".to_string(),
+        candidates: None,
+    })
+}
+
+/// Resolve a legacy `hwnd`/`title` pair to a full `TargetLock`, so a caller
+/// that used the old arguments still revalidates pid/creation time/image/class
+/// before every action and gets the typed `target_gone` on a recycled handle.
+pub fn lock_legacy(hwnd: Option<i64>, title: Option<&str>) -> Result<TargetLock, TargetError> {
+    crate::target::lock(&legacy_spec(hwnd, title)?)
 }
 
 // ---------------------------------------------------------------- image
@@ -954,5 +973,44 @@ mod tests {
         assert_eq!(f, "jpeg");
         assert_eq!(q, 80);
         assert!(!data.is_empty());
+    }
+
+    /// The legacy `hwnd`/`title` arguments are the target lock, not a bare
+    /// IsWindow check: the lock carries pid + creation time + image + class,
+    /// and a forged recycled creation time is refused with the same typed
+    /// `target_gone` the `target:` path produces.
+    #[test]
+    fn legacy_selectors_share_the_target_lock() {
+        let f = crate::fixture::Fixture::new();
+        let top = f.hwnd_i64();
+        let by_hwnd = lock_legacy(Some(top), None).expect("legacy hwnd locks");
+        assert_eq!(by_hwnd.hwnd, top);
+        assert_eq!(by_hwnd.pid, std::process::id());
+        assert_ne!(by_hwnd.created, 0, "the lock carries the creation time");
+        by_hwnd.revalidate().expect("a fresh legacy lock validates");
+
+        // title -> {titleContains}: the fixture title is unique per pid+seq.
+        let title = unsafe { crate::win_text(f.hwnd()) };
+        let by_title = lock_legacy(None, Some(title.as_str())).expect("legacy title locks");
+        assert_eq!(by_title.hwnd, top);
+        assert_eq!(by_title.class, by_hwnd.class);
+        assert_eq!(by_title.created, by_hwnd.created);
+
+        // A forged creation time is a recycled PID: the SAME typed refusal.
+        let mut forged = by_hwnd.clone();
+        forged.created = by_hwnd.created.wrapping_add(1);
+        let e = forged
+            .revalidate()
+            .expect_err("a recycled pid must be refused");
+        assert_eq!(e.code, crate::target::GONE, "{}", e.text());
+        assert!(
+            e.text().contains("creation time"),
+            "the refusal must name the creation time: {}",
+            e.text()
+        );
+
+        // Empty legacy arguments stay a typed bad_target, never a guess.
+        let e = lock_legacy(None, None).expect_err("no selector is an error");
+        assert_eq!(e.code, crate::target::BAD);
     }
 }

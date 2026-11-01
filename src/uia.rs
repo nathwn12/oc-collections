@@ -174,7 +174,12 @@ impl Drop for Iface {
     }
 }
 
-fn ensure_com() {
+/// Initialise this thread's COM apartment `COINIT_MULTITHREADED`. UIA objects
+/// are free-threaded (CUIAutomation is `ThreadingModel=Both`), so every entry
+/// point below may create, use and release them on any MTA thread, including
+/// the bounded helper thread `crate::deadline` runs on. No interface is cached
+/// across calls, so nothing is ever shared between threads.
+pub(crate) fn ensure_com() {
     unsafe {
         CoInitializeEx(std::ptr::null(), COINIT_MULTITHREADED as u32);
     }
@@ -711,6 +716,10 @@ impl Walk {
                 PageAction::Skip => {}
                 PageAction::Collect => {
                     let rect = el_rect(k);
+                    // A control with no on-screen rectangle (scrolled away,
+                    // virtualized, collapsed) reports [0,0,0,0]; marking it
+                    // keeps callers from reading that as real geometry.
+                    let offscreen = rect[2] <= 0 || rect[3] <= 0;
                     let mut e = Map::new();
                     e.insert("win".to_string(), Value::from(self.win));
                     e.insert("role".to_string(), Value::from(role.clone()));
@@ -721,6 +730,7 @@ impl Walk {
                         Value::from(rect.iter().map(|v| Value::from(*v)).collect::<Vec<_>>()),
                     );
                     e.insert("invokable".to_string(), Value::from(inv));
+                    e.insert("offscreen".to_string(), Value::from(offscreen));
                     e.insert("path".to_string(), Value::from(p.clone()));
                     e.insert(
                         "ref".to_string(),
@@ -764,6 +774,18 @@ type UiaPage = (Vec<Map<String, Value>>, bool, bool, Option<usize>);
 /// `next_offset` is Some(offset + returned) only when more accepted entries
 /// remain past the returned 200-entry page.
 pub fn uia_element_list(hwnd: HWND, max_depth: i64, offset: usize) -> Result<UiaPage, String> {
+    // Bounded: a provider that never answers must return `uia_timeout` instead
+    // of wedging this worker. HWND is a raw pointer, so the handle crosses to
+    // the helper thread as the plain integer the activation paths already use.
+    let h = hwnd as i64;
+    crate::deadline::bound(
+        crate::deadline::Family::Uia,
+        "uia_element_list",
+        move || uia_element_list_inner(h as HWND, max_depth, offset),
+    )?
+}
+
+fn uia_element_list_inner(hwnd: HWND, max_depth: i64, offset: usize) -> Result<UiaPage, String> {
     let auto = automation()?;
     let root = element_from_handle(&auto, hwnd)
         .map_err(|hr| format!("UIA ControlFromHandle failed: {}", crate::hr_text(hr)))?;
@@ -843,6 +865,17 @@ fn resolve_path_el(walker: &Iface, mut el: Iface, path: &str) -> Result<Iface, S
 /// `unconfirmed: activation needs owner permission` - implemented but never
 /// exercised by the headless parity harness.
 pub fn uia_activate(hwnd: i64, path: &str) -> (bool, String, Option<String>) {
+    let p = path.to_string();
+    match crate::deadline::bound(crate::deadline::Family::Uia, "uia_activate", move || {
+        uia_activate_inner(hwnd, &p)
+    }) {
+        Ok(r) => r,
+        // Timeout shape matches a resolve failure: no `via` was reached.
+        Err(e) => (false, String::new(), Some(e)),
+    }
+}
+
+fn uia_activate_inner(hwnd: i64, path: &str) -> (bool, String, Option<String>) {
     let auto = match automation() {
         Ok(a) => a,
         Err(e) => {
@@ -1267,6 +1300,16 @@ fn uia_set_value_range(el: &Iface, text: &str) -> (bool, String, Option<String>)
 /// pattern-level outcome, empty for resolve failures (the caller maps empty
 /// to `none`, mirroring `uia_activate`).
 pub fn uia_set_value(hwnd: i64, path: &str, text: &str) -> (bool, String, Option<String>) {
+    let (p, t) = (path.to_string(), text.to_string());
+    match crate::deadline::bound(crate::deadline::Family::Uia, "uia_set_value", move || {
+        uia_set_value_inner(hwnd, &p, &t)
+    }) {
+        Ok(r) => r,
+        Err(e) => (false, String::new(), Some(e)),
+    }
+}
+
+fn uia_set_value_inner(hwnd: i64, path: &str, text: &str) -> (bool, String, Option<String>) {
     let auto = match automation() {
         Ok(a) => a,
         Err(e) => {

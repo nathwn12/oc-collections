@@ -141,7 +141,9 @@ gets `-32603 Server busy` immediately — it is refused, not queued.
 | `PUPPET_ENGINE_BUNDLE` | unset | Names a local zip to verify and extract instead of downloading. Pre-publish diagnostics only — size and sha256 are still checked. |
 | `PUPPET_MCP_ALLOW_NON_WINDOWS` | unset | `1` bypasses the Windows-only **launcher** gate for diagnostics. The server still runs on Windows x64 only. |
 | `LOCALAPPDATA` | set by Windows | Cache root. Unset means the cache directory cannot resolve and the launcher fails with a fixable message. |
-| `PUPPET_LIVE_DESKTOP` | unset | `1` enables the live-gated integration tests (`hidden_desktop`, `clipboard`, and the live halves of the element tests). Development only; the suite skips them cleanly without it. |
+| `PUPPET_LIVE_DESKTOP` | unset | `1` enables the live-gated integration tests (`hidden_desktop`, `clipboard`, `timeout_bound`, and the live halves of the element tests). Development only; the suite skips them cleanly without it. |
+| `PUPPET_UIA_TIMEOUT_MS` | `5000` | Deadline for one bounded UIA operation (`elements` walk, `invoke`/`set_value` activation). Clamped to `50..120000`. Exceeding it returns `uia_timeout`. |
+| `PUPPET_CAPTURE_TIMEOUT_MS` | `10000` | Deadline for one `PrintWindow` capture. Clamped to `50..120000`. Exceeding it returns `capture_timeout`. |
 
 Tool-level defaults live with each tool below.
 
@@ -169,15 +171,24 @@ pointer.
 | `elements` | `false` | Append a third content block with the element model. |
 
 **Returns** `[image, coordinate_map_json]`, plus the element block when `elements=true`.
-The map carries `source{x,y,w,h,kind}`, `scale`, `monitors`, `cursor`, `window`, `capture`,
-`formula`, `foregroundUnchanged`, `cursorUnchanged`. Map image pixels back with:
+The map carries `source{x,y,w,h,kind}`, `scale`, `monitors{count,origin,virtual,rects}`,
+`cursor`, `window`, `capture`, `formula`, `foregroundUnchanged`, `cursorUnchanged`. Map
+image pixels back with:
 
 ```
 screen_x = source.x + round((img_x + 0.5) * source.w / image.w)   // same for y
 ```
 
+`monitors.rects` is per monitor in the same `[l,t,r,b]` shape `cursor.screens` uses.
 For window captures `source.x/y` equal the `dwm_rect` origin and `source.kind` is
-`"window"`. Errors are `["error: <code>: <detail>"]` with
+`"window"`. If the window moves while it is being captured, the map reports the
+POST-capture origin and `capture.moved_during_capture:true` (a pure translation is
+recaptured once and the second result is returned) — a stale origin is never presented
+as current. With `elements=true` plus `display`/`region`, the element block still
+describes the FOREGROUND window (not the captured image), and the map names it in
+`elements_window{hwnd,exe,title}`.
+
+Errors are `["error: <code>: <detail>"]` with
 `bad_display|bad_region|bad_window|ambiguous_window|empty_crop|capture_failed|ambiguous_target|target_gone|window_minimized|capture_unavailable`.
 
 ```json
@@ -186,16 +197,20 @@ For window captures `source.x/y` equal the `dwm_rect` origin and `source.kind` i
 
 ### `list_windows`
 
-Read-only. No arguments; nothing is touched.
+Read-only. No positional arguments; nothing is touched.
+
+| Argument | Default | Meaning |
+|---|---|---|
+| `include_app_ids` | `false` | Add `appId` per window from the AppUserModelID property store (a string, or `null` when absent). Opt-in because that read is a per-window COM call. |
 
 **Returns** `{ windows: [{ hwnd, pid, exe, title, class, rect, dwm_rect, client_rect,
-minimized, maximized, foreground, cloaked, visible, dpi, elevated }] }`. `rect` is
+minimized, maximized, foreground, cloaked, visible, dpi, elevated, appId? }] }`. `rect` is
 `GetWindowRect` (compatibility, includes the invisible border); `dwm_rect` is
 `DWMWA_EXTENDED_FRAME_BOUNDS` (the mapping truth, else `rect` with `dwm_fallback:true`);
-`client_rect` is in screen space.
+`client_rect` is in screen space. `appId` appears only with `include_app_ids:true`.
 
 ```json
-{}
+{ "include_app_ids": true }
 ```
 
 ### `window`
@@ -204,7 +219,7 @@ minimized, maximized, foreground, cloaked, visible, dpi, elevated }] }`. `rect` 
 |---|---|---|
 | `action` | required | `focus`, `move`, `resize`, `minimize`, `maximize`, `restore`, `close`, `topmost`. |
 | `target` | `null` | Selector; wins over `title`/`hwnd`. |
-| `title` | `null` | Selector string. |
+| `title` | `null` | Selector string; the same target lock as `target` (`{titleContains}`), revalidated before the action. |
 | `hwnd` | `null` | Window handle. |
 | `x`, `y` | `null` | Required when `action:"move"`. |
 | `width`, `height` | `null` | Required when `action:"resize"`. |
@@ -225,7 +240,7 @@ Burst tool — one MCP round-trip runs an ordered batch. Full action list and or
 
 | Argument | Default | Meaning |
 |---|---|---|
-| `actions` | required | Array of action objects, run in order. |
+| `actions` | required | Array of action objects, run in order. At most 256 actions. |
 | `target` | `null` | Selector locking one window for the whole call. |
 | `dry_run` | `false` | Validate and report; inject nothing. |
 | `settle_ms` | `0` | Sleep between actions. |
@@ -241,6 +256,13 @@ Burst tool — one MCP round-trip runs an ordered batch. Full action list and or
 sendinput_ms, events, focus_before, focus_after, foregroundUnchanged, cursorUnchanged,
 target_locked?, target_pid?, target_exe? }`, plus `hidden_desktop` under
 `desktop:"hidden"`.
+
+A burst is bounded: at most **256 actions** and **300 s** of total wall-clock time.
+Exceeding either is a typed `burst_budget_exceeded` result naming the limit and the
+actual value, in the same per-result shape as a failed action; over the action cap
+nothing runs, and once the time budget expires the remaining actions do not run. A
+`wait` or `wait_for` that would outlive the remaining budget is refused/clamped and
+reported the same way — the global input lock is never held past the budget.
 
 ```json
 {
@@ -267,7 +289,7 @@ Read-only structured UI tree: zero pixels, no input, no focus change.
 | Argument | Default | Meaning |
 |---|---|---|
 | `target` | `null` | Selector; wins over `title`/`hwnd`. |
-| `title` | `null` | Selector string. |
+| `title` | `null` | Selector string; the same target lock as `target` (`{titleContains}`), revalidated before the action. |
 | `hwnd` | `null` | Window handle. |
 | `detail` | `false` | Keep raw `win`/`hwnd` per entry and add TextPattern `text`. |
 | `max_depth` | `8` | UIA walk depth 1..32. |
@@ -275,12 +297,22 @@ Read-only structured UI tree: zero pixels, no input, no focus change.
 
 One of `title`, `hwnd` or `target` is required.
 
+The walk is bounded: a provider that stops answering returns `uia_timeout` inside 5 s
+(`PUPPET_UIA_TIMEOUT_MS`) instead of holding the worker. `elements` itself still answers —
+the Win32 fallback fills the page, `backend` says `"win32"` and `uia_error` carries the
+typed reason.
+
 **Returns** `{ backend, truncated, rect_space, elements, uia_available, uia_error,
 fallback, empty, empty_reason, depth_capped, depth_limit, next_offset,
 foregroundUnchanged, cursorUnchanged }`. Each entry is
-`{ ref, role, name, auto_id, rect, invokable, path, fp }` (`detail:true` adds `win`,
-`hwnd`, and `text` where readable).
+`{ ref, role, name, auto_id, rect, offscreen, invokable, path, fp }` (`detail:true` adds
+`win`, `hwnd`, and `text` where readable).
 
+- `offscreen:true` marks an entry whose `rect` has no area (`[0,0,0,0]`, or a zero/negative
+  width or height): a control scrolled out of view, virtualized, or collapsed. The rect is
+  kept for shape stability but must not be read as geometry — there is no pixel to aim at.
+  `click` on such an element is refused with `offscreen_element` (scroll it into view, or
+  use `invoke`/`set_value`, which act through the UIA pattern and need no geometry).
 - `ref` is `"<hwnd>.<path>"`, a per-enumeration correlator — **not** a durable handle.
   `invoke`/`set_value` re-enumerate and match `name:`/`auto_id:`/`path:`.
 - `fp` is a stable identity fingerprint (FNV-1a over role/name/auto_id/invokable, 16 hex
@@ -307,7 +339,7 @@ foregroundUnchanged, cursorUnchanged }`. Each entry is
 | `down` / `up` | `button` | posted button message |
 | `drag` | `from`[2], `to`[2], `button` | posted down/move/up at exact points |
 | `scroll` | `x`,`y` or `element`, `amount`, `axis` (`v`/`h`) | `WM_MOUSEWHEEL` at the point, or UIA `ScrollPattern` |
-| `type` | `text`, `chunk_chars`, `chunk_ms` | UIA `ValuePattern.SetValue` with an element; else `SendInput` |
+| `type` | `text`, `chunk_chars`, `chunk_ms`, `element` (`name:`/`auto_id:`/`path:`), `index`, `expect_fp` | UIA `ValuePattern.SetValue` with an element; else `SendInput` |
 | `key` | `name`, `hold_ms` (0..60000), `repeat` (1..100), `gap_ms` | `SendInput` only |
 | `hotkey` | `keys` (array or string) | `SendInput` only |
 | `wait` | `ms` | sleeps, cancellably |
@@ -324,7 +356,10 @@ Notes that keep the actions honest:
   `delivered:"posted"` plus `effect:"verified"|"pattern-returned"|"unchanged"|"unverified"`.
   A posted click whose readable control state did not change fails with
   `background_unavailable` instead of claiming success. A raw `x`/`y` click always reports
-  `delivered:"posted"`, `effect:"unverified"`.
+  `delivered:"posted"`, `effect:"unverified"`. An element with no on-screen rectangle is
+  refused **before** any input with `offscreen_element`: its "centre" would be the target's
+  client origin, so nothing is posted and the message names the fix (scroll it into view,
+  or use `invoke`).
 - `hover:true` is the only way to ask for a `WM_MOUSEMOVE`.
 - `invoke` never falls back to a pixel click unless you pass `"fallback":"click"`; an
   ambiguous selector returns `ok:false` with a `candidates` list unless `index` is explicit
@@ -363,6 +398,11 @@ Notes that keep the actions honest:
 4. **Continue-always.** A per-action failure never aborts the burst: that action reports
    `ok:false` and the remaining actions still run. `ok:false` at the action level means a
    malformed action or a typed refusal — not a reason to skip the rest.
+   The call-level verdict is separate: the payload carries top-level `ok` (true only when
+   **every** action succeeded) and `failed` (how many did not). The MCP envelope reports
+   `isError:true` only when **no** action succeeded — a burst where the target vanished
+   before the first action is a real failure, a burst with one bad action among good ones
+   is not.
 5. **A timeout is not an error.** `wait_for` that times out returns `ok:true` with
    `satisfied:false` (the flag, never an error), so the batch continues. `ok:false` is
    reserved for a malformed action or an unresolvable selector.
@@ -395,6 +435,9 @@ Notes that keep the actions honest:
 | `capture_unavailable` | `PrintWindow` refused or returned a blank/black frame. | Try `allow_crop_fallback:true` on the foreground window, or `screenshot` without a target. |
 | `stale_ref` | `expect_fp` did not match the re-walked control. | Take a fresh `elements` snapshot and retry. |
 | `uipi_blocked` | Target runs at higher integrity. | Run the server at the same or higher integrity level. |
+| `burst_budget_exceeded` | A `do` burst exceeded 256 actions or the 300 s total budget. | Split the batch; the result names the limit and the actual value. |
+| `uia_timeout` | A UIA call (element walk, `invoke`, `set_value`) did not return within 5 s: the target's UI thread is not responding. | Retry once the app is responsive, or capture the desktop instead. `elements` still answers from the Win32 fallback and reports the reason in `uia_error`; an abandoned activation's effect is unverified. |
+| `capture_timeout` | A `PrintWindow` capture did not return within 10 s: the target's UI thread is not responding. | Retry, or capture the desktop instead. |
 
 `-32603 Server busy` means more than 8 tool calls were in flight; the ninth is refused, not
 queued.

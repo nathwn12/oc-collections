@@ -1,13 +1,12 @@
 //! JSON-RPC stdio loop + per-tool validation (pydantic-shaped) + dispatch.
 
 use crate::burst::do_burst;
-use crate::cap::resolve_selector;
 use crate::schemas::{
     TOOL_CURSOR, TOOL_DO, TOOL_ELEMENTS, TOOL_LIST_WINDOWS, TOOL_SCREENSHOT, TOOL_WINDOW,
 };
 use crate::screen::{dispatch_screenshot, ShotArgs};
 use crate::shot::{compact_entry, element_model, elements_object};
-use crate::winop::{do_cursor, do_list_windows, do_window, WinArgs};
+use crate::winop::{do_cursor, do_window, WinArgs};
 use crate::{
     check_no_extra, coerce_int, coerce_str, display_monitors, err_result_text, missing_arg,
     opt_int, opt_str, py_dumps, req_bool, req_int, req_str, verr_text, wrapped_text, ALL_VERSIONS,
@@ -304,14 +303,13 @@ fn call_elements(args: &Map<String, Value>) -> String {
                 }
             },
         },
-        None => match (h, t) {
-            (Some(v), _) => resolve_selector(&format!("hwnd:{v}")),
-            (None, Some(v)) if !v.is_empty() => resolve_selector(&v),
-            _ => (
-                None,
-                Some("bad_window: need title or hwnd".to_string()),
-                None,
-            ),
+        None => match crate::cap::lock_legacy(h, t.as_deref()) {
+            Ok(l) => {
+                let hw = l.hwnd as windows_sys::Win32::Foundation::HWND;
+                locked = Some(l);
+                (Some(hw), None, None)
+            }
+            Err(e) => (None, Some(e.text()), e.candidates.clone()),
         },
     };
     if hwnd_r.is_none() {
@@ -712,6 +710,16 @@ fn call_noargs(tool: &str, args: &Map<String, Value>) -> Option<String> {
     None
 }
 
+fn call_list_windows(args: &Map<String, Value>) -> String {
+    let mut errs = Vec::new();
+    check_no_extra(args, &mut errs, &["include_app_ids"]);
+    let include_app_ids = req_bool(args, &mut errs, "include_app_ids");
+    if !errs.is_empty() {
+        return err_result_text(&verr_text("list_windows", &errs));
+    }
+    crate::winop::do_list_windows(include_app_ids.unwrap())
+}
+
 fn tools_call(params: &Value) -> String {
     let name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
     let args: Map<String, Value> = match params.get("arguments") {
@@ -720,10 +728,7 @@ fn tools_call(params: &Value) -> String {
     };
     match name {
         "screenshot" => call_screenshot(&args),
-        "list_windows" => match call_noargs("list_windows", &args) {
-            Some(e) => e,
-            None => do_list_windows(),
-        },
+        "list_windows" => call_list_windows(&args),
         "window" => call_window(&args),
         "do" => call_do(&args),
         "cursor" => match call_noargs("cursor", &args) {
@@ -1702,6 +1707,24 @@ mod tests {
         );
     }
 
+    /// `elements`' legacy hwnd argument is the target lock, so a dead handle
+    /// is the typed target_gone rather than a bare IsWindow bad_window.
+    #[test]
+    fn elements_legacy_hwnd_uses_the_target_lock() {
+        let f = crate::fixture::Fixture::new();
+        let hwnd = f.hwnd_i64();
+        drop(f);
+        let s = call_elements(&elements_args(&[("hwnd", Value::from(hwnd))]));
+        assert!(
+            s.contains("target_gone"),
+            "elements hwnd must route through the target lock, got: {s}"
+        );
+        assert!(
+            !s.contains("bad_window"),
+            "the bare-handle legacy path must be gone, got: {s}"
+        );
+    }
+
     #[test]
     fn elements_rejects_overflow_hwnd_with_shared_error() {
         let v = serde_json::json!("9223372036854775808"); // i64::MAX + 1
@@ -1713,6 +1736,65 @@ mod tests {
         assert!(
             s.contains("does not fit in i64") && s.contains("int_parsing"),
             "overflow hwnd needs the shared range message, got: {s}"
+        );
+    }
+
+    /// The `do` schema declares the element fields the `type` action already
+    /// accepts (a UIA ValuePattern.SetValue path exists at runtime), and the
+    /// 256-action cap. Runtime behaviour is unchanged by this declaration.
+    #[test]
+    fn do_type_action_schema_declares_element_index_and_expect_fp() {
+        let t: Value = serde_json::from_str(crate::schemas::TOOL_DO).expect("TOOL_DO JSON");
+        let actions = &t["inputSchema"]["properties"]["actions"];
+        assert_eq!(
+            actions.get("maxItems"),
+            Some(&Value::from(256)),
+            "the action cap must be declared, not only enforced at runtime"
+        );
+        let variants = actions["items"]["oneOf"]
+            .as_array()
+            .expect("do.actions.items.oneOf");
+        let ty = variants
+            .iter()
+            .find(|v| v["properties"]["type"]["const"].as_str() == Some("type"))
+            .expect("a type action variant");
+        for k in ["element", "index", "expect_fp"] {
+            assert!(
+                ty["properties"]
+                    .as_object()
+                    .expect("type properties")
+                    .contains_key(k),
+                "the type action schema must declare {k}: {ty}"
+            );
+        }
+    }
+
+    /// The elements/screenshot descriptions must describe what the runtime
+    /// actually emits: `offscreen`, `moved_during_capture`, `elements_window`.
+    #[test]
+    fn tool_descriptions_declare_the_new_payload_fields() {
+        let el: Value = serde_json::from_str(crate::schemas::TOOL_ELEMENTS).expect("elements");
+        let d = el["description"].as_str().expect("description");
+        assert!(
+            d.contains("offscreen"),
+            "elements must describe the offscreen flag: {d}"
+        );
+        let ss: Value = serde_json::from_str(crate::schemas::TOOL_SCREENSHOT).expect("screenshot");
+        let d = ss["description"].as_str().expect("description");
+        for k in ["moved_during_capture", "elements_window"] {
+            assert!(d.contains(k), "screenshot must describe {k}: {d}");
+        }
+        let lw: Value =
+            serde_json::from_str(crate::schemas::TOOL_LIST_WINDOWS).expect("list_windows");
+        assert_eq!(
+            lw["inputSchema"]["properties"]["include_app_ids"]["default"],
+            Value::from(false),
+            "include_app_ids must be declared opt-in"
+        );
+        let d = lw["description"].as_str().expect("description");
+        assert!(
+            d.contains("include_app_ids") && d.contains("appId"),
+            "list_windows must document the flag: {d}"
         );
     }
 
@@ -1844,6 +1926,68 @@ mod tests {
         crate::fixture::check_foreground_left_clean(hwnd, fg_before, "elements");
         // Evidence for the report (captured with -- --nocapture).
         println!("ELEMENTS_COMPACT_FIXTURE_JSON={payload}");
+    }
+
+    /// A matched control with no on-screen rectangle is reported as
+    /// `offscreen:true` instead of geometry a caller could aim at. On the
+    /// pre-fix tree the entry carried `[0,0,0,0]` and no flag.
+    #[test]
+    fn elements_marks_a_control_without_a_rect_offscreen() {
+        let f = crate::fixture::Fixture::new();
+        let hwnd = f.hwnd() as i64;
+        for child in [f.edit(), f.edit_ro(), f.button()] {
+            let collapsed = unsafe {
+                windows_sys::Win32::UI::WindowsAndMessaging::SetWindowPos(
+                    child,
+                    std::ptr::null_mut(),
+                    0,
+                    0,
+                    0,
+                    0,
+                    windows_sys::Win32::UI::WindowsAndMessaging::SWP_NOMOVE
+                        | windows_sys::Win32::UI::WindowsAndMessaging::SWP_NOZORDER
+                        | windows_sys::Win32::UI::WindowsAndMessaging::SWP_NOACTIVATE,
+                )
+            };
+            assert_ne!(collapsed, 0, "collapse a fixture child");
+        }
+        let entry = {
+            let t0 = std::time::Instant::now();
+            loop {
+                let p = elements_payload(&elements_args(&[("hwnd", Value::from(hwnd))]));
+                let found = p
+                    .get("elements")
+                    .and_then(|v| v.as_array())
+                    .and_then(|els| {
+                        els.iter()
+                            .find(|e| e.get("offscreen") == Some(&Value::from(true)))
+                            .cloned()
+                    });
+                if let Some(e) = found {
+                    break e;
+                }
+                if t0.elapsed() > std::time::Duration::from_secs(10) {
+                    panic!("no zero-area entry appeared in elements: {p}");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        };
+        assert_eq!(
+            entry.get("offscreen"),
+            Some(&Value::from(true)),
+            "a control with no rect must be flagged offscreen, got: {entry}"
+        );
+        assert!(
+            entry.get("rect").and_then(|r| r.as_array()).is_some(),
+            "rect stays present for shape stability: {entry}"
+        );
+        let w = entry["rect"][2].as_i64().unwrap_or(-1);
+        let h = entry["rect"][3].as_i64().unwrap_or(-1);
+        assert!(
+            w <= 0 || h <= 0,
+            "the flagged entry must really have no area, got: {entry}"
+        );
+        println!("ELEMENTS_OFFSCREEN_FLAG_OK entry={entry}");
     }
 
     #[test]

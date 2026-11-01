@@ -311,7 +311,10 @@ fn window_unknown_action_is_error() {
 }
 
 #[test]
-fn do_bad_action_stays_ok_with_per_action_error() {
+fn do_all_failed_actions_is_a_tool_error() {
+    // Zero successes: the burst payload's top-level `ok` is false, `failed`
+    // counts every action, and the envelope is isError:true. On the pre-fix
+    // tree the payload carried no top-level `ok` and reported isError:false.
     let mut s = Session::spawn();
     let r = s.result(
         8,
@@ -320,10 +323,20 @@ fn do_bad_action_stays_ok_with_per_action_error() {
     );
     assert_eq!(
         r.get("isError"),
-        Some(&Value::from(false)),
-        "do continue-always stays isError:false, got: {r}"
+        Some(&Value::from(true)),
+        "a burst where nothing succeeded is a tool error, got: {r}"
     );
     let sc = r.get("structuredContent").expect("structuredContent");
+    assert_eq!(
+        sc.get("ok"),
+        Some(&Value::from(false)),
+        "top-level ok is false when an action failed, got: {sc}"
+    );
+    assert_eq!(
+        sc.get("failed"),
+        Some(&Value::from(1)),
+        "failed counts the failed actions, got: {sc}"
+    );
     let first = sc
         .get("results")
         .and_then(|v| v.as_array())
@@ -334,5 +347,40 @@ fn do_bad_action_stays_ok_with_per_action_error() {
     assert!(
         err.contains("unknown action type"),
         "per-action error typed, got: {err}"
+    );
+}
+
+#[test]
+fn do_partial_failure_stays_a_success_envelope() {
+    // Continue-always: at least one action succeeded, so the call is not a
+    // tool error even though the top-level `ok` (all-actions rule) is false.
+    // The failing action is FIRST, which also proves the rest still ran.
+    let mut s = Session::spawn();
+    let r = s.result(
+        9,
+        "do",
+        serde_json::json!({
+            "actions": [{"type": "nope_not_a_type"}, {"type": "wait", "ms": 1}],
+            "dry_run": true,
+        }),
+    );
+    assert_eq!(
+        r.get("isError"),
+        Some(&Value::from(false)),
+        "a partially successful burst is not a tool error, got: {r}"
+    );
+    let sc = r.get("structuredContent").expect("structuredContent");
+    assert_eq!(sc.get("ok"), Some(&Value::from(false)));
+    assert_eq!(sc.get("failed"), Some(&Value::from(1)));
+    let results = sc
+        .get("results")
+        .and_then(|v| v.as_array())
+        .expect("results");
+    assert_eq!(results.len(), 2, "both actions reported: {sc}");
+    assert_eq!(results[0].get("ok"), Some(&Value::from(false)));
+    assert_eq!(
+        results[1].get("ok"),
+        Some(&Value::from(true)),
+        "the action after a failure still ran, got: {sc}"
     );
 }

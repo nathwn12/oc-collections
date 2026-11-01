@@ -23,6 +23,10 @@ pub struct CapOk {
     pub rect_delta: [i32; 4],
     pub detector: Map<String, Value>,
     pub stale: bool,
+    /// True when the DWM frame rect changed between the pre-capture read and
+    /// the final read: `dwm` is then the POST-capture rect, so the mapping
+    /// always names a current origin. A pure translation is recaptured once.
+    pub moved_during_capture: bool,
     pub dwm: [i32; 4],
     pub hwnd: i64,
     pub pid: u32,
@@ -42,9 +46,69 @@ fn frame_sig(img: &Img, title: &str, dwm: &[i32; 4]) -> (String, (i32, i32, i32,
     )
 }
 
+/// How a post-render DWM rect read relates to the pre-render rect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RectChange {
+    Unchanged,
+    /// Same size, different origin: one recapture is safe and cheap.
+    Translated,
+    /// Size changed: the frame no longer describes the current rect; report
+    /// the post rect and flag the capture instead of recapturing.
+    Resized,
+}
+
+pub(crate) fn classify_rect_change(before: [i32; 4], after: [i32; 4]) -> RectChange {
+    if before == after {
+        RectChange::Unchanged
+    } else if after[2] - after[0] == before[2] - before[0]
+        && after[3] - after[1] == before[3] - before[1]
+    {
+        RectChange::Translated
+    } else {
+        RectChange::Resized
+    }
+}
+
+/// The origin a capture reports: the post-capture rect whenever the window
+/// moved, so a stale pre-capture origin is never presented as current.
+pub(crate) fn reported_rect(before: [i32; 4], after: [i32; 4]) -> [i32; 4] {
+    if after == before {
+        before
+    } else {
+        after
+    }
+}
+
+/// One PrintWindow frame at `ww`x`wh`, trying PW_RENDERFULLCONTENT then the
+/// plain flag. The caller keeps the last error for the fallback/refusal text.
+unsafe fn render_frame(hwnd: HWND, ww: i32, wh: i32) -> Result<(Img, u32), String> {
+    let mut last_err = String::from("PrintWindow refused");
+    for flags in [2u32, 0u32] {
+        match printwindow_grab(hwnd, ww, wh, flags) {
+            Ok(im) => return Ok((im, flags)),
+            Err(e) => last_err = e,
+        }
+    }
+    Err(last_err)
+}
+
 /// # Safety
 /// `hwnd` must be a live window handle; it is passed to the Win32 window APIs as a raw pointer.
 pub unsafe fn capture_window(hwnd: HWND, allow_crop_fallback: bool) -> Result<CapOk, String> {
+    // Bounded: `PrintWindow` blocks until the target's UI thread answers, so it
+    // runs on a helper thread under a wall-clock deadline and a hung window
+    // returns `capture_timeout` instead of taking the worker with it.
+    let h = hwnd as i64;
+    crate::deadline::bound(
+        crate::deadline::Family::Capture,
+        "capture_window",
+        move || unsafe { capture_window_inner(h as HWND, allow_crop_fallback) },
+    )?
+}
+
+/// # Safety
+/// `hwnd` must be a live window handle; it is passed to the Win32 window APIs as a raw pointer.
+unsafe fn capture_window_inner(hwnd: HWND, allow_crop_fallback: bool) -> Result<CapOk, String> {
     let t0 = Instant::now();
     let h = hwnd as i64;
     unsafe {
@@ -63,7 +127,7 @@ pub unsafe fn capture_window(hwnd: HWND, allow_crop_fallback: bool) -> Result<Ca
         return Err(format!("error: bad_window: cloaked (cloak={cloak})"));
     }
     let (dwm_v, dwm_fb) = dwm_rect(hwnd);
-    let rect_source = if dwm_fb { "gwr_fallback" } else { "dwm" }.to_string();
+    let mut rect_source = if dwm_fb { "gwr_fallback" } else { "dwm" }.to_string();
     let (gl, gt, gr, gb) = unsafe {
         let mut rc = RECT::default();
         if GetWindowRect(hwnd, &mut rc) != 0 {
@@ -75,8 +139,7 @@ pub unsafe fn capture_window(hwnd: HWND, allow_crop_fallback: bool) -> Result<Ca
             ));
         }
     };
-    let dwm = [dwm_v[0], dwm_v[1], dwm_v[2], dwm_v[3]];
-    let rect_delta = [dwm[0] - gl, dwm[1] - gt, dwm[2] - gr, dwm[3] - gb];
+    let mut dwm = [dwm_v[0], dwm_v[1], dwm_v[2], dwm_v[3]];
     let (ww, wh) = (dwm[2] - dwm[0], dwm[3] - dwm[1]);
     if ww <= 0 || wh <= 0 {
         return Err("error: bad_window: zero-size".to_string());
@@ -147,6 +210,49 @@ pub unsafe fn capture_window(hwnd: HWND, allow_crop_fallback: bool) -> Result<Ca
                 }
             }
         }
+        // Post-render geometry: the rect read BEFORE PrintWindow is only a
+        // guess. Re-read it now; if the window moved, report the current
+        // rect as the image origin (never a stale one) and flag the capture.
+        // A pure translation is recaptured once so the pixels agree with the
+        // reported origin. A resize cannot be recaptured into the same frame
+        // size, so it is flagged and the post rect is reported.
+        let (post_v, post_fb) = dwm_rect(hwnd);
+        let post = [post_v[0], post_v[1], post_v[2], post_v[3]];
+        let mut moved = false;
+        match classify_rect_change(dwm, post) {
+            RectChange::Unchanged => {}
+            RectChange::Translated => {
+                moved = true;
+                dwm = reported_rect(dwm, post);
+                let (pww, pwh) = (dwm[2] - dwm[0], dwm[3] - dwm[1]);
+                if pww > 0 && pwh > 0 {
+                    if let Ok((im2, pf2)) = unsafe { render_frame(hwnd, pww, pwh) } {
+                        if im2.w == pww && im2.h == pwh && !detector_verdict(&im2).rejected {
+                            img = im2;
+                            print_flags = Some(pf2);
+                            rect_source = if post_fb { "gwr_fallback" } else { "dwm" }.to_string();
+                            // One recapture only: whatever rect the window
+                            // holds after it is what the caller is told.
+                            let (last_v, last_fb) = dwm_rect(hwnd);
+                            let last = [last_v[0], last_v[1], last_v[2], last_v[3]];
+                            if last != post {
+                                moved = true;
+                                dwm = reported_rect(post, last);
+                                rect_source =
+                                    if last_fb { "gwr_fallback" } else { "dwm" }.to_string();
+                            }
+                        }
+                    }
+                }
+            }
+            RectChange::Resized => {
+                moved = true;
+                dwm = reported_rect(dwm, post);
+                rect_source = if post_fb { "gwr_fallback" } else { "dwm" }.to_string();
+            }
+        }
+        let rect_delta = [dwm[0] - gl, dwm[1] - gt, dwm[2] - gr, dwm[3] - gb];
+        sig = frame_sig(&img, &title, &dwm);
         {
             let mut st = STALE.lock().unwrap();
             if st.len() > 64 {
@@ -166,6 +272,7 @@ pub unsafe fn capture_window(hwnd: HWND, allow_crop_fallback: bool) -> Result<Ca
             rect_delta,
             detector: detector_json(&verdict),
             stale,
+            moved_during_capture: moved,
             dwm,
             hwnd: h,
             pid,
@@ -187,6 +294,21 @@ pub unsafe fn capture_window(hwnd: HWND, allow_crop_fallback: bool) -> Result<Ca
                         verdict.reason.clone().unwrap()
                     ));
                 }
+                // Same honesty rule as the PrintWindow path: a crop taken at
+                // the pre-read rect must not report that origin if the window
+                // moved during the grab. No recapture here — the crop is the
+                // foreground fallback, so the flag names the best-effort map.
+                let (crop_v, crop_fb) = dwm_rect(hwnd);
+                let crop_post = [crop_v[0], crop_v[1], crop_v[2], crop_v[3]];
+                let crop_moved = crop_post != dwm;
+                let crop_dwm = reported_rect(dwm, crop_post);
+                let crop_delta = [
+                    crop_dwm[0] - gl,
+                    crop_dwm[1] - gt,
+                    crop_dwm[2] - gr,
+                    crop_dwm[3] - gb,
+                ];
+                let crop_source = if crop_fb { "gwr_fallback" } else { "dwm" }.to_string();
                 let ms = t0.elapsed().as_secs_f64() * 1000.0;
                 let pid = pid_of(hwnd);
                 return Ok(CapOk {
@@ -194,11 +316,12 @@ pub unsafe fn capture_window(hwnd: HWND, allow_crop_fallback: bool) -> Result<Ca
                     backend: "desktop-crop:gdi".to_string(),
                     ms,
                     print_flags: None,
-                    rect_source,
-                    rect_delta,
+                    rect_source: crop_source,
+                    rect_delta: crop_delta,
                     detector: detector_json(&verdict),
                     stale: false,
-                    dwm,
+                    moved_during_capture: crop_moved,
+                    dwm: crop_dwm,
                     hwnd: h,
                     pid,
                     exe: exe_of_pid(pid),
@@ -288,6 +411,10 @@ fn win32_element_list(hwnd: HWND, offset: usize) -> Result<ElementPage, String> 
                 e.insert("name".to_string(), Value::from(name.clone()));
                 e.insert("auto_id".to_string(), Value::from(aid.clone()));
                 e.insert("rect".to_string(), Value::from(rect.clone()));
+                e.insert(
+                    "offscreen".to_string(),
+                    Value::from(rect[2] <= 0 || rect[3] <= 0),
+                );
                 e.insert("invokable".to_string(), Value::from(inv));
                 e.insert("path".to_string(), Value::from(i.to_string()));
                 e.insert("hwnd".to_string(), Value::from(*h as i64));
@@ -440,12 +567,13 @@ pub fn element_model(hwnd: HWND, max_depth: i64, offset: usize) -> ElementModel 
 /// Compact default per-entry shape for the standalone `elements` tool:
 /// everything except the raw `win` (and `hwnd` on the Win32 fallback)
 /// identifiers, which `detail=true` retains.
-pub const COMPACT_ELEMENT_KEYS: [&str; 8] = [
+pub const COMPACT_ELEMENT_KEYS: [&str; 9] = [
     "ref",
     "role",
     "name",
     "auto_id",
     "rect",
+    "offscreen",
     "invokable",
     "path",
     "fp",
@@ -553,6 +681,7 @@ mod tests {
             ]),
         );
         e.insert("invokable".to_string(), Value::from(true));
+        e.insert("offscreen".to_string(), Value::from(false));
         e.insert("path".to_string(), Value::from("3"));
         e.insert("hwnd".to_string(), Value::from(199340));
         e.insert("ref".to_string(), Value::from("199210.3"));
@@ -596,6 +725,7 @@ mod tests {
                 "name",
                 "auto_id",
                 "rect",
+                "offscreen",
                 "invokable",
                 "path",
                 "fp"
@@ -708,6 +838,65 @@ mod tests {
             element_fp("Button", "OK", "2", true),
             element_fp("Button", "Cancel", "2", true),
             "a changed name must re-hash"
+        );
+    }
+
+    #[test]
+    fn rect_change_classifies_translation_and_resize() {
+        let pre = [100, 200, 900, 800];
+        assert_eq!(classify_rect_change(pre, pre), RectChange::Unchanged);
+        // Same size, new origin: pure translation, safe to recapture once.
+        assert_eq!(
+            classify_rect_change(pre, [140, 260, 940, 860]),
+            RectChange::Translated
+        );
+        // Any edge move that changes the size is a resize.
+        assert_eq!(
+            classify_rect_change(pre, [100, 200, 1000, 800]),
+            RectChange::Resized
+        );
+        assert_eq!(
+            classify_rect_change(pre, [100, 200, 900, 760]),
+            RectChange::Resized
+        );
+    }
+
+    #[test]
+    fn reported_rect_is_the_post_capture_rect_when_the_window_moved() {
+        // Unit/fake-rect path: a live window cannot be moved deterministically
+        // between the pre-read and PrintWindow from a test, so the geometry
+        // policy is pinned directly. The invariant under test: a moved window's
+        // reported origin is the POST rect, never the stale pre-read one.
+        let pre = [100, 200, 900, 800];
+        let translated = [140, 260, 940, 860];
+        assert_eq!(reported_rect(pre, translated), translated);
+        assert_ne!(
+            reported_rect(pre, translated),
+            pre,
+            "a stale pre-capture origin must never be reported as current"
+        );
+        let resized = [100, 200, 1100, 900];
+        assert_eq!(reported_rect(pre, resized), resized);
+        assert_eq!(
+            reported_rect(pre, pre),
+            pre,
+            "an unmoved window reports its one rect"
+        );
+    }
+
+    #[test]
+    fn live_stationary_capture_reports_the_current_rect() {
+        let f = crate::fixture::Fixture::new();
+        let cap = unsafe { capture_window(f.hwnd(), false) }.expect("fixture captures");
+        assert!(
+            !cap.moved_during_capture,
+            "a stationary window must not be flagged moved_during_capture"
+        );
+        let (now, _) = dwm_rect(f.hwnd());
+        assert_eq!(
+            cap.dwm.to_vec(),
+            now,
+            "the reported rect must be the post-capture rect"
         );
     }
 

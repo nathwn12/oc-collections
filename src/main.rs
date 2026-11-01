@@ -733,6 +733,21 @@ fn structured_of_text(s: &str) -> Option<Value> {
     }
 }
 
+/// `isError` rule shared by every envelope: a payload is a tool error when
+/// its top-level `ok` is false, except a `do` burst, which is a tool error
+/// only when none of its per-action results succeeded (continue-always).
+pub(crate) fn payload_is_err(sc: &Value) -> bool {
+    match sc.get("ok") {
+        Some(Value::Bool(false)) => match sc.get("results").and_then(|r| r.as_array()) {
+            Some(results) => !results
+                .iter()
+                .any(|r| r.get("ok") == Some(&Value::Bool(true))),
+            None => true,
+        },
+        _ => false,
+    }
+}
+
 fn wrapped_text(s: &str) -> String {
     let Some(sc) = structured_of_text(s) else {
         return tool_err_blocks(&[text_block(
@@ -741,10 +756,11 @@ fn wrapped_text(s: &str) -> String {
     };
     // Tool-level failure is signalled by the payload itself: any object
     // with top-level `"ok": false` (window resolve/action errors, elements
-    // resolve errors, cursor read errors) is `isError: true`. The `do`
-    // burst payload has no top-level `ok` (per-action `ok` only), so its
-    // continue-always contract stays `isError: false`.
-    let is_err = sc.get("ok") == Some(&Value::Bool(false));
+    // resolve errors, cursor read errors) is `isError: true`. `do` is the one
+    // exception by contract: its `ok` is false when ANY action failed, but a
+    // burst is continue-always, so only a burst where NOTHING succeeded (its
+    // `results` carry no `ok:true`) is a tool error.
+    let is_err = payload_is_err(&sc);
     format!(
         "{{\"content\":[{}],\"isError\":{},\"structuredContent\":{}}}",
         text_block(s),
@@ -760,8 +776,8 @@ fn err_result_text(s: &str) -> String {
 /// P3a hidden-desktop capture: the `do` text envelope plus the hidden
 /// PrintWindow PNG as a real MCP `image` content block alongside the JSON
 /// text (not only base64 inside it). `structuredContent` and `isError`
-/// follow the same rule as `wrapped_text`; the `do` payload has no
-/// top-level `ok`, so `isError` stays false. Only the hidden path with a
+/// follow the same rule as `wrapped_text` (a `do` burst is a tool error only
+/// when nothing succeeded). Only the hidden path with a
 /// successful capture uses this; every other `do` call keeps the exact
 /// P2a text-only envelope.
 pub(crate) fn wrapped_text_with_image(s: &str, png_b64: &str, mime: &str) -> String {
@@ -770,7 +786,7 @@ pub(crate) fn wrapped_text_with_image(s: &str, png_b64: &str, mime: &str) -> Str
             "error: internal: tool payload is not a JSON object or array",
         )]);
     };
-    let is_err = sc.get("ok") == Some(&Value::Bool(false));
+    let is_err = payload_is_err(&sc);
     format!(
         "{{\"content\":[{},{}],\"isError\":{},\"structuredContent\":{}}}",
         text_block(s),
@@ -1215,7 +1231,7 @@ fn is_maximized(hwnd: HWND) -> bool {
 
 // ---------------------------------------------------------------- window model
 
-fn window_info(hwnd: HWND) -> Option<Map<String, Value>> {
+fn window_info(hwnd: HWND, include_app_ids: bool) -> Option<Map<String, Value>> {
     unsafe {
         if IsWindowVisible(hwnd) == 0 {
             return None;
@@ -1232,6 +1248,18 @@ fn window_info(hwnd: HWND) -> Option<Map<String, Value>> {
         m.insert("hwnd".to_string(), Value::from(hwnd as i64));
         m.insert("pid".to_string(), Value::from(pid as i64));
         m.insert("exe".to_string(), Value::from(exe_of_pid(pid)));
+        // Opt-in: the AppUserModelID comes from the window's property store,
+        // which is a per-window COM read, so it is only paid for on request.
+        // null (never a guess) when the store or property is unavailable.
+        if include_app_ids {
+            m.insert(
+                "appId".to_string(),
+                match crate::target::app_id_of(hwnd as i64) {
+                    Some(a) => Value::from(a),
+                    None => Value::Null,
+                },
+            );
+        }
         m.insert("title".to_string(), Value::from(title));
         m.insert("class".to_string(), Value::from(class));
         m.insert(
@@ -1418,6 +1446,7 @@ pub(crate) fn parse_selector(sel: &str) -> (String, String) {
 pub mod burst;
 pub mod cancel;
 pub mod cap;
+pub mod deadline;
 pub mod dxgi;
 #[cfg(test)]
 pub mod fixture;

@@ -36,12 +36,12 @@ The first real call provisions the pinned server binary from the tagged GitHub R
 
 | Tool | What it does for you |
 |---|---|
-| `screenshot` | Captures the whole desktop, one monitor, a region, or one window — without activating it — and returns the image plus the map that turns image pixels back into screen pixels. |
-| `list_windows` | Read-only list of every visible top-level window with `hwnd`, `pid`, `exe`, `title`, rects, DPI and whether it runs elevated: the starting point for any selector. |
+| `screenshot` | Captures the whole desktop, one monitor, a region, or one window — without activating it — and returns the image plus the map that turns image pixels back into screen pixels. `monitors.rects` lists every monitor, and a window that moves mid-capture is flagged instead of being mapped with a stale origin. A window whose UI thread stops answering returns the typed `capture_timeout` inside 10 s. |
+| `list_windows` | Read-only list of every visible top-level window with `hwnd`, `pid`, `exe`, `title`, rects, DPI and whether it runs elevated: the starting point for any selector. Pass `include_app_ids:true` to add each window's AppUserModelID (`appId`, `null` when absent). |
 | `window` | Focus, move, resize, minimize, maximize, restore, close or topmost a window by selector; every verb except an explicit `focus` is no-steal. |
-| `do` | Runs an ordered batch of input actions — click, drag, scroll, type, keys, waits, UIA `invoke`/`set_value`, clipboard — against one locked target in a single round-trip. |
+| `do` | Runs an ordered batch of input actions — click, drag, scroll, type, keys, waits, UIA `invoke`/`set_value`, clipboard — against one locked target in a single round-trip. Reports a call-level `ok`/`failed` verdict: a burst where nothing succeeded is a tool error, one bad action among good ones is not. One burst is capped at 256 actions and 300 s total; exceeding either returns a typed `burst_budget_exceeded`. A UIA `invoke`/`set_value` that does not return within 5 s fails that action with the typed `uia_timeout` instead of holding the input lock. |
 | `cursor` | Read-only cursor position plus monitor rectangles. |
-| `elements` | Read-only structured UIA control tree for a window, with stable `ref`/`fp` identities and paging, so the agent acts on named controls instead of guessing pixels. |
+| `elements` | Read-only structured UIA control tree for a window, with stable `ref`/`fp` identities, paging and an `offscreen` flag for controls that have no on-screen rectangle, so the agent acts on named controls instead of guessing pixels. The walk is bounded at 5 s: a provider that stops answering returns `uia_timeout` on `uia_error` and the Win32 fallback still fills the page. |
 
 Every acting call takes one `target` selector and locks exactly one window; there is no fallback to the foreground window, ever.
 

@@ -6,10 +6,55 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-### Changed
+
+## [6.1.0] - 2026-11-01
+
+### Added
+- `do` results carry top-level `ok` (true only when every action succeeded) and
+  `failed` (how many did not), so a burst has a call-level verdict; `isError` is
+  now true when **no** action succeeded, while continue-always and the
+  "a timeout is not an error" rule are unchanged.
+- `elements` (and the screenshot element block) mark an entry whose rect has no
+  area with `offscreen:true` instead of letting `[0,0,0,0]` read as geometry.
+- `screenshot` re-reads the DWM frame rect after the render: a window that moves
+  during the capture reports the POST-capture origin as `source` and sets
+  `capture.moved_during_capture:true` (a pure translation is recaptured once),
+  so the image-to-screen map never presents a stale origin as current. The
+  foreground-crop fallback follows the same rule.
+- `screenshot` `monitors` now carries `rects`, per-monitor `[l,t,r,b]` in the
+  same shape `cursor.screens` uses. With `display`/`region` + `elements:true`
+  the payload names the foreground window the element block describes in
+  `elements_window{hwnd,exe,title}`.
+- `list_windows` accepts `include_app_ids` (default `false`): each entry gains
+  `appId` from the window's AppUserModelID property store, or `null` when
+  absent. Opt-in because the store read is a per-window COM call.
+- The `do` `type` action schema declares `element`, `index` and `expect_fp`
+  (the runtime UIA `ValuePattern.SetValue` path already accepted them).
+- `PUPPET_UIA_TIMEOUT_MS` (default 5000) and `PUPPET_CAPTURE_TIMEOUT_MS`
+  (default 10000) set the wall-clock deadline of one bounded UIA call or one
+  capture; both are clamped to 50..120000 ms.
+
+### Fixed
+- `click` on an element with no on-screen rectangle is refused before any input
+  with the typed `offscreen_element` error, naming the fix. Previously it posted
+  a button at the target's client origin — a wrong click on the window frame.
+  Every element-rect to client-pixel conversion in the burst path now goes
+  through one helper that owns the guard, including the `invoke` pixel-click
+  fallback.
 - Bump jpeg-encoder to 0.7, whose output is byte-identical to 0.6, and raise
   the minimum supported Rust version to 1.87 because that crate requires it.
   `rust-toolchain.toml` and both CI workflows now pin 1.87.0.
+- The legacy `window:` selector on `screenshot` and the `title`/`hwnd`
+  arguments on `window` and `elements` now resolve through the same
+  `TargetSpec`/`TargetLock` the `target:` argument uses (`hwnd` -> `{hwnd}`,
+  `title` -> `{titleContains}`). They are revalidated against pid, process
+  creation time, image and class before acting; a recycled handle is the typed
+  `target_gone` instead of a bare `IsWindow` check.
+- `do` is bounded to 256 actions and 300 s of total wall-clock time per call.
+  Exceeding either returns a typed `burst_budget_exceeded` result naming the
+  limit and the actual value in the same per-result shape as a failed action;
+  a `wait`/`wait_for` that would outlive the remaining budget is refused or
+  clamped, so the global input lock cannot be held past the budget.
 
 ## [6.0.1] - 2026-10-28
 ### Changed
