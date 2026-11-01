@@ -14,7 +14,7 @@ import { statSync } from 'node:fs';
 import { basename, extname, join } from 'node:path';
 import { spawn as spawnPty } from '@lydell/node-pty';
 import { OutputRing } from './ring.js';
-import { stripAnsi } from './ansi.js';
+import { stripAnsi, incompleteEscapeStart } from './ansi.js';
 import {
   ERROR_CODES,
   JanuaError,
@@ -145,16 +145,24 @@ export function resolveSpawn(command, args, options = {}) {
   };
 }
 
-function assertDescription(description) {
-  const words = typeof description === 'string'
-    ? description.trim().split(/\s+/).filter(Boolean)
-    : [];
-  if (words.length < 5 || words.length > 10) {
+export const MAX_DESCRIPTION_CHARS = 200;
+export const KILL_TIMEOUT_MS = 2000;
+const KILL_POLL_MS = 50;
+
+// A description is a memory aid for a later reader, not a gate: it is optional,
+// defaults to the session title, and only the upper bound is enforced. The
+// "5-10 words" guidance lives in the tool schema, where advice belongs.
+function resolveDescription(description, fallback) {
+  if (description === undefined || description === null) return fallback;
+  if (typeof description !== 'string') throw invalidArgs('description must be a string');
+  const text = description.trim();
+  if (text === '') throw invalidArgs('description must not be empty when given; omit it to use the title');
+  if (text.length > MAX_DESCRIPTION_CHARS) {
     throw invalidArgs(
-      `description must be 5-10 words saying what the session is for, got ${words.length}`,
+      `description must be at most ${MAX_DESCRIPTION_CHARS} characters, got ${text.length}`,
     );
   }
-  return description.trim();
+  return text;
 }
 
 function resolveCwd(cwd) {
@@ -226,6 +234,20 @@ function terminate(term, signal) {
 
 export const MAX_MATCH_PATTERN = 200;
 
+// A poll, not a busy wait: the event loop must stay free for the PTY's own exit
+// callback while the kill is being confirmed.
+async function waitForGone(isGone, timeoutMs, pollMs) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (isGone()) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => {
+      const timer = setTimeout(resolve, pollMs);
+      if (typeof timer.unref === 'function') timer.unref();
+    });
+  }
+}
+
 // A match pattern is a regular expression source, compiled once per read so a
 // bad one is a typed invalid_args naming the problem, never a SyntaxError
 // escaping across the tool boundary.
@@ -283,10 +305,11 @@ export class SessionManager {
       throw invalidArgs('args must be an array of strings');
     }
     const args = (input.args ?? []).map((arg) => String(arg));
-    const description = assertDescription(input.description);
     const cwd = resolveCwd(input.cwd);
     const cols = input.cols ?? DEFAULT_COLS;
     const rows = input.rows ?? DEFAULT_ROWS;
+    const title = (typeof input.title === 'string' && input.title.trim()) || basename(command) || command;
+    const description = resolveDescription(input.description, title);
 
     this.#purgeExited();
     if (this.#sessions.size >= this.#maxSessions) {
@@ -296,7 +319,6 @@ export class SessionManager {
       );
     }
 
-    const title = (typeof input.title === 'string' && input.title.trim()) || basename(command) || command;
     const env = mergeEnv(input.env);
     const plan = resolveSpawn(command, args, { env });
     const sessionId = randomUUID();
@@ -382,14 +404,33 @@ export class SessionManager {
         await waitForChange(session, deadline - Date.now());
       }
 
-      const slice = session.ring.read(requested, maxBytes);
-      const text = slice.data.toString('utf8');
-      const data = raw ? text : stripAnsi(text);
+      let slice = session.ring.read(requested, maxBytes);
+      let text = slice.data.toString('utf8');
+      let heldBack = raw ? -1 : incompleteEscapeStart(text);
+      // A window narrower than a sequence, a sequence cut at the very end of
+      // what has arrived, or a cut that the child's exit froze: none of those
+      // can be decoded from this slice, and re-reading the same cursor would
+      // stall on the same window. Widen to the rest of the buffer (bounded by
+      // the ring) and decode the sequence whole.
+      if (!raw && heldBack !== -1 && (heldBack === 0 || session.exited)
+        && slice.end < session.ring.total) {
+        slice = session.ring.read(requested, session.ring.total - slice.start);
+        text = slice.data.toString('utf8');
+        heldBack = incompleteEscapeStart(text);
+      }
+      // Nothing more can arrive once the child is gone, so a fragment left now
+      // is truncated, not split: flush it rather than strand the cursor on it.
+      if (session.exited) heldBack = -1;
+      const visible = heldBack === -1 ? text : text.slice(0, heldBack);
+      const data = raw ? text : stripAnsi(visible);
+      const cursor = heldBack === -1
+        ? slice.end
+        : slice.start + Buffer.byteLength(visible, 'utf8');
       const matched = pattern === null ? true : pattern.test(data);
       const atDeadline = Date.now() >= deadline;
       const result = {
         data,
-        cursor: slice.end,
+        cursor,
         exited: session.exited,
         exitCode: session.exitCode,
         dropped: slice.dropped,
@@ -421,9 +462,11 @@ export class SessionManager {
     }
   }
 
-  kill(sessionId, signal = 'SIGTERM') {
+  async kill(sessionId, signal = 'SIGTERM') {
     const session = this.#get(sessionId);
-    if (session.exited) return { ok: true };
+    if (session.exited) {
+      return { ok: true, exited: true, exitCode: session.exitCode, pid: session.pid };
+    }
     try {
       terminate(session.term, signal);
     } catch (err) {
@@ -432,7 +475,27 @@ export class SessionManager {
         `kill of session ${sessionId} failed: ${describeCause(err)}`,
       );
     }
-    return { ok: true };
+    // Reporting ok after asking is not the same as reporting a dead program.
+    // Confirm it, and when the pid survives say so with the fallback to use.
+    const gone = await waitForGone(
+      () => session.exited || !isProcessAlive(session.pid),
+      KILL_TIMEOUT_MS,
+      KILL_POLL_MS,
+    );
+    if (gone) {
+      return { ok: true, exited: true, exitCode: session.exitCode, pid: session.pid };
+    }
+    const fallback = process.platform === 'win32'
+      ? `kill it yourself with taskkill /pid ${session.pid} /T /F`
+      : `send SIGKILL to ${session.pid} yourself`;
+    return {
+      ok: false,
+      exited: false,
+      exitCode: null,
+      pid: session.pid,
+      error: `${ERROR_CODES.PTY_KILL_FAILED}: process ${session.pid} is still alive `
+        + `${KILL_TIMEOUT_MS} ms after the kill request; ${fallback}, or close it from its own UI`,
+    };
   }
 
   // Newest last, one page at a time. total counts every session known, so a
@@ -452,6 +515,14 @@ export class SessionManager {
       pid: session.pid,
       title: session.title,
       command: session.command,
+      args: [...session.args],
+      cwd: session.cwd,
+      // The description exists so a later read makes sense on its own; a list
+      // that withheld it, the args and the geometry forced a second call to
+      // recall what a session was.
+      description: session.description,
+      cols: session.cols,
+      rows: session.rows,
       exited: session.exited,
       exitCode: session.exitCode,
       bytes: session.ring.total,

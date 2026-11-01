@@ -87,7 +87,10 @@ test('MCP handshake: tools/list, then spawn, read and kill over stdio', async (t
     arguments: { sessionId: spawnPayload.sessionId },
   });
   console.log(`pty_kill -> ${textOf(killed)}`);
-  assert.deepEqual(JSON.parse(textOf(killed)), { ok: true });
+  const killPayload = JSON.parse(textOf(killed));
+  assert.equal(killPayload.ok, true);
+  assert.equal(killPayload.exited, true, 'pty_kill must report the state it confirmed, not the request');
+  assert.equal(killPayload.pid, spawnPayload.pid);
 
   let stopped = { exited: false, exitCode: null, cursor };
   const killDeadline = Date.now() + 10000;
@@ -107,6 +110,12 @@ test('MCP handshake: tools/list, then spawn, read and kill over stdio', async (t
   assert.equal(page.total, 1);
   assert.equal(page.nextOffset, null);
   assert.equal(page.sessions[0].sessionId, spawnPayload.sessionId);
+  assert.equal(typeof page.sessions[0].description, 'string', 'pty_list must return the description');
+  assert.equal(page.sessions[0].description, 'handshake smoke test child process');
+  assert.deepEqual(page.sessions[0].args, ['-e', "process.stdout.write('JANUA_MCP_OK'); setInterval(() => {}, 1000)"]);
+  assert.equal(page.sessions[0].cols, 80);
+  assert.equal(page.sessions[0].rows, 24);
+  assert.equal(typeof page.sessions[0].cwd, 'string');
   assert.deepEqual(listedAfter.structuredContent, page, 'structuredContent must match the payload');
 
   const missing = await client.callTool({
@@ -121,4 +130,54 @@ test('MCP handshake: tools/list, then spawn, read and kill over stdio', async (t
     undefined,
     'a typed failure must not carry a payload that contradicts the output schema',
   );
+});
+
+test('pty_write with waitMs and match returns the answer in the same call', async (t) => {
+  const client = new Client({ name: 'janua-test', version: '0.0.0' }, { capabilities: {} });
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [BIN],
+    stderr: 'pipe',
+  });
+  await client.connect(transport);
+  t.after(async () => {
+    await client.close();
+  });
+
+  const spawned = JSON.parse(textOf(await client.callTool({
+    name: 'pty_spawn',
+    arguments: {
+      command: process.execPath,
+      args: [
+        '-e',
+        "process.stdin.on('data', (d) => "
+        + "process.stdout.write('ECHO:' + d.toString().trim() + '\\r\\nPROMPT> '));"
+        + 'setInterval(() => {}, 1000);',
+      ],
+      description: 'echo a line then print a prompt',
+    },
+  })));
+
+  // Without waitMs the call is write-only, and says only that much.
+  const bare = JSON.parse(textOf(await client.callTool({
+    name: 'pty_write',
+    arguments: { sessionId: spawned.sessionId, data: 'no-wait' },
+  })));
+  console.log(`pty_write(no wait) -> ${JSON.stringify(bare)}`);
+  assert.deepEqual(Object.keys(bare), ['ok'], 'without waitMs the payload stays {ok}');
+
+  // With waitMs and match the reply arrives here, not in a second call.
+  const answered = JSON.parse(textOf(await client.callTool({
+    name: 'pty_write',
+    arguments: { sessionId: spawned.sessionId, data: 'hello', waitMs: 5000, match: 'PROMPT>' },
+  })));
+  console.log(`pty_write(wait) -> ${JSON.stringify(answered)}`);
+  assert.equal(answered.ok, true);
+  assert.equal(answered.matched, true, 'the prompt must arrive in the write that asked for it');
+  assert.match(answered.data, /ECHO:hello/, 'the write payload must carry the answer');
+  assert.equal(typeof answered.cursor, 'number');
+  assert.equal(typeof answered.exited, 'boolean');
+  assert.equal(typeof answered.dropped, 'number');
+
+  await client.callTool({ name: 'pty_kill', arguments: { sessionId: spawned.sessionId } });
 });

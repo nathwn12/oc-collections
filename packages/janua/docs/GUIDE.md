@@ -29,10 +29,15 @@ environment is identical.
 {"sessionId":"6f1c...","data":"npm run dev"}
 // -> {"ok":true}
 
-// pty_read - wait for the first request log
+// ...or write and read the first request log in one call
+{"sessionId":"6f1c...","data":"npm run dev","waitMs":10000,"match":"Local:"}
+// -> {"ok":true,"data":"\r\n> site@1.0.0 dev\r\n> vite\r\n\r\n  VITE v6.0.0  ready in 214 ms\r\n  ->  Local: http://localhost:5173/\r\n",
+//     "cursor":118,"exited":false,"exitCode":null,"dropped":0,"matched":true}
+
+// pty_read - the same wait on its own
 {"sessionId":"6f1c...","cursor":0,"waitMs":10000}
 // -> {"data":"\r\n> site@1.0.0 dev\r\n> vite\r\n\r\n  VITE v6.0.0  ready in 214 ms\r\n  ->  Local: http://localhost:5173/\r\n",
-//     "cursor":118,"exited":false,"exitCode":null}
+//     "cursor":118,"exited":false,"exitCode":null,"dropped":0,"matched":true}
 ```
 
 Restart on the same session - `\u0003` is Ctrl+C, then the same command line:
@@ -52,8 +57,12 @@ and the tree under it:
 
 ```jsonc
 {"sessionId":"6f1c...","signal":"SIGTERM"}
-// -> {"ok":true}
+// -> {"ok":true,"exited":true,"exitCode":null,"pid":9032}
 ```
+
+`exited` is the state janua confirmed after the kill, not the request: a process that survives the
+termination attempt comes back as `{"ok":false,"exited":false,"pid":9032,"error":"pty_kill_failed: ..."}`
+with the fallback command to run.
 
 **Why a shell here.** A session running `npm` directly dies when the server exits and cannot be
 restarted in place. A shell session outlives its child, which is what a restart is.
@@ -80,12 +89,14 @@ answers it. The newline default appends the carriage return the prompt is waitin
 
 {"sessionId":"b2a8...","cursor":0,"waitMs":5000}
 // -> {"data":"Need to install the following packages:\ncreate-something@1.4.0\nOk to proceed? (y) ",
-//     "cursor":84,"exited":false,"exitCode":null}
+//     "cursor":84,"exited":false,"exitCode":null,"dropped":0,"matched":true}
 
-{"sessionId":"b2a8...","data":"y"}          // -> {"ok":true}
+// Answer it and read what it prints next, in one call
+{"sessionId":"b2a8...","data":"y","waitMs":10000,"match":"created"}
+// -> {"ok":true,"data":"\r\n✔ Project created in C:\\work\\my-app\r\n","cursor":137,
+//     "exited":false,"exitCode":null,"dropped":0,"matched":true}
+
 {"sessionId":"b2a8...","data":"","newline":true}  // bare Enter, when a default is offered
-{"sessionId":"b2a8...","cursor":84,"waitMs":10000}
-// -> {"data":"\r\n✔ Project created in C:\\work\\my-app\r\n","cursor":137,"exited":false,"exitCode":null}
 ```
 
 **Reading the menu.** Options separated by `(y/n)` or `[1] [2]` are answered by one keystroke, but
@@ -138,6 +149,8 @@ End it with Ctrl+D (end of input) or kill the session:
 - Always pass the `cursor` a read returned. Reading from 0 again re-delivers everything still
   buffered, which is useful for a full dump and wasteful for a diff.
 - `waitMs` beats sleeping between reads: it returns the moment output arrives.
-- Keep `description` meaningful (5-10 words). It is what makes a list of sessions readable later.
+- Keep `description` meaningful (5-10 words is a good length; it is optional and defaults to the
+  title). `pty_list` returns it with `args`, `cwd`, `cols` and `rows`, so a list of sessions reads
+  as a list of jobs rather than a list of pids.
 - Kill what you started. A session lives until it exits or the server does.
 - 16 sessions is the default cap; `too_many_sessions` means kill one first.

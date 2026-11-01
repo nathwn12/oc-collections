@@ -2,7 +2,36 @@
 
 ## [Unreleased]
 
-## [0.1.2] - 2026-11-01
+## [0.2.0] - 2026-11-01
+
+### Added
+
+- `pty_write` takes `waitMs`, `match`, `cursor`, `maxBytes` and `stripAnsi`, the same read options
+  `pty_read` has. With `waitMs` above zero the reply is read in the same call and the payload grows
+  the read fields (`data`, `cursor`, `exited`, `exitCode`, `dropped`, `matched`), so a prompt that
+  answers a write no longer costs a second call. Without it the tool is unchanged.
+- `pty_list` returns `description`, `args`, `cwd`, `cols` and `rows`, so a session can be recalled
+  from the list alone. The spawn-time description existed only to make a later list readable and was
+  not returned earlier.
+- `pty_kill` returns `exited`, `exitCode` and `pid`, the exit state it confirmed after the request.
+  A process that survives the attempt comes back as `ok: false` with a `pty_kill_failed` error naming
+  the pid and the fallback to run, instead of an unconditional `ok: true`.
+
+### Fixed
+
+- A read that ended inside a multi-byte UTF-8 character returned U+FFFD and advanced the cursor into
+  the character, so the rest of it decoded as garbage. Slices now end on a character boundary (a
+  character wider than `maxBytes` is returned whole), and successive reads rebuild the exact bytes.
+- A read that ended inside an ANSI escape sequence returned the raw head as text and the tail as
+  literal characters on the next read. The unfinished sequence is now held back (the cursor stays on
+  its first byte) until it arrives whole, widening the window rather than stalling when the sequence
+  is longer than `maxBytes`; at end of output the tail is flushed instead of being stranded.
+- `pty_spawn` refused a description that was not 5-10 words, which turned a memory aid into a hard
+  gate. It is now optional, defaults to the title, and only a 200-character bound is enforced.
+
+### Changed
+
+- `pty_spawn`'s `description` is optional, and `pty_list` reads better because of it.
 
 ### Added
 

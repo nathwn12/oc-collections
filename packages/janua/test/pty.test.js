@@ -40,8 +40,9 @@ test('spawn, read, list and kill a session', async (t) => {
   assert.ok(sessions[0].bytes > 0);
   assert.equal(typeof sessions[0].createdAt, 'string');
 
-  assert.deepEqual(manager.kill(spawned.sessionId), { ok: true });
-
+  const killed = await manager.kill(spawned.sessionId);
+  assert.equal(killed.ok, true);
+  assert.equal(killed.exited, true);
   const after = await manager.read(spawned.sessionId, { cursor: seen.cursor, waitMs: 2000 });
   assert.equal(after.exited, true);
   assert.equal(after.exitCode, 0);
@@ -62,7 +63,9 @@ test('write reaches a child that reads stdin', async (t) => {
   assert.match(seen.text, /GOT:ping/);
 
   // A kill of a live program must actually end it, not just report ok.
-  assert.deepEqual(manager.kill(sessionId), { ok: true });
+  const killed = await manager.kill(sessionId);
+  assert.equal(killed.ok, true);
+  assert.equal(killed.exited, true);
   let state = await manager.read(sessionId, { cursor: seen.cursor, waitMs: 1000 });
   const deadline = Date.now() + 10000;
   while (!state.exited && Date.now() < deadline) {
@@ -80,8 +83,7 @@ test('a bogus session id is a typed session_not_found', async () => {
     (err) => err.code === 'session_not_found' && err.name === 'JanuaError',
   );
   assert.throws(() => manager.write(MISSING_ID, 'x'), (err) => err.code === 'session_not_found');
-  assert.throws(() => manager.kill(MISSING_ID), (err) => err.code === 'session_not_found');
-
+  await assert.rejects(() => manager.kill(MISSING_ID), (err) => err.code === 'session_not_found');
   assert.throws(
     () => manager.spawn({ command: '   ', description: 'empty command must be rejected' }),
     (err) => err.code === 'invalid_args',
