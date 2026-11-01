@@ -146,7 +146,16 @@ pub struct Hidden {
 impl Hidden {
     pub fn teardown(mut self) -> Done {
         let _ = self.tx_go.send(());
-        let done = match self.rx_done.recv_timeout(Duration::from_secs(10)) {
+        // The capture this wait covers (`PrintWindow` on the hidden desktop)
+        // must run on the hidden-desktop thread — a helper thread would be on
+        // another desktop and could not paint that window — so it is bounded
+        // from the caller side instead: the owner thread's result is awaited
+        // for the Capture family's deadline (the same clamped,
+        // env-overridable limit every other PrintWindow call uses) and a
+        // stalled provider returns the typed `capture_timeout` line rather
+        // than a bespoke timeout string.
+        let limit = crate::deadline::limit(crate::deadline::Family::Capture);
+        let done = match self.rx_done.recv_timeout(limit) {
             Ok(d) => d,
             Err(_) => Done {
                 alive: false,
@@ -163,7 +172,11 @@ impl Hidden {
                 closed_desktop: false,
                 open_after_close_null: false,
                 teardown_proven: false,
-                error: Some("hidden-desktop teardown timed out after 10s".to_string()),
+                error: Some(crate::deadline::timeout_text(
+                    crate::deadline::Family::Capture,
+                    "hidden_desktop_capture",
+                    limit,
+                )),
             },
         };
         if done.teardown_proven {

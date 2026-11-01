@@ -348,6 +348,56 @@ function checkFile(filePath, want) {
   return null;
 }
 
+// Is `cacheDir` a COMPLETE, MANIFEST-CORRECT engine cache? This is the only
+// definition of "ready" in this file: reuse, a sibling's cache adopted after
+// a lost rename, and the failure cleanup all ask the same question, so a
+// half-written or foreign directory can never be adopted or preserved.
+function targetReady(cacheDir, rt, manifest) {
+  try {
+    const marker = JSON.parse(fs.readFileSync(path.join(cacheDir, '.ready'), 'utf8'));
+    if (marker.serverVersion !== manifest.serverVersion) return false;
+    if (String(marker.bundleSha256).toLowerCase() !== rt.archive.sha256.toLowerCase()) return false;
+  } catch {
+    return false;
+  }
+  return checkFile(path.join(cacheDir, rt.server.name), rt.server) === null;
+}
+
+// Windows refuses a directory rename onto an existing directory with one of
+// these; they are the *expected* shape of losing a provisioning race to a
+// sibling launcher, never a reason to fail.
+const SIBLING_WON = new Set(['EPERM', 'EACCES', 'EBUSY', 'EEXIST', 'ENOTEMPTY']);
+
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+// Publish a verified staging dir as the cache. Two launchers starting the
+// same version at the same moment both stage and both rename; the loser must
+// adopt the winner's directory (verified) instead of dying EPERM - observed
+// live as `Connection closed ... rename staging-34508 -> 6.1.2-e8f96a59`.
+// Returns 'renamed' | 'adopted'.
+function publishStaging(staging, cacheDir, rt, manifest) {
+  let lastErr = null;
+  for (const delay of [0, 25, 75, 150, 300]) {
+    if (delay > 0) sleepSync(delay);
+    try {
+      fs.renameSync(staging, cacheDir);
+      return 'renamed';
+    } catch (err) {
+      lastErr = err;
+      if (!SIBLING_WON.has(err.code)) throw err;
+      // The sibling may have finished between our attempt and this check.
+      if (targetReady(cacheDir, rt, manifest)) return 'adopted';
+    }
+  }
+  if (targetReady(cacheDir, rt, manifest)) return 'adopted';
+  throw new Error(
+    `could not publish the runtime cache at ${cacheDir} (${lastErr && lastErr.code ? lastErr.code : 'unknown'}: ` +
+    `${lastErr && lastErr.message ? lastErr.message : 'rename refused'}); a concurrent launcher holds it and it is not a valid cache yet`
+  );
+}
+
 // The ONLY fetch call site in this package. The diagnostic path returns
 // before the ensure* functions, so --doctor/--print-manifest provably reach
 // no network: grep `fetch(` — it appears exactly once, here.
@@ -380,22 +430,26 @@ async function ensureRuntime(manifest, cacheDir) {
 
   const markerPath = path.join(cacheDir, '.ready');
   const reuse = (() => {
-    try {
-      const marker = JSON.parse(fs.readFileSync(markerPath, 'utf8'));
-      if (marker.serverVersion !== manifest.serverVersion) return false;
-      if (String(marker.bundleSha256).toLowerCase() !== rt.archive.sha256.toLowerCase()) return false;
-    } catch {
-      return false;
-    }
-    const bad = checkFile(path.join(cacheDir, rt.server.name), rt.server);
-    if (bad) {
-      log(`cached ${rt.server.name} invalid (${bad}); re-provisioning.`);
+    if (!targetReady(cacheDir, rt, manifest)) {
+      // Name the reason so a broken cache is never silently re-provisioned.
+      try {
+        fs.readFileSync(markerPath, 'utf8');
+        log(`cached engine at ${cacheDir} is invalid; re-provisioning.`);
+      } catch {
+        /* no cache yet: the ordinary first-run path */
+      }
       return false;
     }
     return true;
   })();
   if (reuse) {
     log(`runtime cache ready (reused): ${cacheDir}`);
+    return cacheDir;
+  }
+  // A sibling provisioning this same version can finish at any moment: adopt
+  // its completed cache instead of racing the publish.
+  if (targetReady(cacheDir, rt, manifest)) {
+    log(`runtime cache ready (adopted from a concurrent launcher): ${cacheDir}`);
     return cacheDir;
   }
 
@@ -433,28 +487,41 @@ async function ensureRuntime(manifest, cacheDir) {
     fail(`${origin} sha256 mismatch; wrote nothing.`);
   }
 
-  // Extract into a staging dir, verify, then rename: the target dir is
-  // never observed half-written.
+  // Extract into a staging dir, verify, mark ready, then publish: the target
+  // dir is never observed half-written, and a sibling that publishes first is
+  // adopted rather than raced (see publishStaging).
   const staging = `${cacheDir}.staging-${process.pid}`;
   fs.rmSync(staging, { recursive: true, force: true });
-  fs.rmSync(cacheDir, { recursive: true, force: true });
+  try {
+    fs.rmSync(cacheDir, { recursive: true, force: true });
+  } catch (err) {
+    // A sibling holds the directory open (a running server): leave its cache
+    // alone and let publishStaging adopt it.
+    if (!SIBLING_WON.has(err.code)) throw err;
+  }
   fs.mkdirSync(staging, { recursive: true });
   try {
     const names = extractZip(data, staging);
     log(`extracted ${names.length} entries`);
     const bad = checkFile(path.join(staging, rt.server.name), rt.server);
     if (bad) throw new Error(`extracted ${rt.server.name} invalid (${bad})`);
-    fs.renameSync(staging, cacheDir);
+    // The marker is written INSIDE the staging dir, so a directory that
+    // appears under the cache path is complete and verifiable the instant it
+    // is renamed - a sibling can adopt it with no extra wait.
     fs.writeFileSync(
-      markerPath,
+      path.join(staging, '.ready'),
       JSON.stringify({ serverVersion: manifest.serverVersion, bundleSha256: rt.archive.sha256.toLowerCase() }, null, 2)
     );
+    const published = publishStaging(staging, cacheDir, rt, manifest);
+    log(`runtime cache ready (${published === 'adopted' ? 'adopted from a concurrent launcher' : 'provisioned'}): ${cacheDir}`);
   } catch (err) {
     fs.rmSync(staging, { recursive: true, force: true });
-    fs.rmSync(cacheDir, { recursive: true, force: true });
+    // Never delete a cache a sibling published while this attempt failed.
+    if (!targetReady(cacheDir, rt, manifest)) {
+      fs.rmSync(cacheDir, { recursive: true, force: true });
+    }
     fail(`provisioning failed (${err.message}); wrote nothing.`);
   }
-  log(`runtime cache ready (provisioned): ${cacheDir}`);
   return cacheDir;
 }
 
@@ -519,4 +586,17 @@ async function main() {
   runServer(readyRuntime, manifest);
 }
 
-main().catch((err) => fail(err && err.message ? err.message : String(err)));
+if (require.main === module) {
+  main().catch((err) => fail(err && err.message ? err.message : String(err)));
+}
+
+// Exported for the tests only: requiring this file must NOT run the launcher
+// (it would provision and spawn a server as a side effect of an import).
+module.exports = {
+  targetReady,
+  publishStaging,
+  checkFile,
+  shortHash,
+  resolveRuntimeDir,
+  SIBLING_WON,
+};

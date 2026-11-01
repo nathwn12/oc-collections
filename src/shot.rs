@@ -79,6 +79,31 @@ pub(crate) fn reported_rect(before: [i32; 4], after: [i32; 4]) -> [i32; 4] {
     }
 }
 
+/// What a post-render TRANSLATION reports. The pixels are at `post` only when
+/// the recapture that re-rendered them succeeded; when it failed the image
+/// still comes from `before`, so `before` is the rect the caller is told and
+/// the failure is named instead of silently pairing a new origin with old
+/// pixels (`rect_source` would otherwise describe a rect the image predates).
+pub(crate) fn translation_rect(
+    before: [i32; 4],
+    post: [i32; 4],
+    recaptured: bool,
+) -> ([i32; 4], Option<String>) {
+    if recaptured {
+        return (post, None);
+    }
+    (
+        before,
+        Some(format!(
+            "the window moved during the capture (rendered at [{},{},{},{}], now at \
+             [{},{},{},{}]) but the recapture failed, so `source` is the PRE-capture rect the \
+             image was rendered at and must not be mapped to the current window position; \
+             capture again to get current coordinates",
+            before[0], before[1], before[2], before[3], post[0], post[1], post[2], post[3]
+        )),
+    )
+}
+
 /// One PrintWindow frame at `ww`x`wh`, trying PW_RENDERFULLCONTENT then the
 /// plain flag. The caller keeps the last error for the fallback/refusal text.
 unsafe fn render_frame(hwnd: HWND, ww: i32, wh: i32) -> Result<(Img, u32), String> {
@@ -219,33 +244,57 @@ unsafe fn capture_window_inner(hwnd: HWND, allow_crop_fallback: bool) -> Result<
         let (post_v, post_fb) = dwm_rect(hwnd);
         let post = [post_v[0], post_v[1], post_v[2], post_v[3]];
         let mut moved = false;
+        let mut translation_note: Option<String> = None;
         match classify_rect_change(dwm, post) {
             RectChange::Unchanged => {}
             RectChange::Translated => {
                 moved = true;
-                dwm = reported_rect(dwm, post);
-                let (pww, pwh) = (dwm[2] - dwm[0], dwm[3] - dwm[1]);
+                let (pww, pwh) = (post[2] - post[0], post[3] - post[1]);
+                // Only a recapture that actually re-rendered the pixels may
+                // adopt the post-render rect: the image is at `post` then, and
+                // at `dwm` (the pre-capture rect) otherwise.
+                let mut recaptured: Option<([i32; 4], String)> = None;
                 if pww > 0 && pwh > 0 {
                     if let Ok((im2, pf2)) = unsafe { render_frame(hwnd, pww, pwh) } {
                         if im2.w == pww && im2.h == pwh && !detector_verdict(&im2).rejected {
                             img = im2;
                             print_flags = Some(pf2);
-                            rect_source = if post_fb { "gwr_fallback" } else { "dwm" }.to_string();
+                            let mut rect = post;
+                            let mut source =
+                                if post_fb { "gwr_fallback" } else { "dwm" }.to_string();
                             // One recapture only: whatever rect the window
                             // holds after it is what the caller is told.
                             let (last_v, last_fb) = dwm_rect(hwnd);
                             let last = [last_v[0], last_v[1], last_v[2], last_v[3]];
                             if last != post {
-                                moved = true;
-                                dwm = reported_rect(post, last);
-                                rect_source =
-                                    if last_fb { "gwr_fallback" } else { "dwm" }.to_string();
+                                rect = reported_rect(post, last);
+                                source = if last_fb { "gwr_fallback" } else { "dwm" }.to_string();
                             }
+                            recaptured = Some((rect, source));
                         }
+                    }
+                }
+                match recaptured {
+                    Some((rect, source)) => {
+                        dwm = rect;
+                        rect_source = source;
+                    }
+                    None => {
+                        // The recapture failed: the image still comes from the
+                        // PRE-capture rect, so reporting `post` would pair new
+                        // coordinates with old pixels. Keep the rect the pixels
+                        // were rendered at and say what happened.
+                        let (rect, note) = translation_rect(dwm, post, false);
+                        dwm = rect;
+                        translation_note = note;
                     }
                 }
             }
             RectChange::Resized => {
+                // Cannot be recaptured into the same frame size: the image IS
+                // from the pre-capture rect, and the post rect is reported so
+                // a caller sees where the window is now. That divergence is
+                // already flagged by `moved_during_capture`.
                 moved = true;
                 dwm = reported_rect(dwm, post);
                 rect_source = if post_fb { "gwr_fallback" } else { "dwm" }.to_string();
@@ -279,7 +328,12 @@ unsafe fn capture_window_inner(hwnd: HWND, allow_crop_fallback: bool) -> Result<
             exe: exe_of_pid(pid),
             title,
             cloaked: cloak,
-            note: Some(MODE_B_NOTE.to_string()),
+            note: Some(match translation_note {
+                // A failed recapture note comes FIRST: it says the reported
+                // rect is the one the pixels are at, not the window's.
+                Some(n) => format!("{n} {MODE_B_NOTE}"),
+                None => MODE_B_NOTE.to_string(),
+            }),
         });
     }
     let fg = unsafe { GetForegroundWindow() == hwnd };
@@ -882,6 +936,30 @@ mod tests {
             pre,
             "an unmoved window reports its one rect"
         );
+    }
+
+    /// P2 honesty rule: a translation is only adopted when the recapture that
+    /// re-rendered the pixels succeeded. When it failed the image still comes
+    /// from the pre-capture rect, so that rect is what must be reported (with
+    /// a note) - reporting the post rect would pair new coordinates with old
+    /// pixels and make `rect_source` describe a frame the image predates.
+    #[test]
+    fn translation_rect_keeps_the_pre_capture_origin_when_the_recapture_failed() {
+        let pre = [100, 200, 900, 800];
+        let post = [140, 260, 940, 860];
+        // Recaptured: the pixels are at the new origin, so it is reported.
+        assert_eq!(translation_rect(pre, post, true), (post, None));
+        // Not recaptured: the pixels are still at the old origin.
+        let (rect, note) = translation_rect(pre, post, false);
+        assert_eq!(
+            rect, pre,
+            "a failed recapture must not report an origin the image predates"
+        );
+        let note = note.expect("a failed recapture must say so");
+        assert!(note.contains("recapture failed"), "{note}");
+        assert!(note.contains("PRE-capture rect"), "{note}");
+        assert!(note.contains("[100,200,900,800]"), "{note}");
+        assert!(note.contains("[140,260,940,860]"), "{note}");
     }
 
     #[test]

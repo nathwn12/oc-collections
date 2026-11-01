@@ -812,7 +812,17 @@ fn uia_element_list_inner(hwnd: HWND, max_depth: i64, offset: usize) -> Result<U
 /// UIA CurrentIsEnabled for the control at `path` (slot 28, same vtbl
 /// provenance as above). Read-only: never activates or focuses. Err on any
 /// COM failure; the caller treats that as transient and keeps polling.
+/// Bounded like every other UIA entry point: a provider that never answers
+/// its `IsEnabled` read returns the typed `uia_timeout` instead of wedging
+/// the worker (the poll loop calls this many times).
 pub fn uia_is_enabled(hwnd: HWND, path: &str) -> Result<bool, String> {
+    let (h, p) = (hwnd as i64, path.to_string());
+    crate::deadline::bound(crate::deadline::Family::Uia, "uia_is_enabled", move || {
+        uia_is_enabled_inner(h as HWND, &p)
+    })?
+}
+
+fn uia_is_enabled_inner(hwnd: HWND, path: &str) -> Result<bool, String> {
     let auto = automation().map_err(|e| format!("UIA resolve failed: {e}"))?;
     let el = element_from_handle(&auto, hwnd)
         .map_err(|hr| format!("UIA resolve failed: {}", crate::hr_text(hr)))?;
@@ -1017,6 +1027,23 @@ fn uia_activate_inner(hwnd: i64, path: &str) -> (bool, String, Option<String>) {
 /// activation needs owner permission` — implemented but never exercised
 /// by the headless parity harness.
 pub fn uia_expand_collapse(hwnd: i64, path: &str, expand: bool) -> (bool, String, Option<String>) {
+    let p = path.to_string();
+    match crate::deadline::bound(
+        crate::deadline::Family::Uia,
+        "uia_expand_collapse",
+        move || uia_expand_collapse_inner(hwnd, &p, expand),
+    ) {
+        Ok(r) => r,
+        // Timeout shape matches a resolve failure: no `via` was reached.
+        Err(e) => (false, String::new(), Some(e)),
+    }
+}
+
+fn uia_expand_collapse_inner(
+    hwnd: i64,
+    path: &str,
+    expand: bool,
+) -> (bool, String, Option<String>) {
     let via = if expand { "uia-expand" } else { "uia-collapse" };
     let auto = match automation() {
         Ok(a) => a,
@@ -1094,6 +1121,15 @@ pub fn uia_expand_collapse(hwnd: i64, path: &str, expand: bool) -> (bool, String
 /// Read CurrentExpandCollapseState for the UIA element at `path`.
 /// Read-only (no focus/input); Err on any COM failure.
 pub fn uia_expand_state(hwnd: i64, path: &str) -> Result<i32, String> {
+    let p = path.to_string();
+    crate::deadline::bound(
+        crate::deadline::Family::Uia,
+        "uia_expand_state",
+        move || uia_expand_state_inner(hwnd, &p),
+    )?
+}
+
+fn uia_expand_state_inner(hwnd: i64, path: &str) -> Result<i32, String> {
     let auto = automation().map_err(|e| format!("UIA resolve failed: {e}"))?;
     let el = element_from_handle(&auto, hwnd as HWND)
         .map_err(|hr| format!("UIA resolve failed: {}", crate::hr_text(hr)))?;
@@ -1111,6 +1147,13 @@ pub fn uia_expand_state(hwnd: i64, path: &str) -> Result<i32, String> {
 /// Read RangeValue.CurrentValue for the UIA element at `path`.
 /// Read-only (no focus/input); Err on any COM failure or missing pattern.
 pub fn uia_range_value(hwnd: i64, path: &str) -> Result<f64, String> {
+    let p = path.to_string();
+    crate::deadline::bound(crate::deadline::Family::Uia, "uia_range_value", move || {
+        uia_range_value_inner(hwnd, &p)
+    })?
+}
+
+fn uia_range_value_inner(hwnd: i64, path: &str) -> Result<f64, String> {
     let auto = automation().map_err(|e| format!("UIA resolve failed: {e}"))?;
     let el = element_from_handle(&auto, hwnd as HWND)
         .map_err(|hr| format!("UIA resolve failed: {}", crate::hr_text(hr)))?;
@@ -1130,6 +1173,16 @@ pub fn uia_range_value(hwnd: i64, path: &str) -> Result<f64, String> {
 /// activation needs owner permission` — implemented for live use, never
 /// exercised by the headless parity harness.
 pub fn uia_scroll(hwnd: i64, path: &str, h: i32, v: i32) -> (bool, String, Option<String>) {
+    let p = path.to_string();
+    match crate::deadline::bound(crate::deadline::Family::Uia, "uia_scroll", move || {
+        uia_scroll_inner(hwnd, &p, h, v)
+    }) {
+        Ok(r) => r,
+        Err(e) => (false, String::new(), Some(e)),
+    }
+}
+
+fn uia_scroll_inner(hwnd: i64, path: &str, h: i32, v: i32) -> (bool, String, Option<String>) {
     let auto = match automation() {
         Ok(a) => a,
         Err(e) => {
@@ -1207,6 +1260,15 @@ pub fn uia_scroll(hwnd: i64, path: &str, h: i32, v: i32) -> (bool, String, Optio
 /// Read-only (no focus/input); Err when the pattern is missing or the
 /// read fails. Callers cap the length (see `shot::cap_text`).
 pub fn uia_element_text(hwnd: i64, path: &str) -> Result<String, String> {
+    let p = path.to_string();
+    crate::deadline::bound(
+        crate::deadline::Family::Uia,
+        "uia_element_text",
+        move || uia_element_text_inner(hwnd, &p),
+    )?
+}
+
+fn uia_element_text_inner(hwnd: i64, path: &str) -> Result<String, String> {
     let auto = automation().map_err(|e| format!("UIA resolve failed: {e}"))?;
     let el = element_from_handle(&auto, hwnd as HWND)
         .map_err(|hr| format!("UIA resolve failed: {}", crate::hr_text(hr)))?;

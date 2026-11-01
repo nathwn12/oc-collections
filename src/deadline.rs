@@ -118,7 +118,11 @@ fn parse_limit(raw: Option<&str>, default: Duration) -> Duration {
     }
 }
 
-fn limit(f: Family) -> Duration {
+/// The deadline in force for a family (env-overridable, clamped). Exposed so
+/// a path that cannot use `bound` (a call that must stay on its own thread,
+/// like the hidden-desktop capture) still takes its deadline from the same
+/// family instead of a bespoke constant.
+pub(crate) fn limit(f: Family) -> Duration {
     let raw = std::env::var(f.limit_var()).ok();
     parse_limit(raw.as_deref(), f.default_limit())
 }
