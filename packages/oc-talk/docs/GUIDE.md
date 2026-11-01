@@ -40,6 +40,7 @@ There is nothing to configure. The plugin reads no config file, takes no options
 | --- | --- | --- |
 | *(none)* | — | The package has no options and no environment variables. |
 | per-call `timeoutMs` | `60000`, capped at `300000` | `session_await`'s wait budget after the send. |
+| per-call `delivery` | `queue`, `steer` for `session_await` | Whether a prompt preempts the peer's running turn (`steer`) or waits behind it (`queue`); an explicit value wins, anything else is a typed `bad_request`. |
 | internal call timeout | `20000` ms | Per backend round trip, fixed in the source. |
 
 ## Tools
@@ -65,6 +66,7 @@ session_list
 | `to` | yes | Session id (`ses_…`) or an unambiguous title substring |
 | `text` | yes | Message text, delivered verbatim |
 | `resume` | no | Let the receiver's loop run; defaults to `true` |
+| `delivery` | no | `steer` preempts the peer's current turn, `queue` waits for it; defaults to `queue` |
 
 Sends one message and returns `{ id, sessionID, created }`. It never reads history, and it refuses a `done` session — that lock is lifted only by `session_open`.
 
@@ -97,6 +99,7 @@ The newest message is first, so the peer's answer is the first element.
 | `to` | yes | Session id (`ses_…`) or an unambiguous title substring |
 | `text` | yes | Message text, delivered verbatim |
 | `timeoutMs` | no | Wait budget in ms; default 60000, capped at 300000 |
+| `delivery` | no | `steer` preempts the peer's current turn, `queue` waits for it; defaults to `steer` |
 
 Sends one message with `resume` forced to `true`, then polls the session's messages about once a second for an assistant message created after the send. On a reply it returns `{ sessionID, text, messageId, timeoutMs }`; on expiry `{ sessionID, timeout: true, lastSeen, timeoutMs }` with the newest text it saw, so a slow peer is a readable answer rather than a hung call. The budget bounds the wait **after** the send, not the whole call: each poll is one backend round trip with its own 20-second timeout, so a call can overrun its budget by up to one poll. It refuses a `done` session.
 
@@ -126,6 +129,7 @@ session_close { "to": "ses_1f2e…" }
 | `work` | yes | Short work label; the new title becomes `active <work>` |
 | `text` | no | Optional one-shot prompt delivered after the open |
 | `resume` | no | Let the receiver's loop run after the prompt; defaults to `true` |
+| `delivery` | no | `steer` preempts the peer's current turn, `queue` waits for it; defaults to `queue`, and applies only when `text` is given |
 
 Creates a session titled `active <work>`, or revives one: when exactly one live session title contains `work`, that session is reopened to `active <work>` instead of a second one being made. Zero matches create; several fail `ambiguous_session` with candidates. A scan that hits its page cap never revives an existing session: if the capped scan found exactly one match, `session_open` creates a new session titled `active <work>`, and if it found more than one it returns `ambiguous_session` with the candidates. This is the only verb that lifts `done`. Returns `{ sessionID, titleBefore, titleAfter, reopened, resume, messageID }`.
 
@@ -141,6 +145,7 @@ session_open { "work": "api-smoke-tests" }
 | `to` | yes | Session id (`ses_…`) or an unambiguous title substring |
 | `text` | yes | Message text, delivered verbatim |
 | `resume` | no | Let the receiver's loop run; defaults to `true` |
+| `delivery` | no | `steer` preempts the peer's current turn, `queue` waits for it; defaults to `queue` |
 
 Wakes a live session: renames it to `active <work>`, then delivers one message. Returns `{ sessionID, titleBefore, titleAfter, messageID, resumed }`. A `done` session is refused — reopen it with `session_open` first.
 

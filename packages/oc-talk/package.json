@@ -1,6 +1,6 @@
 {
   "name": "oc-talk",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Cross-session talk for any OpenCode harness: list live sessions, send one message to a peer, and read its reply back.",
   "keywords": [
     "opencode",
