@@ -10,6 +10,7 @@ export const ERROR_CODES = Object.freeze({
   SPAWN_FAILED: 'spawn_failed',
   PTY_WRITE_FAILED: 'pty_write_failed',
   TOO_MANY_SESSIONS: 'too_many_sessions',
+  PTY_KILL_FAILED: 'pty_kill_failed',
   // Anything unexpected. Never used for a condition the codes above cover.
   INTERNAL: 'internal_error',
 });

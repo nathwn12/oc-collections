@@ -57,8 +57,39 @@ export class OutputRing {
     const clamped = Math.min(wanted, this.total);
     const from = Math.max(clamped, this.base);
     const dropped = from - clamped;
-    const end = Math.min(this.total, from + Math.max(0, Math.floor(maxBytes)));
-    return { data: this.#slice(from, end), dropped, end };
+    const limit = Math.min(this.total, from + Math.max(0, Math.floor(maxBytes)));
+    // A cut inside a multi-byte character decodes as U+FFFD and moves the cursor
+    // into that character, so the remainder decodes as garbage too. End the
+    // slice on a character boundary and leave that character for the next read.
+    const end = this.#characterBoundary(from, limit);
+    return { data: this.#slice(from, end), dropped, start: from, end };
+  }
+
+  /** End of the last whole UTF-8 character in [from, limit), widened to one whole character. */
+  #characterBoundary(from, limit) {
+    if (limit <= from || limit >= this.total) return limit;
+    // Walk back over continuation bytes (0x80..0xBF) to the lead byte of the
+    // character that `limit` lands inside.
+    let stop = limit;
+    while (stop > from && (this.#byteAt(stop) & 0xc0) === 0x80) stop -= 1;
+    if (stop === limit) return limit; // already on a boundary
+    if (stop > from) return stop;
+    // The window is narrower than the character itself: return the whole
+    // character rather than nothing, so maxBytes: 1 still makes progress.
+    let width = 1;
+    while (width < 4 && stop + width < this.total && (this.#byteAt(stop + width) & 0xc0) === 0x80) {
+      width += 1;
+    }
+    return Math.min(this.total, from + width);
+  }
+
+  #byteAt(offset) {
+    let at = this.base;
+    for (const chunk of this.#chunks) {
+      if (offset < at + chunk.length) return chunk[offset - at];
+      at += chunk.length;
+    }
+    return 0;
   }
 
   #slice(start, end) {

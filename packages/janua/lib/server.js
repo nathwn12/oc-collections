@@ -46,7 +46,25 @@ const SPAWN_OUTPUT = z.object({
   pid: z.number().describe('Process id of the program in the terminal.'),
   title: z.string().describe('Label shown by pty_list.'),
 });
-const OK_OUTPUT = z.object({ ok: z.boolean().describe('True when the call did what it says.') });
+// pty_write only carries read fields when waitMs > 0, so every one of them is
+// optional: a caller that just types gets {ok}, a caller that waits gets the
+// answer in the same round trip.
+const WRITE_OUTPUT = z.object({
+  ok: z.boolean().describe('True when the call did what it says.'),
+  data: z.string().optional().describe('Output read after the write; present only when waitMs > 0.'),
+  cursor: z.number().optional().describe('Byte offset to pass to the next read; present only when waitMs > 0.'),
+  exited: z.boolean().optional().describe('Whether the program has exited; present only when waitMs > 0.'),
+  exitCode: z.number().nullable().optional().describe('Exit code once exited, otherwise null; present only when waitMs > 0.'),
+  dropped: z.number().optional().describe('Bytes the buffer discarded before this read; present only when waitMs > 0.'),
+  matched: z.boolean().optional().describe('Whether the text matched `match`; present only when waitMs > 0.'),
+});
+const KILL_OUTPUT = z.object({
+  ok: z.boolean().describe('True when the program is gone.'),
+  exited: z.boolean().describe('Whether the process is actually gone, confirmed after the kill.'),
+  exitCode: z.number().nullable().describe('Exit code once the child reported one, otherwise null.'),
+  pid: z.number().describe('Process id that was terminated.'),
+  error: z.string().optional().describe('Typed failure with the fallback to use; present only when ok is false.'),
+});
 const READ_OUTPUT = z.object({
   data: z.string().describe('Output from cursor onward.'),
   cursor: z.number().describe('Byte offset to pass to the next read.'),
@@ -60,6 +78,11 @@ const SESSION_SHAPE = {
   pid: z.number(),
   title: z.string(),
   command: z.string(),
+  args: z.array(z.string()).describe('Arguments the program was started with.'),
+  cwd: z.string().describe('Working directory the program was started in.'),
+  description: z.string().describe('What the session is for, as given at spawn.'),
+  cols: z.number().describe('Terminal columns.'),
+  rows: z.number().describe('Terminal rows.'),
   exited: z.boolean(),
   exitCode: z.number().nullable(),
   bytes: z.number(),
@@ -97,7 +120,7 @@ export function createServer(options = {}) {
         cols: z.number().int().min(1).max(1000).optional().describe('Terminal columns (default 80).'),
         rows: z.number().int().min(1).max(1000).optional().describe('Terminal rows (default 24).'),
         title: z.string().optional().describe('Short label for this session, shown by pty_list. Defaults to the command name.'),
-        description: z.string().describe('5-10 words saying what this session is for, so a later read makes sense on its own.'),
+        description: z.string().optional().describe('What this session is for, in 5-10 words, so a later read of pty_list makes sense on its own. Optional (defaults to the title) and at most 200 characters.'),
       }),
       outputSchema: SPAWN_OUTPUT,
       annotations: MUTATING,
@@ -111,16 +134,29 @@ export function createServer(options = {}) {
       title: 'Write to terminal',
       description:
         'Send keystrokes to a running session. newline (default true) appends a carriage return, which is what '
-        + 'a shell or prompt is waiting for. Output produced in response is not returned here: read it with pty_read.',
+        + 'a shell or prompt is waiting for. Returns {ok}. Give waitMs (and optionally match, with the same '
+        + 'semantics as pty_read) to read the answer in the same call: the response then also carries '
+        + '{data, cursor, exited, exitCode, dropped, matched}. Without waitMs nothing is read, so a caller that '
+        + 'expects output must either pass waitMs here or call pty_read next.',
       inputSchema: z.object({
         sessionId: z.string().describe('Session id returned by pty_spawn.'),
         data: z.string().describe('Text to send. Escape sequences such as \\u0003 (Ctrl+C) are sent literally.'),
         newline: z.boolean().optional().describe('Append a carriage return after data (default true).'),
+        waitMs: z.number().int().min(0).max(10000).optional().describe('After writing, wait up to this many milliseconds for a reply and return it (default 0: write only).'),
+        match: z.string().optional().describe('Regular expression (at most 200 characters) to wait for after writing; needs waitMs > 0.'),
+        cursor: z.number().int().min(0).optional().describe('Byte offset to read from after writing. Omit to read from the start of the buffer.'),
+        maxBytes: z.number().int().min(1).max(1048576).optional().describe('Maximum bytes to return after writing (default 8000).'),
+        stripAnsi: z.boolean().optional().describe('Remove ANSI escape sequences from the reply (default true). The cursor still counts raw bytes.'),
       }),
-      outputSchema: OK_OUTPUT,
+      outputSchema: WRITE_OUTPUT,
       annotations: MUTATING,
     },
-    wrap(async ({ sessionId, data, newline }) => manager.write(sessionId, data, newline ?? true)),
+    wrap(async ({ sessionId, data, newline, waitMs, match, cursor, maxBytes, stripAnsi }) => {
+      const written = manager.write(sessionId, data, newline ?? true);
+      if (!waitMs) return written;
+      const read = await manager.read(sessionId, { cursor, maxBytes, waitMs, match, stripAnsi });
+      return { ...written, ...read };
+    }),
   );
 
   server.registerTool(
@@ -162,13 +198,16 @@ export function createServer(options = {}) {
     {
       title: 'Kill terminal',
       description:
-        'Terminate a session\'s program. Idempotent: killing an already-exited session returns ok. '
-        + 'The session stays listed with its exit code so its last output can still be read.',
+        'Terminate a session\'s program and confirm it is gone: returns {ok, exited, exitCode, pid}. '
+        + 'exited is the state observed after the kill, not the request, so ok:false with an error naming the pid '
+        + 'means the process survived and the message carries the fallback. Idempotent: killing an already-exited '
+        + 'session returns ok:true, exited:true. The session stays listed with its exit code so its last output '
+        + 'can still be read.',
       inputSchema: z.object({
         sessionId: z.string().describe('Session id returned by pty_spawn.'),
         signal: z.string().optional().describe('POSIX signal name (default SIGTERM). Ignored on Windows, where the process tree is terminated.'),
       }),
-      outputSchema: OK_OUTPUT,
+      outputSchema: KILL_OUTPUT,
       annotations: DESTRUCTIVE,
     },
     wrap(async ({ sessionId, signal }) => manager.kill(sessionId, signal ?? 'SIGTERM')),
@@ -180,8 +219,9 @@ export function createServer(options = {}) {
       title: 'List terminals',
       description:
         'List sessions this server knows about, newest last, one page at a time: sessionId, pid, title, command, '
-        + 'exited, exitCode, bytes emitted, and createdAt. Returns {sessions, total, nextOffset}: total counts every '
-        + 'session known, and nextOffset is null on the last page. Use it to recover a session id you lost.',
+        + 'args, cwd, description, cols, rows, exited, exitCode, bytes emitted, and createdAt. Returns '
+        + '{sessions, total, nextOffset}: total counts every session known, and nextOffset is null on the last page. '
+        + 'Use it to recover a session id you lost, or to recall what an existing session was for.',
       inputSchema: z.object({
         limit: z.number().int().min(1).max(200).optional().describe('Sessions to return (default 50, max 200).'),
         offset: z.number().int().min(0).optional().describe('Sessions to skip from the oldest (default 0).'),
