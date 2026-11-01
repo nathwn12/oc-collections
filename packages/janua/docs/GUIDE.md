@@ -148,6 +148,8 @@ End it with Ctrl+D (end of input) or kill the session:
 - One session per long-lived thing. Spawn once, talk many times, kill once.
 - Always pass the `cursor` a read returned. Reading from 0 again re-delivers everything still
   buffered, which is useful for a full dump and wasteful for a diff.
+- `maxBytes` bounds the returned `data`: a read may exceed it only by the bytes needed to finish the
+  one character or escape sequence that straddles the end, and never by more than 65536 bytes.
 - `waitMs` beats sleeping between reads: it returns the moment output arrives.
 - Keep `description` meaningful (5-10 words is a good length; it is optional and defaults to the
   title). `pty_list` returns it with `args`, `cwd`, `cols` and `rows`, so a list of sessions reads

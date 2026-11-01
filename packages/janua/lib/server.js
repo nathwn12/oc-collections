@@ -166,7 +166,9 @@ export function createServer(options = {}) {
       description:
         'Read output from a session, starting at cursor, and return {data, cursor, exited, exitCode, dropped, matched}. '
         + 'Pass the cursor from the previous read to get only new output; omit it to read from the oldest byte '
-        + 'still buffered. dropped > 0 means the ring buffer discarded that many bytes before this read. '
+        + 'still buffered. maxBytes bounds the returned data: a read may exceed it only to finish the one '
+        + 'UTF-8 character or escape sequence that straddles the end, and never by more than 65536 bytes. '
+        + 'dropped > 0 means the ring buffer discarded that many bytes before this read. '
         + 'waitMs waits for the session to produce output (or exit) before returning; with stripAnsi '
         + 'a chunk holding only escape sequences does not count, so the read keeps waiting for visible text. '
         + 'match is a regular expression that makes the read wait until the text from cursor matches it, or the '

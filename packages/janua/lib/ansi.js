@@ -15,6 +15,41 @@ export function stripAnsi(text) {
 }
 
 /**
+ * Index one past the escape sequence that starts at `start`, or -1 when the
+ * sequence has not finished inside `text`.
+ *
+ * The reader needs the end, not just the fact of an unfinished tail: it widens
+ * a read window only as far as the one straddling sequence needs, and cuts the
+ * reply exactly there.
+ */
+export function escapeSequenceEnd(text, start) {
+  if (text[start] !== '\u001B') return -1;
+  const kind = text[start + 1];
+  if (kind === undefined) return -1; // a lone ESC at the end
+  if (kind === ']') {
+    // OSC runs to BEL, ESC \, or 0x9C; anything else is still part of it.
+    let at = start + 2;
+    for (;;) {
+      if (at >= text.length) return -1;
+      const inner = text[at];
+      if (inner === '\u0007' || inner === '\u009C') return at + 1;
+      if (inner === '\u001B' && text[at + 1] === '\\') return at + 2;
+      at += 1;
+    }
+  }
+  if (kind === '[') {
+    let at = start + 2;
+    while (at < text.length && text[at] >= '0' && text[at] <= '?') at += 1;
+    while (at < text.length && text[at] >= ' ' && text[at] <= '/') at += 1;
+    if (at >= text.length) return -1; // parameters landed, final byte did not
+    // A final byte ends the CSI; anything else means this was not a CSI, and
+    // the scan treats it as a lone escape, exactly as before.
+    return at + 1;
+  }
+  return start + 2;
+}
+
+/**
  * Index where a trailing escape sequence that has not finished yet begins, or
  * -1 when the text ends on a clean boundary.
  *
@@ -26,51 +61,14 @@ export function stripAnsi(text) {
  */
 export function incompleteEscapeStart(text) {
   let index = 0;
-  let start = -1;
   while (index < text.length) {
-    const char = text[index];
-    if (char !== '\u001B') {
+    if (text[index] !== '\u001B') {
       index += 1;
       continue;
     }
-    start = index;
-    const kind = text[index + 1];
-    if (kind === undefined) return start; // a lone ESC at the end
-    if (kind === ']') {
-      // OSC runs to BEL, ESC \, or 0x9C; anything else is still part of it.
-      let at = index + 2;
-      for (;;) {
-        if (at >= text.length) return start;
-        const inner = text[at];
-        if (inner === '\u0007' || inner === '\u009C') {
-          index = at + 1;
-          break;
-        }
-        if (inner === '\u001B' && text[at + 1] === '\\') {
-          index = at + 2;
-          break;
-        }
-        at += 1;
-      }
-      start = -1;
-      continue;
-    }
-    if (kind === '[') {
-      let at = index + 2;
-      while (at < text.length && text[at] >= '0' && text[at] <= '?') at += 1;
-      while (at < text.length && text[at] >= ' ' && text[at] <= '/') at += 1;
-      if (at >= text.length) return start; // parameters landed, final byte did not
-      if (text[at] >= '@' && text[at] <= '~') {
-        index = at + 1;
-        start = -1;
-        continue;
-      }
-      index = at + 1; // not a CSI after all: treat as a lone escape
-      start = -1;
-      continue;
-    }
-    index += 2;
-    start = -1;
+    const end = escapeSequenceEnd(text, index);
+    if (end === -1) return index;
+    index = end;
   }
-  return start;
+  return -1;
 }

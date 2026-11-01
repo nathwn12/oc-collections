@@ -1,6 +1,6 @@
 {
   "name": "@nathwn12/janua",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "A stdio MCP server that gives an agent persistent interactive terminals: spawn a program in a real PTY, talk to it, read what it answers.",
   "license": "MIT",
   "author": "nathwn12",
