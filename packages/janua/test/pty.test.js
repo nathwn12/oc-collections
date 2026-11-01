@@ -189,6 +189,84 @@ test('one stripped read waits past an escape-only chunk for the visible line', a
   assert.equal(replayed.data, '');
 });
 
+test('one read with match waits for the prompt and reports matched', async (t) => {
+  const manager = new SessionManager();
+  t.after(() => manager.killAll());
+
+  const { sessionId } = manager.spawn({
+    command: process.execPath,
+    args: [
+      '-e',
+      "process.stdout.write('WELCOME\\r\\n');"
+      + "setTimeout(() => process.stdout.write('READY>'), 400);"
+      + 'setInterval(() => {}, 1000);',
+    ],
+    description: 'banner then a prompt after a pause',
+  });
+
+  const read = await manager.read(sessionId, { match: 'READY>', waitMs: 5000 });
+  assert.equal(read.matched, true);
+  assert.match(read.data, /WELCOME/);
+  assert.match(read.data, /READY>/, 'the prompt itself must be in the data that matched');
+  assert.equal(read.exited, false);
+  assert.ok(read.cursor > 0);
+
+  // With stripAnsi: false the pattern is matched against the raw text, escapes
+  // included, so an escape-only chunk can satisfy it without any visible text.
+  const rawSession = manager.spawn({
+    command: process.execPath,
+    args: escapesThenLine('RAW_LINE', 400),
+    description: 'escapes first then a visible line',
+  });
+  const rawRead = await manager.read(rawSession.sessionId, { match: '\\[\\?1004h', stripAnsi: false, waitMs: 5000 });
+  assert.equal(rawRead.matched, true, 'a raw read must match escape bytes');
+  assert.ok(rawRead.data.includes('\u001b[?1004h'));
+  assert.doesNotMatch(rawRead.data, /RAW_LINE/, 'a raw read must not wait for visible text');
+});
+
+test('a match that never appears reports matched false after the deadline', async (t) => {
+  const manager = new SessionManager();
+  t.after(() => manager.killAll());
+
+  const { sessionId } = manager.spawn({
+    command: process.execPath,
+    args: ['-e', "process.stdout.write('BANNER_ONLY\\r\\n'); setInterval(() => {}, 1000);"],
+    description: 'print a banner and never a prompt',
+  });
+
+  const started = Date.now();
+  const read = await manager.read(sessionId, { match: 'NEVER_APPEARS', waitMs: 700 });
+  const elapsed = Date.now() - started;
+
+  assert.equal(read.matched, false, 'a pattern that never appears must report matched: false');
+  assert.match(read.data, /BANNER_ONLY/, 'whatever arrived must still come back');
+  assert.ok(elapsed >= 600, `the read must wait out the deadline, waited ${elapsed}ms`);
+  assert.ok(elapsed < 5000, `the read must not overshoot the deadline, waited ${elapsed}ms`);
+  assert.equal(read.exited, false);
+});
+
+test('an invalid match pattern is a typed invalid_args, not a throw', async (t) => {
+  const manager = new SessionManager();
+  t.after(() => manager.killAll());
+
+  const { sessionId } = manager.spawn({
+    command: process.execPath,
+    args: ['-e', 'setInterval(() => {}, 1000)'],
+    description: 'idle child for pattern validation',
+  });
+
+  await assert.rejects(
+    () => manager.read(sessionId, { match: '[', waitMs: 100 }),
+    (err) => err.name === 'JanuaError'
+      && err.code === 'invalid_args'
+      && /not a valid regular expression/.test(err.message),
+  );
+  await assert.rejects(
+    () => manager.read(sessionId, { match: 'x'.repeat(201), waitMs: 100 }),
+    (err) => err.code === 'invalid_args' && /at most 200 characters/.test(err.message),
+  );
+});
+
 test('list pages with limit and offset, newest last', async (t) => {
   const manager = new SessionManager();
   t.after(() => manager.killAll());

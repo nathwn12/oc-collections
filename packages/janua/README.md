@@ -48,7 +48,7 @@ On Windows, if your client cannot launch `npx` directly, wrap it in the command 
 | --- | --- |
 | `pty_spawn` | Start `command` with `args` in a new PTY. Takes an optional `cwd`, `env`, `cols`/`rows` (defaults 80x24), `title`, and a required 5-10 word `description`. Returns `{sessionId, pid, title}`. No shell string: command and args are passed as given, there is no `shell: true`. On Windows a bare name is resolved through `PATH` x `PATHEXT` and a batch shim runs through `cmd /c` (see Windows notes). |
 | `pty_write` | Send `data` to a session. `newline` (default true) appends a carriage return, which is what a prompt is waiting for. Returns `{ok}`. |
-| `pty_read` | Read output from `cursor` onward, up to `maxBytes` (default 8000). `waitMs` waits up to 10 s for new output; `stripAnsi` (default true) removes colour and cursor-control sequences. Returns `{data, cursor, exited, exitCode, dropped}`. |
+| `pty_read` | Read output from `cursor` onward, up to `maxBytes` (default 8000). `waitMs` waits up to 10 s for new output; `stripAnsi` (default true) removes colour and cursor-control sequences; `match` (a regex of at most 200 characters) makes the read wait until the text from `cursor` matches it. Returns `{data, cursor, exited, exitCode, dropped, matched}`. |
 | `pty_kill` | Terminate the program. Idempotent. `signal` defaults to `SIGTERM` and is honoured on POSIX; Windows terminates the process tree. Returns `{ok}`. |
 | `pty_list` | Sessions newest last, one page at a time: `limit` (1-200, default 50) and `offset` (default 0). Returns `{sessions, total, nextOffset}`, where `total` counts every session known and `nextOffset` is null on the last page. Each session carries `sessionId`, `pid`, `title`, `command`, `exited`, `exitCode`, `bytes` and `createdAt`. |
 
@@ -64,6 +64,10 @@ how many bytes were lost in `dropped`.
 the session exits, or at the deadline. A ConPTY opens with escape-only chunks (mode set, focus
 reporting), so a stripped read that finds nothing visible keeps waiting from the same cursor for the
 text behind it; `stripAnsi: false` returns those first bytes as they arrive.
+
+`match` turns that same wait into a wait for a prompt: the read returns once the text from `cursor`
+matches the pattern, or the session exits, or `waitMs` runs out, and reports `matched: false` on
+timeout while still returning whatever arrived — so give it a non-zero `waitMs`.
 
 ### Errors
 
