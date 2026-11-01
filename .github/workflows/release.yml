@@ -1,12 +1,23 @@
 # Release lane: the version and the tag are produced by this run, after the gate.
 #
-# Nothing here takes a version from a human. One dispatch names the package; the
-# run derives the next version from the conventional commits since that
-# package's highest `<package>@<version>` tag (scripts/derive-release.mjs),
-# refuses when the repository has not reached that version, gates on build, test
-# and tarball, closes the package changelog at the derived version, and only
-# then creates the tag and publishes. A hand-pushed tag publishes nothing: the
-# tag is an output of this lane, not an input.
+# Batch by default. One dispatch with no package releases every package whose
+# history has a pending release: scripts/derive-release.mjs --all reads each
+# package's highest `<package>@<version>` tag, derives the next version from the
+# conventional commits since it, and lists the packages that have one. A package
+# with no releasable commit is never attempted. Dispatching with a package name
+# keeps the single-package lane, where the plan refuses like a gate.
+#
+# Per package, in one job of the matrix, in this order: derive -> refuse a
+# mismatch -> close the changelog -> install, build, test, pack, cleanroom ->
+# assert the version cells -> tag `<package>@<version>` -> publish. A package
+# that refuses at the derivation stops at its own refusal, and the packages
+# beside it carry on; the summary job names what was released and what was
+# refused. A failure past the refusal (a broken gate, a failed publish) still
+# fails the run: only refusals are skippable.
+#
+# Nothing here takes a version from a human. The commit range is the package's
+# own tag range, so a hand-pushed tag publishes nothing: the tag is an output of
+# this lane, not an input.
 #
 # Tag convention: <package-name>@<version>
 #   oc-flight-deck@0.20.2
@@ -16,30 +27,26 @@
 # these packages version independently.
 #
 # The releasable set is the ALLOWED list in scripts/release-target.mjs; the
-# dispatch choice list below must match it, and every other workspace is
-# source-only.
+# dispatch help below names it, and every other workspace is source-only.
 #
 # OIDC trusted publishing only: id-token: write, --provenance; no auth-token
 # variable, no secrets, no OTP.
 #
-# contents: write is for two acts only: committing the closed changelog to main
-# and pushing the tag this run created. Neither is ever forced.
+# contents: write is for two acts only: committing each closed changelog to main
+# and pushing the tags this run created. Neither is ever forced.
 name: release
 
 on:
   workflow_dispatch:
     inputs:
       package:
-        description: Workspace package to release (the version is derived, never typed)
-        required: true
-        type: choice
-        options:
-          - '@nathwn12/oc-bifrost'
-          - '@nathwn12/janua'
-          - oc-flight-deck
-          - oc-harness-setup
-          - oc-talk
-          - rea-shim
+        # Empty is the batch lane. A name keeps the single-package lane.
+        # Releasable: @nathwn12/oc-bifrost, @nathwn12/janua, oc-flight-deck,
+        # oc-harness-setup, oc-talk, rea-shim.
+        description: Workspace package to release (empty = every package with a pending release)
+        required: false
+        default: ""
+        type: string
       dry_run:
         description: Derive, gate and pack without committing, tagging or publishing
         required: true
@@ -55,19 +62,17 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Everything that can say no runs here, before the tag exists. The tag is the
-  # first irreversible act and it belongs to the publish job below.
-  gate:
+  # The plan: which packages this run may release, and what version each one
+  # derives. Nothing irreversible happens here.
+  plan:
     runs-on: windows-latest
     outputs:
-      name: ${{ steps.derive.outputs.name }}
-      version: ${{ steps.derive.outputs.version }}
-      tag: ${{ steps.derive.outputs.tag }}
-      commit: ${{ steps.push.outputs.commit }}
+      matrix: ${{ steps.derive.outputs.matrix }}
+      count: ${{ steps.derive.outputs.count }}
     steps:
       - uses: actions/checkout@v4
         with:
-          # Full history and tags: the derivation reads the package's highest
+          # Full history and tags: the derivation reads each package's highest
           # tag and every commit since it.
           fetch-depth: 0
 
@@ -75,37 +80,21 @@ jobs:
         with:
           node-version: 24
 
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.4.2
-
-      - name: Derive the release version
-        # First step that reads a version, and it reads none from a human: the
-        # level comes from the commits, and the run refuses when the changelog,
-        # the manifest or the commit range has not reached it.
+      - name: Derive the release set
+        # Single-package dispatch enforces every refusal here, exactly as the
+        # previous lane did. Batch dispatch lists and exits 0: the per-package
+        # refusal belongs to that package's own job, so it cannot stop the rest.
         id: derive
         shell: bash
-        run: |
-          set -euo pipefail
-          node scripts/derive-release.mjs --package "${{ inputs.package }}"
-
-      - name: Refuse a tag that already exists
-        # After derivation, before anything is built: a version that is already
-        # tagged is a mistake in the derivation, not a build failure.
-        shell: bash
         env:
-          RELEASE_TAG: ${{ steps.derive.outputs.tag }}
+          PACKAGE_INPUT: ${{ inputs.package }}
         run: |
           set -euo pipefail
-          if git rev-parse -q --verify "refs/tags/${RELEASE_TAG}" > /dev/null; then
-            echo "::error::tag ${RELEASE_TAG} already exists in this clone; nothing is retagged"
-            exit 1
+          if [ -n "${PACKAGE_INPUT}" ]; then
+            node scripts/derive-release.mjs --package "${PACKAGE_INPUT}"
+          else
+            node scripts/derive-release.mjs --all
           fi
-          if git ls-remote --exit-code --tags origin "refs/tags/${RELEASE_TAG}" > /dev/null 2>&1; then
-            echo "::error::tag ${RELEASE_TAG} already exists on origin; nothing is retagged"
-            exit 1
-          fi
-          echo "tag ${RELEASE_TAG} is free"
 
       - name: Guard the release commit is on origin/main
         shell: bash
@@ -119,116 +108,23 @@ jobs:
             exit 1
           fi
 
-      - name: Assert the package manifest carries the derived version
-        # The derived version is the authority; this assert is what makes a
-        # hand-picked manifest version fail the release instead of shipping.
-        shell: bash
-        run: |
-          set -euo pipefail
-          resolved="$(node scripts/release-target.mjs --package "${{ steps.derive.outputs.name }}" | sed -n 's/^version=//p')"
-          if [ "${resolved}" != "${{ steps.derive.outputs.version }}" ]; then
-            echo "::error::${{ steps.derive.outputs.name }} manifest version ${resolved} != derived ${{ steps.derive.outputs.version }}"
-            exit 1
-          fi
-
-      - name: Guard registry state (never republish)
-        shell: bash
-        run: |
-          set -euo pipefail
-          name="${{ steps.derive.outputs.name }}"
-          # A package with no published version yet is a first release, not a
-          # registry failure: npm answers E404 and the guard runs on an empty list.
-          if ! npm view "${name}" versions --json > "$RUNNER_TEMP/versions.json" 2> "$RUNNER_TEMP/view.err"; then
-            if grep -q 'E404' "$RUNNER_TEMP/view.err"; then
-              echo "[]" > "$RUNNER_TEMP/versions.json"
-              echo "registry: ${name} has no published version yet (first release)"
-            else
-              cat "$RUNNER_TEMP/view.err"
-              exit 1
-            fi
-          fi
-          node scripts/release-target.mjs --registry-guard "$RUNNER_TEMP/versions.json" "${{ steps.derive.outputs.version }}"
-
-      - name: Install dependencies
-        shell: pwsh
-        run: npm ci
-
-      - name: "Gate: build, test and tarball"
-        # The gate the tag may not precede. Everything below builds on it.
-        shell: pwsh
-        run: |
-          npm run build
-          node scripts/workspace-run.mjs test
-          node scripts/pack-check.mjs
-
-      - name: Close the changelog at the derived version
-        # After build and test, before the tag: the tag records the closed
-        # changelog. Idempotent, so a re-run of this job after the changelog was
-        # already closed writes nothing.
-        shell: bash
-        run: |
-          set -euo pipefail
-          args=(--package "${{ steps.derive.outputs.name }}" --version "${{ steps.derive.outputs.version }}")
-          if [ "${{ inputs.dry_run }}" = "true" ]; then
-            args+=(--dry-run)
-          fi
-          node scripts/close-changelog.mjs "${args[@]}"
-
-      - name: Assert the version cells (manifest, index, lockfile)
-        # Assert, never overwrite: the three cells a release has to agree on are
-        # read back and compared, not written.
-        shell: bash
-        run: |
-          set -euo pipefail
-          node scripts/derive-release.mjs \
-            --assert-cells \
-            --package "${{ steps.derive.outputs.name }}" \
-            --version "${{ steps.derive.outputs.version }}"
-
-      - name: Docs and index still pass
-        shell: pwsh
-        run: |
-          node scripts/check-docs.mjs
-          pwsh -NoProfile -File scripts/check-index.ps1 --structural
-
-      - name: Publish (dry run)
-        if: inputs.dry_run
-        shell: pwsh
-        run: npm publish --workspace "${{ steps.derive.outputs.name }}" --access public --dry-run
-
-      - name: Commit and push the closed changelog
-        id: push
-        if: ${{ !inputs.dry_run }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          file="${{ steps.derive.outputs.dir }}/CHANGELOG.md"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -- "$file"
-          if git diff --cached --quiet; then
-            echo "changelog: already closed, nothing to commit"
-          else
-            git commit -m "chore(release): close ${{ steps.derive.outputs.name }} ${{ steps.derive.outputs.version }} changelog"
-            # Never forced: a main that moved during the gate fails this step.
-            git push origin "HEAD:refs/heads/main"
-          fi
-          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-
-  publish:
-    # The tag is created here, immediately before the publish that it names, and
-    # only for a gate that passed. A dry run reaches no part of this job.
-    needs: gate
-    if: ${{ needs.gate.outputs.commit != '' }}
+  # One job per package. Serialized on purpose: every leg commits a changelog to
+  # main and pushes a tag, so two legs pushing at once would race. A release run
+  # is rare, and the ordering it buys is worth the wall clock.
+  release:
+    needs: plan
+    if: ${{ needs.plan.outputs.count != '0' }}
     runs-on: windows-latest
     permissions:
       contents: write
       id-token: write
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
         with:
-          # The commit the gate pushed, which carries the closed changelog.
-          ref: ${{ needs.gate.outputs.commit }}
           fetch-depth: 0
 
       - uses: actions/setup-node@v4
@@ -239,40 +135,143 @@ jobs:
         with:
           bun-version: 1.4.2
 
+      - name: Derive the package version
+        # The same derivation the plan ran, against this job's tree. A refusal
+        # is recorded and this package is skipped; it is never fatal to the run.
+        id: derive
+        shell: bash
+        env:
+          PACKAGE: ${{ matrix.name }}
+        run: |
+          set -uo pipefail
+          mkdir -p "$RUNNER_TEMP/release"
+          status=0
+          node scripts/derive-release.mjs --package "${PACKAGE}" --json > "$RUNNER_TEMP/release/derive.json" || status=$?
+          if [ "${status}" -eq 0 ]; then
+            exit 0
+          fi
+          node -e '
+            const r = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"))
+            for (const item of r.refusals ?? []) console.log(`  ${item.code}: ${item.message}`)
+          ' "$RUNNER_TEMP/release/derive.json" || true
+          echo "REFUSED=1" >> "$GITHUB_ENV"
+          echo "::warning::${PACKAGE} refused at derivation; skipping it, the other packages carry on"
+
+      - name: Refuse a version that moved since the plan
+        # Two derivations of the same tree must agree. A disagreement means the
+        # plan read a different history, and nothing is built on a guess.
+        if: ${{ env.REFUSED != '1' }}
+        shell: bash
+        env:
+          PACKAGE: ${{ matrix.name }}
+          PLANNED: ${{ matrix.version }}
+        run: |
+          set -euo pipefail
+          version="$(node -e 'const r = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")); process.stdout.write(String(r.version))' "$RUNNER_TEMP/release/derive.json")"
+          echo "VERSION=${version}" >> "$GITHUB_ENV"
+          if [ "${version}" != "${PLANNED}" ]; then
+            echo "::warning::${PACKAGE} derives ${version}, the plan said ${PLANNED}; skipping it"
+            echo "REFUSED=1" >> "$GITHUB_ENV"
+          fi
+
+      - name: Close the changelog at the derived version
+        # After the derivation, before the tag: the tag records the closed
+        # changelog. Idempotent, so a re-run writes nothing.
+        if: ${{ env.REFUSED != '1' }}
+        shell: bash
+        env:
+          PACKAGE: ${{ matrix.name }}
+        run: |
+          set -euo pipefail
+          args=(--package "${PACKAGE}" --version "${VERSION}")
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            args+=(--dry-run)
+          fi
+          node scripts/close-changelog.mjs "${args[@]}"
+
       - name: Install dependencies
+        if: ${{ env.REFUSED != '1' }}
         shell: pwsh
         run: npm ci
 
-      - name: Build what is published
+      - name: "Gate: build, test, tarball and cleanroom install"
+        # The gate the tag may not precede. The cleanroom half is what proves a
+        # packed tarball installs into an empty project and loads there.
+        if: ${{ env.REFUSED != '1' }}
         shell: pwsh
-        run: npm run build
+        run: |
+          npm run build
+          node scripts/workspace-run.mjs test
+          node scripts/pack-check.mjs
+          node scripts/cleanroom.mjs
 
-      - name: Create the release tag
+      - name: Assert the version cells (manifest, index, lockfile)
+        # Assert, never overwrite: the three cells a release has to agree on are
+        # read back and compared, not written.
+        if: ${{ env.REFUSED != '1' }}
         shell: bash
         env:
-          RELEASE_TAG: ${{ needs.gate.outputs.tag }}
+          PACKAGE: ${{ matrix.name }}
+        run: |
+          set -euo pipefail
+          node scripts/derive-release.mjs --assert-cells --package "${PACKAGE}" --version "${VERSION}"
+
+      - name: Commit and push the closed changelog
+        if: ${{ env.REFUSED != '1' && !inputs.dry_run }}
+        shell: bash
+        env:
+          PACKAGE: ${{ matrix.name }}
+          DIR: ${{ matrix.dir }}
+        run: |
+          set -euo pipefail
+          file="${DIR}/CHANGELOG.md"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- "${file}"
+          if git diff --cached --quiet; then
+            echo "changelog: already closed, nothing to commit"
+            exit 0
+          fi
+          git commit -m "chore(release): close ${PACKAGE} ${VERSION} changelog"
+          # Never forced: the changelog commit is replayed onto a main that moved
+          # during the gate, and a real conflict fails this package only.
+          git fetch --no-tags origin main
+          git rebase origin/main
+          git push origin "HEAD:refs/heads/main"
+
+      - name: Create the release tag
+        # Immediately before the publish that names it, and only past the gate.
+        if: ${{ env.REFUSED != '1' && !inputs.dry_run }}
+        shell: bash
+        env:
+          TAG: ${{ matrix.tag }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if git ls-remote --exit-code --tags origin "refs/tags/${RELEASE_TAG}" > /dev/null 2>&1; then
-            echo "::error::tag ${RELEASE_TAG} appeared while the gate ran; nothing is retagged"
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" > /dev/null 2>&1; then
+            echo "::error::tag ${TAG} already exists on origin; nothing is retagged"
             exit 1
           fi
-          git tag -a "${RELEASE_TAG}" -m "${RELEASE_TAG}"
-          git push origin "refs/tags/${RELEASE_TAG}"
-          echo "tagged ${RELEASE_TAG} at $(git rev-parse HEAD)"
+          git tag -a "${TAG}" -m "${TAG}"
+          git push origin "refs/tags/${TAG}"
+          echo "tagged ${TAG} at $(git rev-parse HEAD)"
+
+      - name: Publish (dry run)
+        if: ${{ env.REFUSED != '1' && inputs.dry_run }}
+        shell: pwsh
+        run: npm publish --workspace "${{ matrix.name }}" --access public --dry-run
 
       - name: Publish (OIDC trusted publishing)
+        if: ${{ env.REFUSED != '1' && !inputs.dry_run }}
         shell: pwsh
-        run: npm publish --workspace "${{ needs.gate.outputs.name }}" --access public --provenance
+        run: npm publish --workspace "${{ matrix.name }}" --access public --provenance
 
       - name: Verify the released package on the registry
         # Post-publish only: the registry half cannot pass before the version
-        # exists. It is scoped to this run's package; the full table is checked
-        # by the same command without --package. npm can take several minutes to
-        # propagate a new version, so retry only the not-published shape; every
-        # other failure is a real failure and exits immediately.
+        # exists. npm can take several minutes to propagate a new version, so
+        # retry only the not-published shape; every other failure is real.
+        if: ${{ env.REFUSED != '1' && !inputs.dry_run }}
         shell: pwsh
         run: |
           $attempts = 17
@@ -280,7 +279,7 @@ jobs:
           # would still fail at the upper bound, so 17 attempts with 30s waits
           # after the first three cap the wait at about 7m15s.
           $waits = @(10, 15, 20) + @(30) * ($attempts - 4)
-          $name = "${{ needs.gate.outputs.name }}"
+          $name = "${{ matrix.name }}"
           for ($attempt = 1; $attempt -le $attempts; $attempt++) {
             $output = & pwsh -NoProfile -File scripts/check-index.ps1 --registry --package $name 2>&1
             $code = $LASTEXITCODE
@@ -301,3 +300,75 @@ jobs:
           }
           Write-Output "version still not visible after $attempts attempts"
           exit 1
+
+      - name: Record the outcome
+        # Always: a refused package is a result to report, not a lost leg.
+        if: always()
+        shell: bash
+        env:
+          PACKAGE: ${{ matrix.name }}
+          PLANNED: ${{ matrix.version }}
+          DRY: ${{ inputs.dry_run }}
+        run: |
+          set -uo pipefail
+          mkdir -p "$RUNNER_TEMP/release"
+          {
+            echo "package=${PACKAGE}"
+            echo "version=${VERSION:-${PLANNED}}"
+            echo "refused=${REFUSED:-0}"
+            echo "dry_run=${DRY}"
+          } > "$RUNNER_TEMP/release/result.txt"
+
+      - name: Upload the outcome
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-result-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/release/result.txt
+          if-no-files-found: warn
+
+  summary:
+    # Names what this run released and what it refused. Only skipped legs are
+    # absent from it, and a skipped leg passed the gate before the record step.
+    needs: release
+    if: ${{ always() && needs.release.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-result-*
+          merge-multiple: true
+          path: results
+
+      - name: Name the released and the refused
+        shell: bash
+        run: |
+          set -euo pipefail
+          released=0
+          refused=0
+          {
+            echo "## release"
+            echo ""
+            echo "| package | version | outcome |"
+            echo "| --- | --- | --- |"
+            for file in results/*.txt; do
+              [ -e "${file}" ] || continue
+              package="$(sed -n 's/^package=//p' "${file}")"
+              version="$(sed -n 's/^version=//p' "${file}")"
+              is_refused="$(sed -n 's/^refused=//p' "${file}")"
+              is_dry="$(sed -n 's/^dry_run=//p' "${file}")"
+              if [ "${is_refused}" = "1" ]; then
+                outcome="refused"
+                refused=$((refused + 1))
+              elif [ "${is_dry}" = "true" ]; then
+                outcome="would release (dry run)"
+                released=$((released + 1))
+              else
+                outcome="released"
+                released=$((released + 1))
+              fi
+              echo "| ${package} | ${version} | ${outcome} |"
+            done
+            echo ""
+            echo "released ${released}, refused ${refused}"
+          } >> "$GITHUB_STEP_SUMMARY"
