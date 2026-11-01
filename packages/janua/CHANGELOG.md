@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-01
+
+### Fixed
+
+- `pty_read` ignored a small `maxBytes` on the first read of every session. A ConPTY opens with
+  escape-only chunks, so the window began inside an unfinished escape sequence and the read widened to
+  the rest of the buffer to decode it: `maxBytes: 7` could return the whole ring and move the cursor to
+  its end. The widen now stops at the end of the one straddling sequence, and if that sequence does not
+  finish within `maxBytes` + 65536 bytes the read flushes what it has and advances rather than widening
+  further; a fragment frozen by a child's exit is flushed the same way. A read never returns more than
+  `maxBytes` plus the bytes needed for one straddling character or sequence.
+
 ## [0.2.0] - 2026-11-01
 
 ### Added

@@ -14,7 +14,7 @@ import { statSync } from 'node:fs';
 import { basename, extname, join } from 'node:path';
 import { spawn as spawnPty } from '@lydell/node-pty';
 import { OutputRing } from './ring.js';
-import { stripAnsi, incompleteEscapeStart } from './ansi.js';
+import { stripAnsi, escapeSequenceEnd, incompleteEscapeStart } from './ansi.js';
 import {
   ERROR_CODES,
   JanuaError,
@@ -29,6 +29,16 @@ export const DEFAULT_MAX_SESSIONS = 16;
 export const DEFAULT_MAX_BUFFER_BYTES = 1024 * 1024;
 export const DEFAULT_LIST_LIMIT = 50;
 export const MAX_LIST_LIMIT = 200;
+
+// maxBytes is the read's data contract, but a character or escape sequence can
+// straddle its end, and a sequence can start on the window's first byte (a
+// ConPTY opens every session with escape-only chunks). A read is allowed to
+// reach past maxBytes only to finish that one straddling piece, never to the
+// rest of the buffer, and this is how far that reach may go. 64 KiB is far
+// more than any terminal control sequence needs and small enough that a read
+// can never hand the caller a buffered megabyte by accident. It is
+// user-visible, so pty_read's description and docs/GUIDE.md state it too.
+export const MAX_SEQUENCE_OVERAGE_BYTES = 64 * 1024;
 
 const DEFAULT_PATHEXT = '.COM;.EXE;.BAT;.CMD';
 const BATCH_EXTENSIONS = new Set(['.cmd', '.bat']);
@@ -404,37 +414,15 @@ export class SessionManager {
         await waitForChange(session, deadline - Date.now());
       }
 
-      let slice = session.ring.read(requested, maxBytes);
-      let text = slice.data.toString('utf8');
-      let heldBack = raw ? -1 : incompleteEscapeStart(text);
-      // A window narrower than a sequence, a sequence cut at the very end of
-      // what has arrived, or a cut that the child's exit froze: none of those
-      // can be decoded from this slice, and re-reading the same cursor would
-      // stall on the same window. Widen to the rest of the buffer (bounded by
-      // the ring) and decode the sequence whole.
-      if (!raw && heldBack !== -1 && (heldBack === 0 || session.exited)
-        && slice.end < session.ring.total) {
-        slice = session.ring.read(requested, session.ring.total - slice.start);
-        text = slice.data.toString('utf8');
-        heldBack = incompleteEscapeStart(text);
-      }
-      // Nothing more can arrive once the child is gone, so a fragment left now
-      // is truncated, not split: flush it rather than strand the cursor on it.
-      if (session.exited) heldBack = -1;
-      const visible = heldBack === -1 ? text : text.slice(0, heldBack);
-      const data = raw ? text : stripAnsi(visible);
-      const cursor = heldBack === -1
-        ? slice.end
-        : slice.start + Buffer.byteLength(visible, 'utf8');
-      const matched = pattern === null ? true : pattern.test(data);
+      const reply = this.#readReply(session, requested, maxBytes, raw);
       const atDeadline = Date.now() >= deadline;
       const result = {
-        data,
-        cursor,
+        data: reply.data,
+        cursor: reply.cursor,
         exited: session.exited,
         exitCode: session.exitCode,
-        dropped: slice.dropped,
-        matched,
+        dropped: reply.dropped,
+        matched: pattern === null ? true : pattern.test(reply.data),
       };
 
       if (pattern !== null) {
@@ -443,8 +431,8 @@ export class SessionManager {
         // matches, the child exits, the deadline passes, or the window is full
         // and the pattern is not in it — the caller then reads on from the
         // returned cursor, so a pattern past the window is not silently lost.
-        const windowFull = slice.end < session.ring.total;
-        if (matched || result.exited || atDeadline || windowFull) return result;
+        const windowFull = reply.cursor < session.ring.total;
+        if (result.matched || result.exited || atDeadline || windowFull) return result;
         await waitForChange(session, deadline - Date.now());
         continue;
       }
@@ -453,12 +441,132 @@ export class SessionManager {
       // the bytes arrive while the visible text has not. Returning "" there
       // reads as a silent terminal, so a stripped read keeps waiting from the
       // same absolute cursor until something visible lands, the child exits, or
-      // the deadline passes. A raw read still returns the first bytes, escapes
-      // and all, and a slice that carried no bytes has nothing to wait for.
-      if (raw || data !== '' || slice.end === requested || result.exited || atDeadline) {
+      // the deadline passes. It only waits when nothing is buffered past the
+      // returned cursor: a reply that consumed escapes while more output is
+      // already buffered lets the caller read on immediately. A raw read still
+      // returns the first bytes, escapes and all.
+      if (raw || result.data !== '' || (reply.cursor < session.ring.total && !reply.incomplete)
+        || result.exited || atDeadline) {
         return result;
       }
       await waitForChange(session, deadline - Date.now());
+    }
+  }
+
+  // One bounded reply from `from`, with escape handling:
+  //   - a trailing unfinished escape sequence is never returned as text: the
+  //     cursor stays on its first byte until the sequence arrives whole;
+  //   - a window that is nothing but one unfinished sequence is widened only
+  //     as far as that sequence needs, never to the rest of the buffer;
+  //   - escape-only windows are skipped inside the same reply so a stripped
+  //     read still returns visible text instead of a silent empty chunk, but
+  //     the raw reach stops at maxBytes + MAX_SEQUENCE_OVERAGE_BYTES.
+  // `cursor` is the absolute byte offset of the end of what it consumed.
+  #readReply(session, from, maxBytes, raw) {
+    const limit = Math.min(
+      session.ring.total,
+      from + maxBytes + MAX_SEQUENCE_OVERAGE_BYTES,
+    );
+    let cursor = from;
+    let data = '';
+    let dropped = 0;
+
+    for (;;) {
+      const room = limit - cursor;
+      // A cursor past the end is clamped to the end, the way the ring reads
+      // it: leaving it beyond total would make every later read wait for a
+      // stream that already finished.
+      if (room <= 0) return { data, cursor: Math.min(cursor, session.ring.total), dropped };
+      const width = Math.min(maxBytes, room);
+      if (!(width >= 1)) return { data, cursor, dropped }; // a zero-width read cannot advance
+      let slice = session.ring.read(cursor, width);
+      if (cursor === from) dropped = slice.dropped;
+      let text = slice.data.toString('utf8');
+      let heldBack = raw ? -1 : incompleteEscapeStart(text);
+
+      // The window fits inside one escape sequence: no data can come out of it
+      // and re-reading the same window would return the same nothing. Widen to
+      // the end of that one sequence, doubling the reach, and stop at the
+      // ceiling. A ConPTY's opening chunk hits this on the first read of every
+      // session, which is why the old widen-to-the-end handed back the buffer.
+      if (!raw && heldBack === 0 && slice.end < session.ring.total) {
+        let end = slice.end;
+        let step = Math.max(16, end - cursor);
+        while (end < limit) {
+          end = Math.min(limit, end + step);
+          step *= 2;
+          slice = session.ring.read(cursor, end - cursor);
+          text = slice.data.toString('utf8');
+          const sequenceEnd = escapeSequenceEnd(text, 0);
+          if (sequenceEnd !== -1) {
+            // Cut exactly at the sequence end: bytes past it belong to the next
+            // read and are not part of this one's overage.
+            const width = Buffer.byteLength(text.slice(0, sequenceEnd), 'utf8');
+            slice = session.ring.read(cursor, width);
+            text = slice.data.toString('utf8');
+            break;
+          }
+        }
+        heldBack = incompleteEscapeStart(text);
+      }
+
+      if (raw) return { data: data + text, cursor: slice.end, dropped };
+
+      if (session.exited) {
+        // Nothing more can arrive, so a fragment frozen here is truncated, not
+        // split: flush it (the ring ends on a whole character) and advance,
+        // rather than strand the cursor on bytes that will never complete.
+        data += stripAnsi(text);
+        cursor = slice.end;
+        if (data !== '' || cursor >= limit) return { data, cursor, dropped };
+        continue;
+      }
+
+      if (heldBack === -1) {
+        data += stripAnsi(text);
+        cursor = slice.end;
+        // An escape-only window carries nothing for the caller; skip it inside
+        // the same reply so one read still returns visible text. The ceiling
+        // caps how far that can go, and the next read resumes from the cursor.
+        if (data !== '' || cursor >= limit) return { data, cursor, dropped };
+        continue;
+      }
+
+      if (heldBack > 0) {
+        // Return the visible text before the unfinished sequence and leave the
+        // cursor on the sequence's first byte: its bytes were never returned.
+        // When everything before it was escape-only, there is nothing to
+        // return yet, so skip on to where the sequence starts and let the
+        // widen above decode it whole.
+        const visible = text.slice(0, heldBack);
+        const prefix = stripAnsi(visible);
+        const nextCursor = slice.start + Buffer.byteLength(visible, 'utf8');
+        if (data + prefix === '' && slice.end < session.ring.total) {
+          cursor = nextCursor;
+          continue;
+        }
+        return {
+          data: data + prefix,
+          cursor: nextCursor,
+          dropped,
+          incomplete: data + prefix === '',
+        };
+      }
+
+      // heldBack === 0 after the widen: the sequence did not finish inside the
+      // ceiling. A run this long is not a control sequence a terminal would
+      // honour, so flush it as text and let the cursor move rather than spin on
+      // it; the reply stays bounded by maxBytes + MAX_SEQUENCE_OVERAGE_BYTES.
+      if (slice.end < session.ring.total) {
+        data += stripAnsi(text);
+        return { data, cursor: slice.end, dropped };
+      }
+
+      // The buffer itself ends inside the sequence and nothing more has
+      // arrived: hold the cursor at its first byte so the next read re-decodes
+      // it whole. Any text skipped before it is still returned; with no text,
+      // the caller waits for the tail rather than reading the same window.
+      return { data, cursor, dropped, incomplete: data === '' };
     }
   }
 
