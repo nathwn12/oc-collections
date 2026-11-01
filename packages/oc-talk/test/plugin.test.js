@@ -300,8 +300,10 @@ test('source carries no credential, localhost reference or removal verb', () => 
   const src = fs.readFileSync(ENTRY, 'utf8');
   assert.doesNotMatch(src, /password|service\.json|127\.0\.0\.1/);
   // No removal capability in any spelling: the surface is nine verbs, none of
-  // which removes a session.
-  assert.doesNotMatch(src, /delete/i);
+  // which removes a session. The one exclusion is bookkeeping on this module's
+  // own registration map, which is not a tool and not an API route.
+  const surface = src.replaceAll('registrations.delete(key)', '');
+  assert.doesNotMatch(surface, /delete/i);
 });
 
 // A recording backend: every call is captured and each verb answers with the
@@ -403,9 +405,12 @@ test('descriptions stay at three sentences or fewer and state the delivery rule'
 
 // A reload-shaped host: `transform` records every registration it hands out and
 // the tools each one added, so a test can see what is live and what was disposed.
-function reloadHost() {
+// `location` is the host's per-boot location: the host boots the plugin once per
+// location, and a ctx without one keeps the plugin's stable fallback key.
+function reloadHost(location) {
   const registrations = [];
   const ctx = {
+    location,
     tool: {
       transform: async (fn) => {
         const entry = { added: [], disposed: 0 };
@@ -457,4 +462,44 @@ test('setup resolves to void and leaves exactly one live registration', async ()
   assert.deepEqual(registrations[0].added.map((t) => t.name), NINE);
   assert.equal(registrations[0].disposed, 0, 'the registration is live after setup');
 });
+
+// The live service boots the plugin once per location — the workspace directory
+// and the config directory under it — and each boot owns its own tool domain.
+// One module-level registration made the second boot dispose the first boot's
+// transform, so that location's sessions saw zero oc-talk tools while the plugin
+// still reported active. Registrations are per location, and a reload of one
+// location must not touch another's.
+test('two host locations each keep their own live registration', async () => {
+  const mod = await load();
+  const first = reloadHost({ workspaceID: 'ws', directory: 'C:\\proj' });
+  const second = reloadHost({ workspaceID: 'ws', directory: 'C:\\proj\\.config\\opencode' });
+
+  // Both boots, in the order the live service logged them.
+  await mod.ensureTools(first.ctx);
+  await mod.ensureTools(second.ctx);
+
+  assert.equal(first.registrations.length, 1, 'the first location must register');
+  assert.equal(second.registrations.length, 1, 'the second location must register');
+  assert.equal(first.registrations[0].disposed, 0, 'the second location must not dispose the first location\'s tools');
+  assert.equal(second.registrations[0].disposed, 0, 'the second location\'s own registration is live');
+  assert.deepEqual(first.registrations[0].added.map((t) => t.name), NINE);
+  assert.deepEqual(second.registrations[0].added.map((t) => t.name), NINE);
+
+  // A reload of one location disposes only its own previous registration.
+  await mod.ensureTools(first.ctx);
+  assert.equal(first.registrations.length, 2, 'a reload must re-register that location');
+  assert.equal(first.registrations[0].disposed, 1, 'a reload disposes its own previous registration');
+  assert.equal(first.registrations[1].disposed, 0, 'the re-registered transform is live');
+  assert.equal(second.registrations.length, 1, 'the other location must not re-register');
+  assert.equal(second.registrations[0].disposed, 0, 'the other location must be untouched');
+
+  // The public surface the host calls takes the same per-location path: a second
+  // setup of one location leaves the other location's live transform alone.
+  assert.equal(await mod.default.setup(second.ctx), undefined);
+  assert.equal(second.registrations.length, 2, 'setup must re-register the same location');
+  assert.equal(second.registrations[0].disposed, 1, 'setup disposes that location\'s previous registration');
+  assert.equal(second.registrations[1].disposed, 0);
+  assert.equal(first.registrations[1].disposed, 0, 'the other location stays live across a setup');
+});
+
 

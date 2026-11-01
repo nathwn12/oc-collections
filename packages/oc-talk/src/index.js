@@ -21,12 +21,24 @@ const TIMEOUT_MS = 20000;
 const READ_DEFAULT_LIMIT = 20;
 const READ_MAX_LIMIT = 100;
 
-// The one live tool-transform registration, or null when nothing is registered.
-// A plugin reload re-runs setup on this cached module instance after the host has
-// disposed the old registration, so this handle — not a one-shot boolean — is the
-// truth about what is live: setup disposes it before re-registering, which leaves
-// exactly one active transform per call, never zero and never two.
-let registration = null;
+// One live tool-transform registration per host location, keyed by location.
+// The host boots this plugin once per location (workspace + directory) and each
+// boot has its own tool domain, so a single module-level handle was the bug: the
+// second location's setup disposed the first location's transform, and the first
+// location's sessions were left with zero oc-talk tools. A reload re-runs setup
+// for the same location on this cached module instance, so the map — not a
+// one-shot boolean — is the truth about what is live: setup disposes only its own
+// location's handle before re-registering, never another location's.
+const FALLBACK_KEY = ':';
+const registrations = new Map();
+
+// The location a ctx belongs to. A ctx without a location keeps one stable
+// fallback key, so a single-location host behaves exactly as before.
+function locationKey(ctx) {
+  const loc = ctx && ctx.location;
+  if (!loc) return FALLBACK_KEY;
+  return `${loc.workspaceID ?? ''}:${loc.directory}`;
+}
 
 function fail(error, reason, candidates, truncated) {
   const out = { error, reason };
@@ -320,12 +332,14 @@ function deliveryOf(args, fallback) {
   return { ok: false, error: 'bad_request', reason: 'delivery must be "steer" or "queue"' };
 }
 
-// Dispose the live registration, if any, and forget it. Safe to call when there
-// is none, and safe to call on a registration the host already disposed on unload
-// (the host's dispose is an idempotent finalizer).
-function dropRegistration() {
-  const current = registration;
-  registration = null;
+// Dispose one location's live registration, if any, and forget it. Only that
+// key's transform is touched: another location's registration is live for its
+// own sessions. Safe to call when there is none, and safe to call on a
+// registration the host already disposed on unload (the host's dispose is an
+// idempotent finalizer).
+function dropRegistration(key) {
+  const current = registrations.get(key);
+  registrations.delete(key);
   if (current && typeof current.dispose === 'function') return current.dispose();
   return undefined;
 }
@@ -333,10 +347,13 @@ function dropRegistration() {
 async function ensureTools(ctx) {
   const transform = ctx && ctx.tool && ctx.tool.transform;
   if (typeof transform !== 'function') return null;
-  // Dispose before re-registering: a reload, or the server path after setup, must
-  // replace the transform instead of stacking a second one or skipping the call.
-  await dropRegistration();
-  registration = await transform((tools) => {
+  const key = locationKey(ctx);
+  // Dispose this location's previous registration before re-registering: a reload,
+  // or the server path after setup, must replace that location's transform instead
+  // of stacking a second one or skipping the call. Another location's transform is
+  // a different key and stays live.
+  await dropRegistration(key);
+  const registration = await transform((tools) => {
     tools.add({
       name: 'session_list',
       description:
@@ -767,6 +784,7 @@ async function ensureTools(ctx) {
       },
     });
   });
+  registrations.set(key, registration);
   return registration;
 }
 
@@ -778,9 +796,10 @@ export { doneRefusal, ensureTools, listSessions, resolveTarget, setApiRunner, st
 // V1 `server` fallback is gone for the same reason: a V1 implementation does not
 // run in V2, so it was dead weight that also misread as a live path.
 //
-// `setup` returns void by design: `ensureTools` keeps the single live
-// registration and disposes it before re-registering, so a reload replaces the
-// transform instead of stacking a second one.
+// `setup` returns void by design: `ensureTools` keeps one live registration per
+// location and disposes only that location's own registration before
+// re-registering, so a reload replaces the transform instead of stacking a
+// second one, and a second location never disposes the first location's tools.
 export default Plugin.define({
   id: 'oc-talk',
   async setup(ctx) {
