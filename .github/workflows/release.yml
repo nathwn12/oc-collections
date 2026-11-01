@@ -1,23 +1,31 @@
-# Release lane: the version and the tag are produced by this run, after the gate.
+# Release lane: a merge to main releases every package with a releasable commit.
 #
-# Batch by default. One dispatch with no package releases every package whose
-# history has a pending release: scripts/derive-release.mjs --all reads each
-# package's highest `<package>@<version>` tag, derives the next version from the
-# conventional commits since it, and lists the packages that have one. A package
-# with no releasable commit is never attempted. Dispatching with a package name
-# keeps the single-package lane, where the plan refuses like a gate.
+# Push trigger. `scripts/derive-release.mjs --all` reads each package's highest
+# `<package>@<version>` tag, derives the next version from the conventional
+# commits since it, and lists every package that has one. A package with no
+# releasable commit is listed as skipped and is never attempted; when every
+# package is skipped the run prints "nothing to release" and exits 0.
 #
-# Per package, in one job of the matrix, in this order: derive -> refuse a
-# mismatch -> close the changelog -> install, build, test, pack, cleanroom ->
-# assert the version cells -> tag `<package>@<version>` -> publish. A package
-# that refuses at the derivation stops at its own refusal, and the packages
-# beside it carry on; the summary job names what was released and what was
-# refused. A failure past the refusal (a broken gate, a failed publish) still
-# fails the run: only refusals are skippable.
+# Nothing takes a version from a human and nothing is committed. Per package,
+# in one job of the matrix, in this order: derive -> skip a tag that already
+# exists -> refuse a mismatch with the plan -> install -> close the changelog ->
+# write the derived version into the manifest, the root index cell and the
+# lockfile -> build, test, pack, cleanroom -> assert the cells -> tag
+# `<package>@<version>` at the pushed commit -> publish -> verify the registry.
+# The changelog close and the version write exist only in the runner so the
+# tarball carries them; the last step restores every tracked file and proves
+# `git status --porcelain` is empty. No commit, no PR, no dispatch.
 #
-# Nothing here takes a version from a human. The commit range is the package's
-# own tag range, so a hand-pushed tag publishes nothing: the tag is an output of
-# this lane, not an input.
+# A tag that already exists is skipped, never moved: a red run or a re-run
+# cannot retag a published version. A refusal at the derivation stops that
+# package only, and the packages beside it carry on; the summary names what was
+# released, skipped and refused. A failure past the refusal (a broken gate, a
+# failed publish) still fails the run: only refusals and existing tags skip.
+#
+# `workflow_dispatch` is the escape hatch, not the normal lane: no package
+# releases every package with a pending release (the same plan as a push), a
+# package name forces that single package, and `dry_run` (default true) stops
+# before the tag and the publish.
 #
 # Tag convention: <package-name>@<version>
 #   oc-flight-deck@0.20.2
@@ -26,21 +34,23 @@
 # No Changesets: npm 12 breaks Changesets 2's `npm info --json` parsing, and
 # these packages version independently.
 #
-# The releasable set is the ALLOWED list in scripts/release-target.mjs; the
-# dispatch help below names it, and every other workspace is source-only.
+# The releasable set is the ALLOWED list in scripts/release-target.mjs; every
+# other workspace is source-only.
 #
 # OIDC trusted publishing only: id-token: write, --provenance; no auth-token
 # variable, no secrets, no OTP.
 #
-# contents: write is for two acts only: committing each closed changelog to main
-# and pushing the tags this run created. Neither is ever forced.
+# contents: write is for one act only: pushing the tags this run created. The
+# lane never pushes a branch and never commits.
 name: release
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       package:
-        # Empty is the batch lane. A name keeps the single-package lane.
+        # Empty is the batch lane. A name forces the single-package lane.
         # Releasable: @nathwn12/oc-bifrost, @nathwn12/janua, oc-flight-deck,
         # oc-harness-setup, oc-talk, rea-shim.
         description: Workspace package to release (empty = every package with a pending release)
@@ -48,7 +58,7 @@ on:
         default: ""
         type: string
       dry_run:
-        description: Derive, gate and pack without committing, tagging or publishing
+        description: Derive, gate and pack without tagging or publishing
         required: true
         type: boolean
         default: true
@@ -81,9 +91,9 @@ jobs:
           node-version: 24
 
       - name: Derive the release set
-        # Single-package dispatch enforces every refusal here, exactly as the
-        # previous lane did. Batch dispatch lists and exits 0: the per-package
-        # refusal belongs to that package's own job, so it cannot stop the rest.
+        # The push lane's plan. A single-package dispatch is a matrix of one;
+        # --prepare means the lane, not a committed bump, supplies the version
+        # cells and the changelog close.
         id: derive
         shell: bash
         env:
@@ -91,12 +101,26 @@ jobs:
         run: |
           set -euo pipefail
           if [ -n "${PACKAGE_INPUT}" ]; then
-            node scripts/derive-release.mjs --package "${PACKAGE_INPUT}"
+            node scripts/derive-release.mjs --package "${PACKAGE_INPUT}" --prepare
           else
             node scripts/derive-release.mjs --all
           fi
 
-      - name: Guard the release commit is on origin/main
+      - name: Nothing to release
+        # Quiet green: no package has a releasable commit since its tag.
+        if: ${{ steps.derive.outputs.count == '0' }}
+        shell: bash
+        run: |
+          echo "nothing to release: no package has a releasable commit since its tag"
+          {
+            echo "## release"
+            echo ""
+            echo "nothing to release"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Guard the dispatched commit is on origin/main
+        # A push is main by definition; a dispatch can name any branch.
+        if: ${{ github.event_name == 'workflow_dispatch' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -108,9 +132,9 @@ jobs:
             exit 1
           fi
 
-  # One job per package. Serialized on purpose: every leg commits a changelog to
-  # main and pushes a tag, so two legs pushing at once would race. A release run
-  # is rare, and the ordering it buys is worth the wall clock.
+  # One job per package. Serialized on purpose: every leg pushes a tag and
+  # publishes, so two legs at once would race. A release run is rare, and the
+  # ordering it buys is worth the wall clock.
   release:
     needs: plan
     if: ${{ needs.plan.outputs.count != '0' }}
@@ -146,7 +170,7 @@ jobs:
           set -uo pipefail
           mkdir -p "$RUNNER_TEMP/release"
           status=0
-          node scripts/derive-release.mjs --package "${PACKAGE}" --json > "$RUNNER_TEMP/release/derive.json" || status=$?
+          node scripts/derive-release.mjs --package "${PACKAGE}" --json --prepare > "$RUNNER_TEMP/release/derive.json" || status=$?
           if [ "${status}" -eq 0 ]; then
             exit 0
           fi
@@ -157,10 +181,31 @@ jobs:
           echo "REFUSED=1" >> "$GITHUB_ENV"
           echo "::warning::${PACKAGE} refused at derivation; skipping it, the other packages carry on"
 
+      - name: Fetch the tags
+        # The tag guard reads the local tag list; fetch it after checkout so a
+        # tag pushed earlier in this run is visible to a later leg.
+        if: ${{ env.REFUSED != '1' }}
+        shell: bash
+        run: git fetch --tags --force origin
+
+      - name: Skip a package whose tag already exists
+        # Never retag, never move a tag: the version on the registry and the tag
+        # on main stay the same commit they were published from.
+        if: ${{ env.REFUSED != '1' }}
+        shell: bash
+        env:
+          TAG: ${{ matrix.tag }}
+        run: |
+          set -euo pipefail
+          if node scripts/derive-release.mjs --tag-exists "${TAG}"; then
+            echo "SKIP=1" >> "$GITHUB_ENV"
+            echo "::notice::${TAG} already exists; skipping this package, no tag is ever moved"
+          fi
+
       - name: Refuse a version that moved since the plan
         # Two derivations of the same tree must agree. A disagreement means the
         # plan read a different history, and nothing is built on a guess.
-        if: ${{ env.REFUSED != '1' }}
+        if: ${{ env.REFUSED != '1' && env.SKIP != '1' }}
         shell: bash
         env:
           PACKAGE: ${{ matrix.name }}
@@ -174,10 +219,16 @@ jobs:
             echo "REFUSED=1" >> "$GITHUB_ENV"
           fi
 
+      - name: Install dependencies
+        if: ${{ env.REFUSED != '1' && env.SKIP != '1' }}
+        shell: pwsh
+        run: npm ci
+
       - name: Close the changelog at the derived version
-        # After the derivation, before the tag: the tag records the closed
-        # changelog. Idempotent, so a re-run writes nothing.
-        if: ${{ env.REFUSED != '1' }}
+        # Before the pack, in the runner only: the tarball ships a changelog
+        # whose section names this release. Never committed. Idempotent, so a
+        # re-run writes nothing.
+        if: ${{ env.REFUSED != '1' && env.SKIP != '1' }}
         shell: bash
         env:
           PACKAGE: ${{ matrix.name }}
@@ -189,15 +240,21 @@ jobs:
           fi
           node scripts/close-changelog.mjs "${args[@]}"
 
-      - name: Install dependencies
-        if: ${{ env.REFUSED != '1' }}
-        shell: pwsh
-        run: npm ci
+      - name: Write the version cells in the runner
+        # The manifest is the tarball's version; the root index cell and the
+        # lockfile entry are the other two cells a release has to agree on. The
+        # runner writes all three after install so the pack step verifies the
+        # exact bytes that publish. Never committed; the last step restores them.
+        if: ${{ env.REFUSED != '1' && env.SKIP != '1' }}
+        shell: bash
+        env:
+          PACKAGE: ${{ matrix.name }}
+        run: node scripts/derive-release.mjs --write-cells --package "${PACKAGE}" --version "${VERSION}"
 
       - name: "Gate: build, test, tarball and cleanroom install"
         # The gate the tag may not precede. The cleanroom half is what proves a
         # packed tarball installs into an empty project and loads there.
-        if: ${{ env.REFUSED != '1' }}
+        if: ${{ env.REFUSED != '1' && env.SKIP != '1' }}
         shell: pwsh
         run: |
           npm run build
@@ -206,64 +263,41 @@ jobs:
           node scripts/cleanroom.mjs
 
       - name: Assert the version cells (manifest, index, lockfile)
-        # Assert, never overwrite: the three cells a release has to agree on are
-        # read back and compared, not written.
-        if: ${{ env.REFUSED != '1' }}
+        # Read the three cells back after the write: the tarball, the index
+        # claim and the lockfile must all name this version.
+        if: ${{ env.REFUSED != '1' && env.SKIP != '1' }}
         shell: bash
         env:
           PACKAGE: ${{ matrix.name }}
-        run: |
-          set -euo pipefail
-          node scripts/derive-release.mjs --assert-cells --package "${PACKAGE}" --version "${VERSION}"
+        run: node scripts/derive-release.mjs --assert-cells --package "${PACKAGE}" --version "${VERSION}"
 
-      - name: Commit and push the closed changelog
-        if: ${{ env.REFUSED != '1' && !inputs.dry_run }}
-        shell: bash
-        env:
-          PACKAGE: ${{ matrix.name }}
-          DIR: ${{ matrix.dir }}
-        run: |
-          set -euo pipefail
-          file="${DIR}/CHANGELOG.md"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -- "${file}"
-          if git diff --cached --quiet; then
-            echo "changelog: already closed, nothing to commit"
-            exit 0
-          fi
-          git commit -m "chore(release): close ${PACKAGE} ${VERSION} changelog"
-          # Never forced: the changelog commit is replayed onto a main that moved
-          # during the gate, and a real conflict fails this package only.
-          git fetch --no-tags origin main
-          git rebase origin/main
-          git push origin "HEAD:refs/heads/main"
-
-      - name: Create the release tag
+      - name: Create the release tag at the pushed commit
         # Immediately before the publish that names it, and only past the gate.
-        if: ${{ env.REFUSED != '1' && !inputs.dry_run }}
+        # A tag that appeared during the gate is a race, not a retag: skip it.
+        if: ${{ env.REFUSED != '1' && env.SKIP != '1' && !inputs.dry_run }}
         shell: bash
         env:
           TAG: ${{ matrix.tag }}
         run: |
           set -euo pipefail
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" > /dev/null 2>&1; then
+            echo "::warning::tag ${TAG} appeared while the gate ran; skipping this package"
+            echo "SKIP=1" >> "$GITHUB_ENV"
+            exit 0
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" > /dev/null 2>&1; then
-            echo "::error::tag ${TAG} already exists on origin; nothing is retagged"
-            exit 1
-          fi
           git tag -a "${TAG}" -m "${TAG}"
           git push origin "refs/tags/${TAG}"
           echo "tagged ${TAG} at $(git rev-parse HEAD)"
 
       - name: Publish (dry run)
-        if: ${{ env.REFUSED != '1' && inputs.dry_run }}
+        if: ${{ env.REFUSED != '1' && env.SKIP != '1' && inputs.dry_run }}
         shell: pwsh
         run: npm publish --workspace "${{ matrix.name }}" --access public --dry-run
 
       - name: Publish (OIDC trusted publishing)
-        if: ${{ env.REFUSED != '1' && !inputs.dry_run }}
+        if: ${{ env.REFUSED != '1' && env.SKIP != '1' && !inputs.dry_run }}
         shell: pwsh
         run: npm publish --workspace "${{ matrix.name }}" --access public --provenance
 
@@ -271,7 +305,7 @@ jobs:
         # Post-publish only: the registry half cannot pass before the version
         # exists. npm can take several minutes to propagate a new version, so
         # retry only the not-published shape; every other failure is real.
-        if: ${{ env.REFUSED != '1' && !inputs.dry_run }}
+        if: ${{ env.REFUSED != '1' && env.SKIP != '1' && !inputs.dry_run }}
         shell: pwsh
         run: |
           $attempts = 17
@@ -301,8 +335,26 @@ jobs:
           Write-Output "version still not visible after $attempts attempts"
           exit 1
 
+      - name: Restore the runner-written cells
+        # The release never commits: the version and the closed changelog exist
+        # only for this job's tarball. Restore every tracked file and prove the
+        # tree is clean, so main is byte-identical to the pushed commit.
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          git checkout -- .
+          dirty="$(git status --porcelain)"
+          if [ -n "${dirty}" ]; then
+            echo "::error::working tree is not clean after the release:"
+            echo "${dirty}"
+            exit 1
+          fi
+          echo "tree: clean; nothing was committed"
+
       - name: Record the outcome
-        # Always: a refused package is a result to report, not a lost leg.
+        # Always: a skipped or refused package is a result to report, not a
+        # lost leg.
         if: always()
         shell: bash
         env:
@@ -316,6 +368,7 @@ jobs:
             echo "package=${PACKAGE}"
             echo "version=${VERSION:-${PLANNED}}"
             echo "refused=${REFUSED:-0}"
+            echo "skipped=${SKIP:-0}"
             echo "dry_run=${DRY}"
           } > "$RUNNER_TEMP/release/result.txt"
 
@@ -328,8 +381,8 @@ jobs:
           if-no-files-found: warn
 
   summary:
-    # Names what this run released and what it refused. Only skipped legs are
-    # absent from it, and a skipped leg passed the gate before the record step.
+    # Names what this run released, skipped and refused. Only a zero-package
+    # plan omits the summary, and that run says "nothing to release" in plan.
     needs: release
     if: ${{ always() && needs.release.result != 'skipped' }}
     runs-on: ubuntu-latest
@@ -340,12 +393,13 @@ jobs:
           merge-multiple: true
           path: results
 
-      - name: Name the released and the refused
+      - name: Name the released, the skipped and the refused
         shell: bash
         run: |
           set -euo pipefail
           released=0
           refused=0
+          skipped=0
           {
             echo "## release"
             echo ""
@@ -356,10 +410,14 @@ jobs:
               package="$(sed -n 's/^package=//p' "${file}")"
               version="$(sed -n 's/^version=//p' "${file}")"
               is_refused="$(sed -n 's/^refused=//p' "${file}")"
+              is_skipped="$(sed -n 's/^skipped=//p' "${file}")"
               is_dry="$(sed -n 's/^dry_run=//p' "${file}")"
               if [ "${is_refused}" = "1" ]; then
                 outcome="refused"
                 refused=$((refused + 1))
+              elif [ "${is_skipped}" = "1" ]; then
+                outcome="skipped (tag exists)"
+                skipped=$((skipped + 1))
               elif [ "${is_dry}" = "true" ]; then
                 outcome="would release (dry run)"
                 released=$((released + 1))
@@ -370,5 +428,5 @@ jobs:
               echo "| ${package} | ${version} | ${outcome} |"
             done
             echo ""
-            echo "released ${released}, refused ${refused}"
+            echo "released ${released}, skipped ${skipped}, refused ${refused}"
           } >> "$GITHUB_STEP_SUMMARY"
