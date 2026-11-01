@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-01
+
+### Fixed
+
+- `pty_read` could emit a child's last escape byte as literal text. A child killed inside an escape
+  sequence (`ESC [ 3` with no final byte) left that fragment at the end of the buffer, and the exit
+  flush stripped what it could and returned the rest verbatim. The exit flush now drops a trailing
+  incomplete sequence instead of emitting its bytes; a raw (`stripAnsi: false`) read still returns
+  them. Replies also carry `truncated: true` when the stream ended inside a character or sequence.
+- `pty_read` lost a UTF-8 character cut by the end of the buffer. A read that reached the tail inside
+  a multi-byte character decoded U+FFFD and moved the cursor past the fragment, so the next chunk
+  decoded as garbage too. A live read now stops before that character and returns `incomplete: true`
+  until its bytes arrive; after the child exits the fragment is flushed and reported as
+  `truncated: true`, so a repeated read either advances or says why it cannot.
+- `pty_read`'s `maxBytes` description now names both ways a read may exceed the bound: finishing one
+  straddling UTF-8 character or escape sequence, and the 65536-byte ceiling flush when a sequence is
+  still unfinished there. The overage is never more than 65536 bytes; `docs/GUIDE.md` says the same.
+
+### Added
+
+- `pty_read` and `pty_write` replies carry `incomplete` and `truncated` booleans, so a caller can
+  tell a tail still waiting for bytes from one the child's exit cut off.
+
 ## [0.3.0] - 2026-11-01
 
 ### Added

@@ -10,8 +10,19 @@
 const OSC_PATTERN = /(?:\u001B\]|\u009D)[\s\S]*?(?:\u0007|\u001B\\|\u009C)/g;
 const ESCAPE_PATTERN = /\u001B(?:\[[0-?]*[ -/]*[@-~]|[@-Z\\-_])/g;
 
-export function stripAnsi(text) {
-  return text.replace(OSC_PATTERN, '').replace(ESCAPE_PATTERN, '');
+export function stripAnsi(text, options = {}) {
+  let source = text;
+  if (options.dropIncompleteTail === true) {
+    // At the end of a stream a trailing sequence can never receive its final
+    // byte. It is not an escape any more, only its bytes, so drop the fragment
+    // instead of emitting ESC (or an OSC body) as literal text. The test runs
+    // before stripping: without it, an unterminated OSC would have its `ESC ]`
+    // head removed and its body returned as ordinary characters. Every other
+    // caller strips whole sequences only and keeps the default behaviour.
+    const tail = incompleteEscapeStart(source);
+    if (tail !== -1) source = source.slice(0, tail);
+  }
+  return source.replace(OSC_PATTERN, '').replace(ESCAPE_PATTERN, '');
 }
 
 /**

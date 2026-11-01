@@ -47,8 +47,8 @@ On Windows, if your client cannot launch `npx` directly, wrap it in the command 
 | Tool | What it does |
 | --- | --- |
 | `pty_spawn` | Start `command` with `args` in a new PTY. Takes an optional `cwd`, `env`, `cols`/`rows` (defaults 80x24), `title`, and an optional `description` (5-10 words is the useful length, at most 200 characters; defaults to the title). Returns `{sessionId, pid, title}`. No shell string: command and args are passed as given, there is no `shell: true`. On Windows a bare name is resolved through `PATH` x `PATHEXT` and a batch shim runs through `cmd /c` (see Windows notes). |
-| `pty_write` | Send `data` to a session. `newline` (default true) appends a carriage return, which is what a prompt is waiting for. Returns `{ok}`. Add `waitMs` (and optionally `match`, `cursor`, `maxBytes`, `stripAnsi`, with the same meaning as in `pty_read`) to read the reply in the same call: the response then also carries `{data, cursor, exited, exitCode, dropped, matched}`. |
-| `pty_read` | Read output from `cursor` onward, up to `maxBytes` (default 8000). `waitMs` waits up to 10 s for new output; `stripAnsi` (default true) removes colour and cursor-control sequences; `match` (a regex of at most 200 characters) makes the read wait until the text from `cursor` matches it. Returns `{data, cursor, exited, exitCode, dropped, matched}`. |
+| `pty_write` | Send `data` to a session. `newline` (default true) appends a carriage return, which is what a prompt is waiting for. Returns `{ok}`. Add `waitMs` (and optionally `match`, `cursor`, `maxBytes`, `stripAnsi`, with the same meaning as in `pty_read`) to read the reply in the same call: the response then also carries `{data, cursor, exited, exitCode, dropped, matched, incomplete, truncated}`. |
+| `pty_read` | Read output from `cursor` onward, up to `maxBytes` (default 8000). `waitMs` waits up to 10 s for new output; `stripAnsi` (default true) removes colour and cursor-control sequences; `match` (a regex of at most 200 characters) makes the read wait until the text from `cursor` matches it. Returns `{data, cursor, exited, exitCode, dropped, matched, incomplete, truncated}`. |
 | `pty_resize` | Change the size of a running session's terminal. `cols` and `rows` are integers 1-1000: give both, or give one and the other keeps the size in force. The program itself is told (SIGWINCH on POSIX, a resize of the ConPTY on Windows), so a full-screen program redraws at the new size instead of staying at the geometry it was spawned with. Returns `{ok, cols, rows}` for the geometry now in force, which `pty_list` reports from then on. A call naming neither dimension is `invalid_args`; resizing a session whose program has already exited is `pty_resize_failed`. |
 | `pty_kill` | Terminate the program and confirm it. Idempotent. `signal` defaults to `SIGTERM` and is honoured on POSIX; Windows terminates the process tree. Returns `{ok, exited, exitCode, pid}`: `exited` is the state observed after the kill, so `ok: false` with an `error` naming the pid (and the fallback to use) means the process survived. |
 | `pty_list` | Sessions newest last, one page at a time: `limit` (1-200, default 50) and `offset` (default 0). Returns `{sessions, total, nextOffset}`, where `total` counts every session known and `nextOffset` is null on the last page. Each session carries `sessionId`, `pid`, `title`, `command`, `args`, `cwd`, `description`, `cols`, `rows`, `exited`, `exitCode`, `bytes` and `createdAt`. |
@@ -65,7 +65,10 @@ A read never splits a character: when `maxBytes` would cut inside a multi-byte U
 slice ends before it (or carries it whole, when the window is smaller than the character) and the
 cursor stays on its first byte, so successive reads rebuild the exact bytes. An ANSI escape sequence
 is held the same way: a half-received `ESC [` is not returned as text and the tail does not arrive as
-literal characters, because the cursor stops at the sequence until the rest of it lands.
+literal characters, because the cursor stops at the sequence until the rest of it lands. If the
+character or sequence is cut by the end of the stream, the reply says so: `incomplete: true` for a
+live tail still waiting for bytes (read again from the same cursor), `truncated: true` once the child
+has exited and the rest can never arrive.
 
 `waitMs` makes a read block instead of polling: it returns as soon as new output arrives, or when
 the session exits, or at the deadline. A ConPTY opens with escape-only chunks (mode set, focus

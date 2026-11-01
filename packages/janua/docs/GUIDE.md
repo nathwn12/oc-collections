@@ -166,8 +166,13 @@ End it with Ctrl+D (end of input) or kill the session:
 - One session per long-lived thing. Spawn once, talk many times, kill once.
 - Always pass the `cursor` a read returned. Reading from 0 again re-delivers everything still
   buffered, which is useful for a full dump and wasteful for a diff.
-- `maxBytes` bounds the returned `data`: a read may exceed it only by the bytes needed to finish the
-  one character or escape sequence that straddles the end, and never by more than 65536 bytes.
+- `maxBytes` bounds the returned `data`. A read may exceed it by the bytes needed to finish the one
+  UTF-8 character or escape sequence that straddles the end, and it stops widening at `maxBytes` +
+  65536 bytes: if an escape sequence is still unfinished there, the whole 65536-byte overage is
+  returned as literal text and the cursor advances. The overage is never more than 65536 bytes.
+- `incomplete: true` means the bytes at the returned `cursor` end inside a UTF-8 character still in
+  flight: wait for more output and read again from that cursor. `truncated: true` means the child
+  exited inside a character or escape sequence, so the rest can never arrive.
 - `waitMs` beats sleeping between reads: it returns the moment output arrives.
 - Keep `description` meaningful (5-10 words is a good length; it is optional and defaults to the
   title). `pty_list` returns it with `args`, `cwd`, `cols` and `rows`, so a list of sessions reads
