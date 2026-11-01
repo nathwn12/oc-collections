@@ -16,6 +16,12 @@
 // Builtins only (node:test, node:assert, node:fs, node:zlib, node:crypto),
 // same rule as the launcher it tests. The bundle is assembled here because
 // the real one is fetched from the GitHub Release at first run.
+//
+// Run directly: `node --test npm/test/` from the repo root. The published
+// package's scripts field holds ONLY the global-install-refusal preinstall/
+// postinstall guards (release.yml fails closed on anything else), so there is
+// deliberately no `npm test` script; this file is not in the published
+// `files` list either.
 
 const test = require('node:test');
 const assert = require('node:assert');
