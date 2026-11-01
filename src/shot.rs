@@ -95,6 +95,20 @@ unsafe fn render_frame(hwnd: HWND, ww: i32, wh: i32) -> Result<(Img, u32), Strin
 /// # Safety
 /// `hwnd` must be a live window handle; it is passed to the Win32 window APIs as a raw pointer.
 pub unsafe fn capture_window(hwnd: HWND, allow_crop_fallback: bool) -> Result<CapOk, String> {
+    // Bounded: `PrintWindow` blocks until the target's UI thread answers, so it
+    // runs on a helper thread under a wall-clock deadline and a hung window
+    // returns `capture_timeout` instead of taking the worker with it.
+    let h = hwnd as i64;
+    crate::deadline::bound(
+        crate::deadline::Family::Capture,
+        "capture_window",
+        move || unsafe { capture_window_inner(h as HWND, allow_crop_fallback) },
+    )?
+}
+
+/// # Safety
+/// `hwnd` must be a live window handle; it is passed to the Win32 window APIs as a raw pointer.
+unsafe fn capture_window_inner(hwnd: HWND, allow_crop_fallback: bool) -> Result<CapOk, String> {
     let t0 = Instant::now();
     let h = hwnd as i64;
     unsafe {

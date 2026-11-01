@@ -30,6 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   absent. Opt-in because the store read is a per-window COM call.
 - The `do` `type` action schema declares `element`, `index` and `expect_fp`
   (the runtime UIA `ValuePattern.SetValue` path already accepted them).
+- `PUPPET_UIA_TIMEOUT_MS` (default 5000) and `PUPPET_CAPTURE_TIMEOUT_MS`
+  (default 10000) set the wall-clock deadline of one bounded UIA call or one
+  capture; both are clamped to 50..120000 ms.
 
 ### Fixed
 - `click` on an element with no on-screen rectangle is refused before any input

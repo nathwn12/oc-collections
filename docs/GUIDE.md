@@ -141,7 +141,9 @@ gets `-32603 Server busy` immediately — it is refused, not queued.
 | `PUPPET_ENGINE_BUNDLE` | unset | Names a local zip to verify and extract instead of downloading. Pre-publish diagnostics only — size and sha256 are still checked. |
 | `PUPPET_MCP_ALLOW_NON_WINDOWS` | unset | `1` bypasses the Windows-only **launcher** gate for diagnostics. The server still runs on Windows x64 only. |
 | `LOCALAPPDATA` | set by Windows | Cache root. Unset means the cache directory cannot resolve and the launcher fails with a fixable message. |
-| `PUPPET_LIVE_DESKTOP` | unset | `1` enables the live-gated integration tests (`hidden_desktop`, `clipboard`, and the live halves of the element tests). Development only; the suite skips them cleanly without it. |
+| `PUPPET_LIVE_DESKTOP` | unset | `1` enables the live-gated integration tests (`hidden_desktop`, `clipboard`, `timeout_bound`, and the live halves of the element tests). Development only; the suite skips them cleanly without it. |
+| `PUPPET_UIA_TIMEOUT_MS` | `5000` | Deadline for one bounded UIA operation (`elements` walk, `invoke`/`set_value` activation). Clamped to `50..120000`. Exceeding it returns `uia_timeout`. |
+| `PUPPET_CAPTURE_TIMEOUT_MS` | `10000` | Deadline for one `PrintWindow` capture. Clamped to `50..120000`. Exceeding it returns `capture_timeout`. |
 
 Tool-level defaults live with each tool below.
 
@@ -295,6 +297,11 @@ Read-only structured UI tree: zero pixels, no input, no focus change.
 
 One of `title`, `hwnd` or `target` is required.
 
+The walk is bounded: a provider that stops answering returns `uia_timeout` inside 5 s
+(`PUPPET_UIA_TIMEOUT_MS`) instead of holding the worker. `elements` itself still answers —
+the Win32 fallback fills the page, `backend` says `"win32"` and `uia_error` carries the
+typed reason.
+
 **Returns** `{ backend, truncated, rect_space, elements, uia_available, uia_error,
 fallback, empty, empty_reason, depth_capped, depth_limit, next_offset,
 foregroundUnchanged, cursorUnchanged }`. Each entry is
@@ -429,6 +436,8 @@ Notes that keep the actions honest:
 | `stale_ref` | `expect_fp` did not match the re-walked control. | Take a fresh `elements` snapshot and retry. |
 | `uipi_blocked` | Target runs at higher integrity. | Run the server at the same or higher integrity level. |
 | `burst_budget_exceeded` | A `do` burst exceeded 256 actions or the 300 s total budget. | Split the batch; the result names the limit and the actual value. |
+| `uia_timeout` | A UIA call (element walk, `invoke`, `set_value`) did not return within 5 s: the target's UI thread is not responding. | Retry once the app is responsive, or capture the desktop instead. `elements` still answers from the Win32 fallback and reports the reason in `uia_error`; an abandoned activation's effect is unverified. |
+| `capture_timeout` | A `PrintWindow` capture did not return within 10 s: the target's UI thread is not responding. | Retry, or capture the desktop instead. |
 
 `-32603 Server busy` means more than 8 tool calls were in flight; the ninth is refused, not
 queued.

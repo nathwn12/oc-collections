@@ -1446,6 +1446,7 @@ pub(crate) fn parse_selector(sel: &str) -> (String, String) {
 pub mod burst;
 pub mod cancel;
 pub mod cap;
+pub mod deadline;
 pub mod dxgi;
 #[cfg(test)]
 pub mod fixture;
