@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- The release lane derives its version from history instead of taking a typed
+  one. `scripts/derive-release.mjs` walks the non-merge commits since the
+  highest `vX.Y.Z` tag (`fix`/`perf` → patch, `feat` → minor, `!` or
+  `BREAKING CHANGE:` → major; on 0.x a major hop moves the minor) and refuses
+  on an empty range, a non-conventional subject, a range with no releasable
+  commit, an empty `## [Unreleased]` (unless the derived version's section
+  already exists), or a manifest that is not already the derived version. It
+  never writes a version: the lane asserts them, it does not repair them.
+- The `release` workflow's `version` dispatch input is gone. `commit` is an
+  assertion that the dispatched ref contains it (the checkout follows the
+  dispatched ref, never the input), the version is derived before every
+  version assert, the `## [Unreleased]` section closes after the test and
+  doubles as the release body, and the tag is created in the publish job
+  immediately before the release is attached.
+  `scripts/check-release-workflow.mjs` asserts that shape and runs as the
+  lane's first step.
+
 ## [6.1.4] - 2026-11-02
 
 ### Fixed
