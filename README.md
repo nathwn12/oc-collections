@@ -39,9 +39,9 @@ The first real call provisions the pinned server binary from the tagged GitHub R
 | `screenshot` | Captures the whole desktop, one monitor, a region, or one window — without activating it — and returns the image plus the map that turns image pixels back into screen pixels. |
 | `list_windows` | Read-only list of every visible top-level window with `hwnd`, `pid`, `exe`, `title`, rects, DPI and whether it runs elevated: the starting point for any selector. |
 | `window` | Focus, move, resize, minimize, maximize, restore, close or topmost a window by selector; every verb except an explicit `focus` is no-steal. |
-| `do` | Runs an ordered batch of input actions — click, drag, scroll, type, keys, waits, UIA `invoke`/`set_value`, clipboard — against one locked target in a single round-trip. |
+| `do` | Runs an ordered batch of input actions — click, drag, scroll, type, keys, waits, UIA `invoke`/`set_value`, clipboard — against one locked target in a single round-trip. Reports a call-level `ok`/`failed` verdict: a burst where nothing succeeded is a tool error, one bad action among good ones is not. |
 | `cursor` | Read-only cursor position plus monitor rectangles. |
-| `elements` | Read-only structured UIA control tree for a window, with stable `ref`/`fp` identities and paging, so the agent acts on named controls instead of guessing pixels. |
+| `elements` | Read-only structured UIA control tree for a window, with stable `ref`/`fp` identities, paging and an `offscreen` flag for controls that have no on-screen rectangle, so the agent acts on named controls instead of guessing pixels. |
 
 Every acting call takes one `target` selector and locks exactly one window; there is no fallback to the foreground window, ever.
 

@@ -278,9 +278,14 @@ One of `title`, `hwnd` or `target` is required.
 **Returns** `{ backend, truncated, rect_space, elements, uia_available, uia_error,
 fallback, empty, empty_reason, depth_capped, depth_limit, next_offset,
 foregroundUnchanged, cursorUnchanged }`. Each entry is
-`{ ref, role, name, auto_id, rect, invokable, path, fp }` (`detail:true` adds `win`,
-`hwnd`, and `text` where readable).
+`{ ref, role, name, auto_id, rect, offscreen, invokable, path, fp }` (`detail:true` adds
+`win`, `hwnd`, and `text` where readable).
 
+- `offscreen:true` marks an entry whose `rect` has no area (`[0,0,0,0]`, or a zero/negative
+  width or height): a control scrolled out of view, virtualized, or collapsed. The rect is
+  kept for shape stability but must not be read as geometry — there is no pixel to aim at.
+  `click` on such an element is refused with `offscreen_element` (scroll it into view, or
+  use `invoke`/`set_value`, which act through the UIA pattern and need no geometry).
 - `ref` is `"<hwnd>.<path>"`, a per-enumeration correlator — **not** a durable handle.
   `invoke`/`set_value` re-enumerate and match `name:`/`auto_id:`/`path:`.
 - `fp` is a stable identity fingerprint (FNV-1a over role/name/auto_id/invokable, 16 hex
@@ -324,7 +329,10 @@ Notes that keep the actions honest:
   `delivered:"posted"` plus `effect:"verified"|"pattern-returned"|"unchanged"|"unverified"`.
   A posted click whose readable control state did not change fails with
   `background_unavailable` instead of claiming success. A raw `x`/`y` click always reports
-  `delivered:"posted"`, `effect:"unverified"`.
+  `delivered:"posted"`, `effect:"unverified"`. An element with no on-screen rectangle is
+  refused **before** any input with `offscreen_element`: its "centre" would be the target's
+  client origin, so nothing is posted and the message names the fix (scroll it into view,
+  or use `invoke`).
 - `hover:true` is the only way to ask for a `WM_MOUSEMOVE`.
 - `invoke` never falls back to a pixel click unless you pass `"fallback":"click"`; an
   ambiguous selector returns `ok:false` with a `candidates` list unless `index` is explicit
@@ -363,6 +371,11 @@ Notes that keep the actions honest:
 4. **Continue-always.** A per-action failure never aborts the burst: that action reports
    `ok:false` and the remaining actions still run. `ok:false` at the action level means a
    malformed action or a typed refusal — not a reason to skip the rest.
+   The call-level verdict is separate: the payload carries top-level `ok` (true only when
+   **every** action succeeded) and `failed` (how many did not). The MCP envelope reports
+   `isError:true` only when **no** action succeeded — a burst where the target vanished
+   before the first action is a real failure, a burst with one bad action among good ones
+   is not.
 5. **A timeout is not an error.** `wait_for` that times out returns `ok:true` with
    `satisfied:false` (the flag, never an error), so the batch continues. `ok:false` is
    reserved for a malformed action or an unresolvable selector.

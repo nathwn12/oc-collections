@@ -776,8 +776,8 @@ fn err_result_text(s: &str) -> String {
 /// P3a hidden-desktop capture: the `do` text envelope plus the hidden
 /// PrintWindow PNG as a real MCP `image` content block alongside the JSON
 /// text (not only base64 inside it). `structuredContent` and `isError`
-/// follow the same rule as `wrapped_text`; the `do` payload has no
-/// top-level `ok`, so `isError` stays false. Only the hidden path with a
+/// follow the same rule as `wrapped_text` (a `do` burst is a tool error only
+/// when nothing succeeded). Only the hidden path with a
 /// successful capture uses this; every other `do` call keeps the exact
 /// P2a text-only envelope.
 pub(crate) fn wrapped_text_with_image(s: &str, png_b64: &str, mime: &str) -> String {

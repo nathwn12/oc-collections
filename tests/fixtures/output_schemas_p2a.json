@@ -22,6 +22,12 @@
   "do": {
     "additionalProperties": true,
     "properties": {
+      "failed": {
+        "type": "integer"
+      },
+      "ok": {
+        "type": "boolean"
+      },
       "events": {
         "type": "integer"
       },
