@@ -886,6 +886,7 @@ mod tests {
 
     #[test]
     fn live_stationary_capture_reports_the_current_rect() {
+        let _g = crate::fixture::desktop();
         let f = crate::fixture::Fixture::new();
         let cap = unsafe { capture_window(f.hwnd(), false) }.expect("fixture captures");
         assert!(
@@ -958,6 +959,7 @@ mod tests {
 
     #[test]
     fn element_fp_same_control_across_rewalks() {
+        let _g = crate::fixture::desktop();
         // Cheap integration without window-manager dependence: two walks
         // of the owned fixture list the same OK button; its fp must match
         // even though ref/path tokens are per-enumeration.
@@ -1053,6 +1055,7 @@ mod tests {
 
     #[test]
     fn win32_offset_skips_leading_controls() {
+        let _g = crate::fixture::desktop();
         // The owned fixture exposes three accepted controls (writable EDIT,
         // read-only EDIT, OK button): offset 1 must drop exactly the first
         // and report no next page.

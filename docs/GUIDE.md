@@ -186,7 +186,8 @@ POST-capture origin and `capture.moved_during_capture:true` (a pure translation 
 recaptured once and the second result is returned) — a stale origin is never presented
 as current. With `elements=true` plus `display`/`region`, the element block still
 describes the FOREGROUND window (not the captured image), and the map names it in
-`elements_window{hwnd,exe,title}`.
+`elements_window{hwnd,exe,title}`. That handle is sampled once at call start, so
+the name and the block it describes always agree.
 
 Errors are `["error: <code>: <detail>"]` with
 `bad_display|bad_region|bad_window|ambiguous_window|empty_crop|capture_failed|ambiguous_target|target_gone|window_minimized|capture_unavailable`.

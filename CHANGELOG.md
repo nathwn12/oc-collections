@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [6.1.1] - 2026-11-01
+
+### Fixed
+- `screenshot` with `elements:true` (desktop/region) samples the foreground
+  window once per call and carries that handle through both the element walk
+  and `elements_window`. It previously read `GetForegroundWindow()` again when
+  naming the window, so a foreground switch between the two reads could make
+  the reply enumerate one window and name another; the release suite
+  (`cargo test --release --locked`) caught it on a CI runner.
+- The suite's live-desktop tests now serialize on one process-wide guard
+  (`fixture::desktop()`): the fixture message counters, the foreground handle
+  and the UIA provider's focus are process-wide, so the parallel harness let
+  one test observe a sibling's window, focus or posted messages. The posted
+  click/drag tests also wait for the whole message group before reading the
+  counters. `cargo test --release --locked` is deterministic in parallel.
+
 ## [6.1.0] - 2026-11-01
 
 ### Added
