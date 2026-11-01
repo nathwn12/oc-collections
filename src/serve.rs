@@ -1846,6 +1846,68 @@ mod tests {
         println!("ELEMENTS_COMPACT_FIXTURE_JSON={payload}");
     }
 
+    /// A matched control with no on-screen rectangle is reported as
+    /// `offscreen:true` instead of geometry a caller could aim at. On the
+    /// pre-fix tree the entry carried `[0,0,0,0]` and no flag.
+    #[test]
+    fn elements_marks_a_control_without_a_rect_offscreen() {
+        let f = crate::fixture::Fixture::new();
+        let hwnd = f.hwnd() as i64;
+        for child in [f.edit(), f.edit_ro(), f.button()] {
+            let collapsed = unsafe {
+                windows_sys::Win32::UI::WindowsAndMessaging::SetWindowPos(
+                    child,
+                    std::ptr::null_mut(),
+                    0,
+                    0,
+                    0,
+                    0,
+                    windows_sys::Win32::UI::WindowsAndMessaging::SWP_NOMOVE
+                        | windows_sys::Win32::UI::WindowsAndMessaging::SWP_NOZORDER
+                        | windows_sys::Win32::UI::WindowsAndMessaging::SWP_NOACTIVATE,
+                )
+            };
+            assert_ne!(collapsed, 0, "collapse a fixture child");
+        }
+        let entry = {
+            let t0 = std::time::Instant::now();
+            loop {
+                let p = elements_payload(&elements_args(&[("hwnd", Value::from(hwnd))]));
+                let found = p
+                    .get("elements")
+                    .and_then(|v| v.as_array())
+                    .and_then(|els| {
+                        els.iter()
+                            .find(|e| e.get("offscreen") == Some(&Value::from(true)))
+                            .cloned()
+                    });
+                if let Some(e) = found {
+                    break e;
+                }
+                if t0.elapsed() > std::time::Duration::from_secs(10) {
+                    panic!("no zero-area entry appeared in elements: {p}");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        };
+        assert_eq!(
+            entry.get("offscreen"),
+            Some(&Value::from(true)),
+            "a control with no rect must be flagged offscreen, got: {entry}"
+        );
+        assert!(
+            entry.get("rect").and_then(|r| r.as_array()).is_some(),
+            "rect stays present for shape stability: {entry}"
+        );
+        let w = entry["rect"][2].as_i64().unwrap_or(-1);
+        let h = entry["rect"][3].as_i64().unwrap_or(-1);
+        assert!(
+            w <= 0 || h <= 0,
+            "the flagged entry must really have no area, got: {entry}"
+        );
+        println!("ELEMENTS_OFFSCREEN_FLAG_OK entry={entry}");
+    }
+
     #[test]
     fn elements_live_detail_keeps_win() {
         let f = crate::fixture::Fixture::new();

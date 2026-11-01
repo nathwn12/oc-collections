@@ -44,6 +44,10 @@ pub const CURSOR_REQUIRED: &str = "cursor_move_required";
 /// Writing the owner's clipboard is refused unless `allow_clipboard:true`.
 pub const CLIPBOARD_REQUIRED: &str = "clipboard_write_required";
 pub const BACKGROUND_UNAVAILABLE: &str = "background_unavailable";
+/// An element matched, but it has no on-screen rectangle, so there is no
+/// pixel to aim at. Typed so a caller can tell it apart from "no such
+/// control" and fix it by scrolling the control into view or using invoke.
+pub const OFFSCREEN_ELEMENT: &str = "offscreen_element";
 pub const TARGET_REQUIRED: &str = "target_required";
 
 /// Proof the caller passed `allow_foreground: true`. Not `Clone`, so it

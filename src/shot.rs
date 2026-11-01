@@ -288,6 +288,10 @@ fn win32_element_list(hwnd: HWND, offset: usize) -> Result<ElementPage, String> 
                 e.insert("name".to_string(), Value::from(name.clone()));
                 e.insert("auto_id".to_string(), Value::from(aid.clone()));
                 e.insert("rect".to_string(), Value::from(rect.clone()));
+                e.insert(
+                    "offscreen".to_string(),
+                    Value::from(rect[2] <= 0 || rect[3] <= 0),
+                );
                 e.insert("invokable".to_string(), Value::from(inv));
                 e.insert("path".to_string(), Value::from(i.to_string()));
                 e.insert("hwnd".to_string(), Value::from(*h as i64));
@@ -440,12 +444,13 @@ pub fn element_model(hwnd: HWND, max_depth: i64, offset: usize) -> ElementModel 
 /// Compact default per-entry shape for the standalone `elements` tool:
 /// everything except the raw `win` (and `hwnd` on the Win32 fallback)
 /// identifiers, which `detail=true` retains.
-pub const COMPACT_ELEMENT_KEYS: [&str; 8] = [
+pub const COMPACT_ELEMENT_KEYS: [&str; 9] = [
     "ref",
     "role",
     "name",
     "auto_id",
     "rect",
+    "offscreen",
     "invokable",
     "path",
     "fp",
@@ -553,6 +558,7 @@ mod tests {
             ]),
         );
         e.insert("invokable".to_string(), Value::from(true));
+        e.insert("offscreen".to_string(), Value::from(false));
         e.insert("path".to_string(), Value::from("3"));
         e.insert("hwnd".to_string(), Value::from(199340));
         e.insert("ref".to_string(), Value::from("199210.3"));
@@ -596,6 +602,7 @@ mod tests {
                 "name",
                 "auto_id",
                 "rect",
+                "offscreen",
                 "invokable",
                 "path",
                 "fp"

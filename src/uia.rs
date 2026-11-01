@@ -711,6 +711,10 @@ impl Walk {
                 PageAction::Skip => {}
                 PageAction::Collect => {
                     let rect = el_rect(k);
+                    // A control with no on-screen rectangle (scrolled away,
+                    // virtualized, collapsed) reports [0,0,0,0]; marking it
+                    // keeps callers from reading that as real geometry.
+                    let offscreen = rect[2] <= 0 || rect[3] <= 0;
                     let mut e = Map::new();
                     e.insert("win".to_string(), Value::from(self.win));
                     e.insert("role".to_string(), Value::from(role.clone()));
@@ -721,6 +725,7 @@ impl Walk {
                         Value::from(rect.iter().map(|v| Value::from(*v)).collect::<Vec<_>>()),
                     );
                     e.insert("invokable".to_string(), Value::from(inv));
+                    e.insert("offscreen".to_string(), Value::from(offscreen));
                     e.insert("path".to_string(), Value::from(p.clone()));
                     e.insert(
                         "ref".to_string(),

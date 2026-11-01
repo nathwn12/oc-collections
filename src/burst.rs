@@ -1948,6 +1948,7 @@ fn element_pub_full(entry: &Map<String, Value>) -> Map<String, Value> {
         "name",
         "auto_id",
         "rect",
+        "offscreen",
         "invokable",
         "path",
         "fp",
@@ -1959,7 +1960,76 @@ fn element_pub_full(entry: &Map<String, Value>) -> Map<String, Value> {
     m
 }
 
-/// Gap-1 freshness gate: when the action carries `expect_fp`, the freshly
+// ---------------------------------------------------------------- element geometry (one gate)
+
+/// Why an element rect cannot become an injection point.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RectRefusal {
+    /// No area: the control is scrolled away, virtualized or collapsed, so
+    /// its "centre" would be the target's client origin.
+    Offscreen,
+    /// Real geometry, but `ScreenToClient` failed (window moved or closed).
+    Unconvertible,
+}
+
+/// The rect as `(left, top, width, height)`; a missing or short field reads 0.
+fn element_rect(entry: &Map<String, Value>) -> (i64, i64, i64, i64) {
+    let rect: Vec<i64> = match entry.get("rect") {
+        Some(Value::Array(r)) => r.iter().map(|v| v.as_i64().unwrap_or(0)).collect(),
+        _ => Vec::new(),
+    };
+    (
+        rect.first().copied().unwrap_or(0),
+        rect.get(1).copied().unwrap_or(0),
+        rect.get(2).copied().unwrap_or(0),
+        rect.get(3).copied().unwrap_or(0),
+    )
+}
+
+/// The ONE gate between an element's rect and a pixel the server may inject
+/// into, in SCREEN pixels. UIA reports `[0,0,0,0]` for a control with no
+/// on-screen rectangle; `left + 0/2, top + 0/2` is then a real screen point —
+/// the target's client origin — so a click posted at that "centre" lands on
+/// the window frame instead of the control. Every verb that turns an element
+/// rect into an injection point converts through here, so the guard cannot be
+/// forgotten by a verb added later.
+pub(crate) fn element_rect_centre(entry: &Map<String, Value>) -> Result<(i64, i64), RectRefusal> {
+    let (rl, rt, rw, rh) = element_rect(entry);
+    if rw <= 0 || rh <= 0 {
+        return Err(RectRefusal::Offscreen);
+    }
+    Ok((rl + rw / 2, rt + rh / 2))
+}
+
+/// `element_rect_centre` plus the documented target convention: the rect is
+/// SCREEN pixels and the click point is CLIENT pixels (physical).
+pub(crate) fn element_centre_client(
+    target_hwnd: i64,
+    entry: &Map<String, Value>,
+) -> Result<(i64, i64), RectRefusal> {
+    let (sx, sy) = element_rect_centre(entry)?;
+    crate::target::screen_point_to_client(target_hwnd, sx, sy).ok_or(RectRefusal::Unconvertible)
+}
+
+/// The typed refusal text for a rect that cannot be aimed at, flag and
+/// recovery named (never a silent skip, never a guess).
+pub(crate) fn rect_refusal_message(entry: &Map<String, Value>, r: RectRefusal) -> String {
+    match r {
+        RectRefusal::Offscreen => {
+            let (rl, rt, rw, rh) = element_rect(entry);
+            format!(
+                "offscreen_element: the matched control has no on-screen rectangle \
+                 (rect [{rl},{rt},{rw},{rh}]), so it has no pixel to click; scroll it into \
+                 view, or use invoke, which acts through the UIA pattern and needs no \
+                 geometry. Nothing was sent."
+            )
+        }
+        RectRefusal::Unconvertible => "element rect is not convertible to client pixels \
+                                        (window moved or closed mid-call)"
+            .to_string(),
+    }
+}
+
 /// re-walked entry's fingerprint must equal it. Returns the typed refusal on
 /// mismatch, None when the gate passes (no/empty expect_fp, or a match).
 /// Applies live and under dry_run alike: a stale ref never acts.
@@ -3239,18 +3309,9 @@ pub fn do_burst(args: &DoArgs) -> String {
                 d.insert("element".to_string(), Value::from(element_pub_full(&entry)));
                 d.insert("resolution".to_string(), Value::from("found"));
                 // Element rects are SCREEN pixels; the client conversion is
-                // the documented target convention (physical pixels).
-                let rect: Vec<i64> = match entry.get("rect") {
-                    Some(Value::Array(r)) => r.iter().map(|v| v.as_i64().unwrap_or(0)).collect(),
-                    _ => vec![0, 0, 0, 0],
-                };
-                let (rl, rt, rw, rh) = (
-                    *rect.first().unwrap_or(&0),
-                    *rect.get(1).unwrap_or(&0),
-                    *rect.get(2).unwrap_or(&0),
-                    *rect.get(3).unwrap_or(&0),
-                );
-                let centre = crate::target::screen_point_to_client(tgt, rl + rw / 2, rt + rh / 2);
+                // the documented target convention (physical pixels) and goes
+                // through the one geometry gate, which refuses an empty rect.
+                let centre = element_centre_client(tgt, &entry);
                 if dry_run {
                     d.insert(
                         "via".to_string(),
@@ -3295,61 +3356,79 @@ pub fn do_burst(args: &DoArgs) -> String {
                     }
                 }
                 if !ok_v {
-                    if let Some((cx, cy)) = centre {
-                        // A posted button message is delivery, NOT proof the
-                        // control acted (many controls ignore it). The state
-                        // is read before and after and the action fails when
-                        // a readable state did not change.
-                        let pre = element_state(tgt, &path);
-                        let mut m = Map::new();
-                        m.insert("type".to_string(), Value::from("click"));
-                        m.insert("x".to_string(), Value::from(cx));
-                        m.insert("y".to_string(), Value::from(cy));
-                        if let Some(b) = ad.get("button") {
-                            m.insert("button".to_string(), b.clone());
-                        }
-                        if let Some(c) = ad.get("count") {
-                            m.insert("count".to_string(), c.clone());
-                        }
-                        let (ok_b, err_b, n_b) = bg_execute(tgt, &m, true, false);
-                        posted_total += n_b;
-                        ok_v = ok_b;
-                        via = "posted-click".to_string();
-                        delivered = "posted";
-                        if let Some(e) = err_b {
-                            verr = Some(e);
-                        }
-                        if ok_b {
-                            effect = match pre {
-                                Some(pre) => {
-                                    if wait_state_change(tgt, &path, &pre) {
-                                        "verified"
-                                    } else {
-                                        // Readable state and it did not
-                                        // change: the click did not act.
-                                        ok_v = false;
-                                        verr = Some(format!(
-                                            "background_unavailable: the posted click was \
+                    match centre {
+                        Ok((cx, cy)) => {
+                            // A posted button message is delivery, NOT proof the
+                            // control acted (many controls ignore it). The state
+                            // is read before and after and the action fails when
+                            // a readable state did not change.
+                            let pre = element_state(tgt, &path);
+                            let mut m = Map::new();
+                            m.insert("type".to_string(), Value::from("click"));
+                            m.insert("x".to_string(), Value::from(cx));
+                            m.insert("y".to_string(), Value::from(cy));
+                            if let Some(b) = ad.get("button") {
+                                m.insert("button".to_string(), b.clone());
+                            }
+                            if let Some(c) = ad.get("count") {
+                                m.insert("count".to_string(), c.clone());
+                            }
+                            let (ok_b, err_b, n_b) = bg_execute(tgt, &m, true, false);
+                            posted_total += n_b;
+                            ok_v = ok_b;
+                            via = "posted-click".to_string();
+                            delivered = "posted";
+                            if let Some(e) = err_b {
+                                verr = Some(e);
+                            }
+                            if ok_b {
+                                effect = match pre {
+                                    Some(pre) => {
+                                        if wait_state_change(tgt, &path, &pre) {
+                                            "verified"
+                                        } else {
+                                            // Readable state and it did not
+                                            // change: the click did not act.
+                                            ok_v = false;
+                                            verr = Some(format!(
+                                                "background_unavailable: the posted click was \
                                              delivered to the control but its state did not \
                                              change ({pre}); controls that ignore posted button \
                                              messages report exactly this. Use invoke for the \
                                              UIA pattern, or allow_foreground:true for a real \
                                              click."
-                                        ));
-                                        "unchanged"
+                                            ));
+                                            "unchanged"
+                                        }
                                     }
-                                }
-                                None => "unverified",
-                            };
-                        } else {
-                            effect = "unverified";
+                                    None => "unverified",
+                                };
+                            } else {
+                                effect = "unverified";
+                            }
                         }
-                    } else {
-                        verr = Some(
-                            "element rect is not convertible to client pixels (window moved or \
-                             closed mid-call)"
-                                .to_string(),
-                        );
+                        Err(r) => {
+                            // Refused BEFORE any injection: an empty rect is not
+                            // geometry, and its "centre" is the client origin.
+                            d.insert("ok".to_string(), Value::from(false));
+                            d.insert("via".to_string(), Value::from("none"));
+                            d.insert("delivered".to_string(), Value::from("none"));
+                            d.insert("effect".to_string(), Value::from("unverified"));
+                            d.insert(
+                                "code".to_string(),
+                                Value::from(if r == RectRefusal::Offscreen {
+                                    crate::gate::OFFSCREEN_ELEMENT
+                                } else {
+                                    crate::gate::BACKGROUND_UNAVAILABLE
+                                }),
+                            );
+                            d.insert(
+                                "error".to_string(),
+                                Value::from(rect_refusal_message(&entry, r)),
+                            );
+                            d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
+                            return Ok(Some(d));
+                        }
                     }
                 }
                 d.insert("ok".to_string(), Value::from(ok_v));
@@ -3924,20 +4003,10 @@ pub fn do_burst(args: &DoArgs) -> String {
                             return Ok(Some(d));
                         }
                     };
-                    let rect: Vec<i64> = match entry.get("rect") {
-                        Some(Value::Array(r)) => {
-                            r.iter().map(|v| v.as_i64().unwrap_or(0)).collect()
-                        }
-                        _ => vec![0, 0, 0, 0],
-                    };
-                    let (rl, rt, rw, rh) = (
-                        *rect.first().unwrap_or(&0),
-                        *rect.get(1).unwrap_or(&0),
-                        *rect.get(2).unwrap_or(&0),
-                        *rect.get(3).unwrap_or(&0),
-                    );
-                    if rw > 0 && rh > 0 {
-                        if pixel_click_at(&fg_p, &cur_p, rl + rw / 2, rt + rh / 2) {
+                    // Same geometry gate as `click`: SCREEN-space centre, or a
+                    // typed refusal instead of aiming at the client origin.
+                    if let Ok((sx, sy)) = element_rect_centre(&entry) {
+                        if pixel_click_at(&fg_p, &cur_p, sx, sy) {
                             via = "pixel-click".to_string();
                             verr = None;
                             d.insert("ok".to_string(), Value::from(true));
@@ -3953,10 +4022,13 @@ pub fn do_burst(args: &DoArgs) -> String {
                             d.insert("ok".to_string(), Value::from(false));
                         }
                     } else {
-                        let suffix = "pixel-click refused: empty rect";
+                        let suffix = format!(
+                            "pixel-click refused: {}",
+                            rect_refusal_message(&entry, RectRefusal::Offscreen)
+                        );
                         verr = Some(match verr {
                             Some(v) => format!("{v}; {suffix}"),
-                            None => suffix.to_string(),
+                            None => suffix,
                         });
                         d.insert("ok".to_string(), Value::from(false));
                     }
@@ -4597,6 +4669,131 @@ pub fn do_burst(args: &DoArgs) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The one geometry gate (pure): a rect with no area is refused, never
+    /// turned into a "centre". On the pre-fix tree `[0,0,0,0]` fed straight
+    /// into `screen_point_to_client` and produced a real client point.
+    #[test]
+    fn element_geometry_gate_refuses_empty_rects() {
+        let mut e = Map::new();
+        e.insert(
+            "rect".to_string(),
+            Value::from(vec![
+                Value::from(0),
+                Value::from(0),
+                Value::from(0),
+                Value::from(0),
+            ]),
+        );
+        assert_eq!(element_rect_centre(&e), Err(RectRefusal::Offscreen));
+        // A negative extent is not geometry either.
+        e.insert(
+            "rect".to_string(),
+            Value::from(vec![
+                Value::from(10),
+                Value::from(10),
+                Value::from(-5),
+                Value::from(20),
+            ]),
+        );
+        assert_eq!(element_rect_centre(&e), Err(RectRefusal::Offscreen));
+        // Missing rect is the same class, not a panic.
+        let bare = Map::new();
+        assert_eq!(element_rect_centre(&bare), Err(RectRefusal::Offscreen));
+        // The refusal names the flag and the recovery.
+        let msg = rect_refusal_message(&bare, RectRefusal::Offscreen);
+        assert!(msg.starts_with("offscreen_element: "), "{msg}");
+        assert!(msg.contains("scroll it into view"), "{msg}");
+        assert!(msg.contains("invoke"), "{msg}");
+        // Real geometry still converts (screen-space centre).
+        e.insert(
+            "rect".to_string(),
+            Value::from(vec![
+                Value::from(100),
+                Value::from(200),
+                Value::from(40),
+                Value::from(20),
+            ]),
+        );
+        assert_eq!(element_rect_centre(&e), Ok((120, 210)));
+    }
+
+    /// The same gate through a real burst: an element whose rect has no area
+    /// is refused with `offscreen_element` and nothing is delivered. On the
+    /// pre-fix tree this call posted a button at the target's client origin
+    /// (`msg_counts().0 == 1`), which is the wrong click the guard closes.
+    #[test]
+    fn click_on_an_element_without_a_rect_is_refused_and_never_posts() {
+        let fx = crate::fixture::Fixture::new();
+        let hwnd = fx.hwnd_i64();
+        // Collapse every child in place: no control then has a pixel to aim
+        // at (UIA drops zero-size children, so the walk falls back to the
+        // win32 backend, which reports the same zero-area rects). This is the
+        // real class: a rect with no area, whichever backend measured it.
+        for child in [fx.edit(), fx.edit_ro(), fx.button()] {
+            let moved = unsafe {
+                windows_sys::Win32::UI::WindowsAndMessaging::SetWindowPos(
+                    child,
+                    std::ptr::null_mut(),
+                    0,
+                    0,
+                    0,
+                    0,
+                    windows_sys::Win32::UI::WindowsAndMessaging::SWP_NOMOVE
+                        | windows_sys::Win32::UI::WindowsAndMessaging::SWP_NOZORDER
+                        | windows_sys::Win32::UI::WindowsAndMessaging::SWP_NOACTIVATE,
+                )
+            };
+            assert_ne!(moved, 0, "collapse a fixture child");
+        }
+        // The walk is asynchronous after ShowWindow, so poll for the entry
+        // and click the one it actually produced.
+        let (path, rect) = {
+            let t0 = std::time::Instant::now();
+            loop {
+                let m = element_model(fx.hwnd(), crate::UIA_DEPTH_LIMIT, 0);
+                let hit = m
+                    .entries
+                    .iter()
+                    .find(|e| e.get("offscreen") == Some(&Value::from(true)));
+                if let Some(e) = hit {
+                    break (
+                        entry_str(e, "path"),
+                        e.get("rect").cloned().unwrap_or(Value::Null),
+                    );
+                }
+                if t0.elapsed() > std::time::Duration::from_secs(10) {
+                    panic!("no zero-area entry appeared: {:?}", m.entries);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        };
+        crate::fixture::reset_msg_counts();
+        let actions = vec![serde_json::json!({"type": "click", "element": format!("path:{path}")})];
+        let out = do_burst(&DoArgs {
+            target: Some(serde_json::json!({ "hwnd": hwnd })),
+            ..DoArgs::new(&actions)
+        });
+        let payload = sc(&out);
+        let r = payload["results"][0].clone();
+        assert_eq!(r["ok"], Value::from(false), "refused, not clicked: {r}");
+        assert_eq!(r["code"], Value::from("offscreen_element"), "{r}");
+        let err = r["error"].as_str().unwrap_or("");
+        assert!(err.contains("scroll it into view"), "names the fix: {err}");
+        assert_ne!(
+            r["via"],
+            Value::from("posted-click"),
+            "no click may be posted: {r}"
+        );
+        let (down, up, ..) = crate::fixture::msg_counts();
+        assert_eq!((down, up), (0, 0), "no button message may be delivered");
+        assert_eq!(
+            payload["sendinput_calls"],
+            Value::from(0),
+            "no synthetic input may be sent"
+        );
+        println!("OFFSCREEN_CLICK_REFUSED_OK code=offscreen_element posts=0 rect={rect}");
+    }
 
     fn burst_first(actions: &[Value]) -> Map<String, Value> {
         let out = do_burst(&DoArgs::foreground(actions));
