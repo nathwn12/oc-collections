@@ -58,6 +58,8 @@ const WRITE_OUTPUT = z.object({
   exitCode: z.number().nullable().optional().describe('Exit code once exited, otherwise null; present only when waitMs > 0.'),
   dropped: z.number().optional().describe('Bytes the buffer discarded before this read; present only when waitMs > 0.'),
   matched: z.boolean().optional().describe('Whether the text matched `match`; present only when waitMs > 0.'),
+  incomplete: z.boolean().optional().describe('True when the bytes at cursor end inside a UTF-8 character that has not fully arrived; wait and read again from the same cursor (present only when waitMs > 0).'),
+  truncated: z.boolean().optional().describe('True when the child exited inside a UTF-8 character or escape sequence; its remaining bytes can never arrive (present only when waitMs > 0).'),
 });
 const RESIZE_OUTPUT = z.object({
   ok: z.boolean().describe('True when the size was applied.'),
@@ -78,6 +80,8 @@ const READ_OUTPUT = z.object({
   exitCode: z.number().nullable().describe('Exit code once exited, otherwise null.'),
   dropped: z.number().describe('Bytes the buffer discarded before this read.'),
   matched: z.boolean().describe('True when match was given and the text matched, or when no match was given.'),
+  incomplete: z.boolean().describe('True when the bytes at cursor end inside a UTF-8 character that has not fully arrived: read again from the same cursor once its bytes land.'),
+  truncated: z.boolean().describe('True when the child exited inside a UTF-8 character or escape sequence, so its remaining bytes can never arrive.'),
 });
 const SESSION_SHAPE = {
   sessionId: z.string(),
@@ -142,8 +146,8 @@ export function createServer(options = {}) {
         'Send keystrokes to a running session. newline (default true) appends a carriage return, which is what '
         + 'a shell or prompt is waiting for. Returns {ok}. Give waitMs (and optionally match, with the same '
         + 'semantics as pty_read) to read the answer in the same call: the response then also carries '
-        + '{data, cursor, exited, exitCode, dropped, matched}. Without waitMs nothing is read, so a caller that '
-        + 'expects output must either pass waitMs here or call pty_read next.',
+        + '{data, cursor, exited, exitCode, dropped, matched, incomplete, truncated}. Without waitMs nothing '
+        + 'is read, so a caller that expects output must either pass waitMs here or call pty_read next.',
       inputSchema: z.object({
         sessionId: z.string().describe('Session id returned by pty_spawn.'),
         data: z.string().describe('Text to send. Escape sequences such as \\u0003 (Ctrl+C) are sent literally.'),
@@ -170,11 +174,17 @@ export function createServer(options = {}) {
     {
       title: 'Read terminal output',
       description:
-        'Read output from a session, starting at cursor, and return {data, cursor, exited, exitCode, dropped, matched}. '
+        'Read output from a session, starting at cursor, and return {data, cursor, exited, exitCode, dropped, '
+        + 'matched, incomplete, truncated}. '
         + 'Pass the cursor from the previous read to get only new output; omit it to read from the oldest byte '
-        + 'still buffered. maxBytes bounds the returned data: a read may exceed it only to finish the one '
-        + 'UTF-8 character or escape sequence that straddles the end, and never by more than 65536 bytes. '
+        + 'still buffered. maxBytes bounds the returned data. A read may exceed it to finish the one UTF-8 '
+        + 'character or escape sequence that straddles the end, and it stops widening at maxBytes + 65536 '
+        + 'bytes: if an escape sequence is still unfinished there, the whole 65536-byte overage is returned '
+        + 'as literal text and the cursor advances. The overage is never more than 65536 bytes. '
         + 'dropped > 0 means the ring buffer discarded that many bytes before this read. '
+        + 'incomplete: true means the bytes at cursor end inside a UTF-8 character still in flight: wait and '
+        + 'read again from that cursor rather than assuming the character is lost. truncated: true means the '
+        + 'child exited inside a UTF-8 character or escape sequence, so the rest can never arrive. '
         + 'waitMs waits for the session to produce output (or exit) before returning; with stripAnsi '
         + 'a chunk holding only escape sequences does not count, so the read keeps waiting for visible text. '
         + 'match is a regular expression that makes the read wait until the text from cursor matches it, or the '

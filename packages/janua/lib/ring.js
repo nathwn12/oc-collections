@@ -26,8 +26,12 @@ export class OutputRing {
   }
 
   append(text) {
-    if (!text) return;
-    const chunk = Buffer.from(text, 'utf8');
+    if (!text || (typeof text === 'string' && text.length === 0)) return;
+    // A string can only encode whole characters, but a Buffer is raw bytes and
+    // may end inside one (a caller holding a partial write); both append into
+    // the same byte stream so the tail checks below stay meaningful.
+    const chunk = Buffer.isBuffer(text) ? text : Buffer.from(text, 'utf8');
+    if (chunk.length === 0) return;
     this.#chunks.push(chunk);
     this.total += chunk.length;
 
@@ -51,36 +55,65 @@ export class OutputRing {
    * Returns the bytes clamped into the retained window, the absolute offset
    * they end at, and how many bytes between the requested cursor and the
    * retained window were dropped before the caller could read them.
+   *
+   * `atEnd` says the child has exited, so no byte can arrive after `total`:
+   * a character cut by the end of the stream is flushed then instead of being
+   * held. On a live stream the tail cut is held back, because ending the slice
+   * inside a character decodes it as U+FFFD and moves the cursor into that
+   * character, so the remainder decodes as garbage too.
+   *
+   * `incomplete` (live) means `end` stops before a character whose remaining
+   * bytes have not arrived; a repeat from `end` must wait for them. `truncated`
+   * (exited) means the stream itself ended inside a character, whose bytes are
+   * returned decoded (U+FFFD).
    */
-  read(cursor, maxBytes) {
+  read(cursor, maxBytes, options = {}) {
     const wanted = Number.isFinite(cursor) ? Math.max(0, Math.floor(cursor)) : this.base;
     const clamped = Math.min(wanted, this.total);
     const from = Math.max(clamped, this.base);
     const dropped = from - clamped;
     const limit = Math.min(this.total, from + Math.max(0, Math.floor(maxBytes)));
-    // A cut inside a multi-byte character decodes as U+FFFD and moves the cursor
-    // into that character, so the remainder decodes as garbage too. End the
-    // slice on a character boundary and leave that character for the next read.
-    const end = this.#characterBoundary(from, limit);
-    return { data: this.#slice(from, end), dropped, start: from, end };
+    const boundary = this.#characterBoundary(from, limit, options.atEnd === true);
+    return {
+      data: this.#slice(from, boundary.end),
+      dropped,
+      start: from,
+      end: boundary.end,
+      incomplete: boundary.incomplete,
+      truncated: boundary.truncated,
+    };
   }
 
-  /** End of the last whole UTF-8 character in [from, limit), widened to one whole character. */
-  #characterBoundary(from, limit) {
-    if (limit <= from || limit >= this.total) return limit;
+  /**
+   * End of the last whole UTF-8 character in [from, limit), widened to one
+   * whole character, with whether the tail was held or flushed.
+   */
+  #characterBoundary(from, limit, atEnd) {
+    if (limit <= from) return { end: limit, incomplete: false, truncated: false };
     // Walk back over continuation bytes (0x80..0xBF) to the lead byte of the
     // character that `limit` lands inside.
-    let stop = limit;
-    while (stop > from && (this.#byteAt(stop) & 0xc0) === 0x80) stop -= 1;
-    if (stop === limit) return limit; // already on a boundary
-    if (stop > from) return stop;
-    // The window is narrower than the character itself: return the whole
-    // character rather than nothing, so maxBytes: 1 still makes progress.
-    let width = 1;
-    while (width < 4 && stop + width < this.total && (this.#byteAt(stop + width) & 0xc0) === 0x80) {
-      width += 1;
+    let stop = limit - 1;
+    while (stop > this.base && (this.#byteAt(stop) & 0xc0) === 0x80) stop -= 1;
+    const lead = this.#byteAt(stop);
+    if ((lead & 0xc0) === 0x80) {
+      // The window base itself cuts a character, so its start is not retained.
+      return { end: limit, incomplete: false, truncated: false };
     }
-    return Math.min(this.total, from + width);
+    const width = lead < 0x80 ? 1 : lead < 0xe0 ? 2 : lead < 0xf0 ? 3 : lead < 0xf8 ? 4 : 1;
+    const characterEnd = stop + width;
+    if (characterEnd <= limit) {
+      return { end: limit, incomplete: false, truncated: false }; // already on a boundary
+    }
+    if (characterEnd <= this.total) {
+      // The rest of the character is already buffered: widen to it rather than
+      // nothing, so maxBytes: 1 still makes progress.
+      return { end: characterEnd, incomplete: false, truncated: false };
+    }
+    // The stream itself ends inside this character. A live stream holds the
+    // cursor before it and returns only the complete prefix; after exit the
+    // fragment is flushed (decoding as U+FFFD) and marked truncated.
+    if (atEnd) return { end: this.total, incomplete: false, truncated: true };
+    return { end: Math.max(from, stop), incomplete: true, truncated: false };
   }
 
   #byteAt(offset) {

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { SessionManager } from '../lib/sessions.js';
-import { incompleteEscapeStart } from '../lib/ansi.js';
+import { incompleteEscapeStart, stripAnsi } from '../lib/ansi.js';
 
 test('a maxBytes cut inside a multi-byte character loses nothing', async (t) => {
   const manager = new SessionManager();
@@ -57,6 +57,25 @@ test('incompleteEscapeStart names the head of a split sequence', () => {
   assert.equal(incompleteEscapeStart('x\u001b]0;title\u001b\\y'), -1, 'an ST-terminated OSC is complete');
 });
 
+test('stripAnsi drops a sequence the end of the stream cut off', () => {
+  assert.equal(stripAnsi('ab\u001b[3'), 'ab\u001b[3', 'the default keeps its current scope');
+  assert.equal(
+    stripAnsi('ab\u001b[3', { dropIncompleteTail: true }),
+    'ab',
+    'an unterminated sequence at end-of-stream is a fragment, not text',
+  );
+  assert.equal(
+    stripAnsi('ab\u001b[31mred', { dropIncompleteTail: true }),
+    'abred',
+    'complete sequences are still stripped normally',
+  );
+  assert.equal(
+    stripAnsi('ab\u001b]0;partial-title', { dropIncompleteTail: true }),
+    'ab',
+    'an unterminated OSC body must not leak as text',
+  );
+});
+
 test('an escape sequence cut by the read window never leaks into data', async (t) => {
   const manager = new SessionManager();
   t.after(() => manager.killAll());
@@ -97,6 +116,76 @@ test('an escape sequence cut by the read window never leaks into data', async (t
     !chunks.some((chunk) => /\[?\d+[A-Za-z]/.test(chunk)),
     `no chunk may carry a sequence tail as literal text: ${JSON.stringify(chunks)}`,
   );
+});
+
+test('a four-byte character split across two writes reassembles without U+FFFD', async (t) => {
+  const manager = new SessionManager();
+  t.after(() => manager.killAll());
+
+  // The first write carries three of the emoji's four bytes; the read below
+  // lands between them. The existing coverage writes one complete string, so
+  // it never leaves a character cut by the buffer tail.
+  const { sessionId } = manager.spawn({
+    command: process.execPath,
+    args: [
+      '-e',
+      'process.stdout.write(Buffer.from([0xF0,0x9F,0x98]));'
+      + 'setTimeout(() => process.stdout.write(Buffer.from([0x80])), 600);'
+      + 'setInterval(() => {}, 1000);',
+    ],
+    description: 'emoji split across two stdout writes',
+  });
+
+  const between = await manager.read(sessionId, { cursor: 0, maxBytes: 2, waitMs: 300 });
+  assert.ok(
+    !between.data.includes('\uFFFD'),
+    `the first three bytes must not surface as a replacement character: ${JSON.stringify(between.data)}`,
+  );
+
+  let cursor = between.cursor;
+  let collected = between.data;
+  const deadline = Date.now() + 8000;
+  while (collected !== '😀' && Date.now() < deadline) {
+    const state = await manager.read(sessionId, { cursor, maxBytes: 2, waitMs: 1000 });
+    assert.ok(
+      !state.data.includes('\uFFFD'),
+      `no read may carry a replacement character: ${JSON.stringify(state.data)}`,
+    );
+    assert.ok(!state.data.includes('\u001b'), 'no escape byte may leak into a stripped reply');
+    collected += state.data;
+    cursor = state.cursor;
+    if (state.data === '' && state.exited) break;
+  }
+
+  assert.equal(collected, '😀', 'successive reads must rebuild the exact character');
+  assert.equal(Buffer.byteLength(collected, 'utf8'), 4, 'the rebuild must be the same four bytes');
+});
+
+test('a child killed inside an escape sequence never returns its ESC bytes as data', async (t) => {
+  const manager = new SessionManager();
+  t.after(() => manager.killAll());
+
+  // An incomplete CSI is written and the child is killed before its final
+  // byte. The exit path must drop that fragment, not emit ESC as literal text.
+  const { sessionId } = manager.spawn({
+    command: process.execPath,
+    args: ['-e', "process.stdout.write('ab\\u001b[38;5;1');setInterval(() => {}, 1000);"],
+    description: 'truncated colour sequence at kill time',
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  await manager.kill(sessionId);
+
+  const state = await manager.read(sessionId, { cursor: 0, maxBytes: 65536, waitMs: 2000 });
+  assert.ok(
+    !state.data.includes('\u001b'),
+    `no escape byte may reach data, got ${JSON.stringify(state.data)}`,
+  );
+  assert.ok(
+    !state.data.includes('38;5;1'),
+    `the cut sequence's parameters must not leak as text: ${JSON.stringify(state.data)}`,
+  );
+  assert.equal(state.data, 'ab', 'only the visible text before the cut sequence is returned');
 });
 
 test('description is optional, bounded, and defaults to the title', async (t) => {

@@ -36,10 +36,13 @@ export const MAX_LIST_LIMIT = 200;
 // straddle its end, and a sequence can start on the window's first byte (a
 // ConPTY opens every session with escape-only chunks). A read is allowed to
 // reach past maxBytes only to finish that one straddling piece, never to the
-// rest of the buffer, and this is how far that reach may go. 64 KiB is far
-// more than any terminal control sequence needs and small enough that a read
-// can never hand the caller a buffered megabyte by accident. It is
-// user-visible, so pty_read's description and docs/GUIDE.md state it too.
+// rest of the buffer, and this is how far that reach may go. A sequence that
+// is still unfinished at this ceiling is returned as literal text (the whole
+// overage, bounded here) and the cursor advances, rather than widening to the
+// rest of the buffer. 64 KiB is far more than any terminal control sequence
+// needs and small enough that a read can never hand the caller a buffered
+// megabyte by accident. It is user-visible, so pty_read's description and
+// docs/GUIDE.md state it too.
 export const MAX_SEQUENCE_OVERAGE_BYTES = 64 * 1024;
 
 const DEFAULT_PATHEXT = '.COM;.EXE;.BAT;.CMD';
@@ -508,6 +511,8 @@ export class SessionManager {
         exitCode: session.exitCode,
         dropped: reply.dropped,
         matched: pattern === null ? true : pattern.test(reply.data),
+        incomplete: reply.incomplete === true,
+        truncated: reply.truncated === true,
       };
 
       if (pattern !== null) {
@@ -516,7 +521,9 @@ export class SessionManager {
         // matches, the child exits, the deadline passes, or the window is full
         // and the pattern is not in it — the caller then reads on from the
         // returned cursor, so a pattern past the window is not silently lost.
-        const windowFull = reply.cursor < session.ring.total;
+        // A tail held before an unfinished character is not a full window: its
+        // remaining bytes can still complete the pattern, so keep waiting.
+        const windowFull = reply.cursor < session.ring.total && !reply.incomplete;
         if (result.matched || result.exited || atDeadline || windowFull) return result;
         await waitForChange(session, deadline - Date.now());
         continue;
@@ -552,19 +559,24 @@ export class SessionManager {
       session.ring.total,
       from + maxBytes + MAX_SEQUENCE_OVERAGE_BYTES,
     );
+    const atEnd = session.exited;
     let cursor = from;
     let data = '';
     let dropped = 0;
+    let incomplete = false;
+    let truncated = false;
 
     for (;;) {
       const room = limit - cursor;
       // A cursor past the end is clamped to the end, the way the ring reads
       // it: leaving it beyond total would make every later read wait for a
       // stream that already finished.
-      if (room <= 0) return { data, cursor: Math.min(cursor, session.ring.total), dropped };
+      if (room <= 0) {
+        return { data, cursor: Math.min(cursor, session.ring.total), dropped, incomplete, truncated };
+      }
       const width = Math.min(maxBytes, room);
-      if (!(width >= 1)) return { data, cursor, dropped }; // a zero-width read cannot advance
-      let slice = session.ring.read(cursor, width);
+      if (!(width >= 1)) return { data, cursor, dropped, incomplete, truncated };
+      let slice = session.ring.read(cursor, width, { atEnd });
       if (cursor === from) dropped = slice.dropped;
       let text = slice.data.toString('utf8');
       let heldBack = raw ? -1 : incompleteEscapeStart(text);
@@ -580,14 +592,14 @@ export class SessionManager {
         while (end < limit) {
           end = Math.min(limit, end + step);
           step *= 2;
-          slice = session.ring.read(cursor, end - cursor);
+          slice = session.ring.read(cursor, end - cursor, { atEnd });
           text = slice.data.toString('utf8');
           const sequenceEnd = escapeSequenceEnd(text, 0);
           if (sequenceEnd !== -1) {
             // Cut exactly at the sequence end: bytes past it belong to the next
             // read and are not part of this one's overage.
             const width = Buffer.byteLength(text.slice(0, sequenceEnd), 'utf8');
-            slice = session.ring.read(cursor, width);
+            slice = session.ring.read(cursor, width, { atEnd });
             text = slice.data.toString('utf8');
             break;
           }
@@ -595,25 +607,43 @@ export class SessionManager {
         heldBack = incompleteEscapeStart(text);
       }
 
-      if (raw) return { data: data + text, cursor: slice.end, dropped };
+      if (raw) {
+        return {
+          data: data + text,
+          cursor: slice.end,
+          dropped,
+          incomplete: slice.incomplete,
+          truncated: slice.truncated,
+        };
+      }
 
       if (session.exited) {
         // Nothing more can arrive, so a fragment frozen here is truncated, not
         // split: flush it (the ring ends on a whole character) and advance,
-        // rather than strand the cursor on bytes that will never complete.
-        data += stripAnsi(text);
+        // rather than strand the cursor on bytes that will never complete. An
+        // unfinished escape sequence at the very end has no final byte to
+        // honour, so its bytes are dropped instead of emitted as literal ESC
+        // text; a raw read (above) still returns them.
+        const tail = incompleteEscapeStart(text);
+        data += stripAnsi(text, { dropIncompleteTail: true });
+        if (slice.truncated || tail !== -1) truncated = true;
         cursor = slice.end;
-        if (data !== '' || cursor >= limit) return { data, cursor, dropped };
+        if (data !== '' || cursor >= limit) return { data, cursor, dropped, incomplete, truncated };
         continue;
       }
 
       if (heldBack === -1) {
         data += stripAnsi(text);
         cursor = slice.end;
+        incomplete = slice.incomplete;
         // An escape-only window carries nothing for the caller; skip it inside
         // the same reply so one read still returns visible text. The ceiling
         // caps how far that can go, and the next read resumes from the cursor.
-        if (data !== '' || cursor >= limit) return { data, cursor, dropped };
+        // A tail held before an unfinished character is not skippable: the
+        // cursor cannot move past it, so return the typed condition instead.
+        if (data !== '' || cursor >= limit || incomplete) {
+          return { data, cursor, dropped, incomplete, truncated };
+        }
         continue;
       }
 
@@ -634,7 +664,8 @@ export class SessionManager {
           data: data + prefix,
           cursor: nextCursor,
           dropped,
-          incomplete: data + prefix === '',
+          incomplete: slice.incomplete || data + prefix === '',
+          truncated,
         };
       }
 
@@ -642,16 +673,18 @@ export class SessionManager {
       // ceiling. A run this long is not a control sequence a terminal would
       // honour, so flush it as text and let the cursor move rather than spin on
       // it; the reply stays bounded by maxBytes + MAX_SEQUENCE_OVERAGE_BYTES.
-      if (slice.end < session.ring.total) {
+      // `limit < total` is what proves the ceiling, not the stream's tail, is
+      // what stopped the widen: at the tail the sequence is held below.
+      if (limit < session.ring.total) {
         data += stripAnsi(text);
-        return { data, cursor: slice.end, dropped };
+        return { data, cursor: slice.end, dropped, incomplete, truncated };
       }
 
       // The buffer itself ends inside the sequence and nothing more has
       // arrived: hold the cursor at its first byte so the next read re-decodes
       // it whole. Any text skipped before it is still returned; with no text,
       // the caller waits for the tail rather than reading the same window.
-      return { data, cursor, dropped, incomplete: data === '' };
+      return { data, cursor, dropped, incomplete: true, truncated };
     }
   }
 
