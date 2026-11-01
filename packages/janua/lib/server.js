@@ -5,7 +5,7 @@
 // and never escapes into the JSON-RPC transport.
 
 import { createRequire } from 'node:module';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { SessionManager } from './sessions.js';
 import { toolFailure, toolSuccess } from './errors.js';
@@ -37,22 +37,24 @@ const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: 
 const MUTATING = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false };
 const DESTRUCTIVE = { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false };
 
-// Output shapes mirror the payloads exactly, so structuredContent is declared
-// rather than merely sent and clients can rely on the fields.
-const SPAWN_SHAPE = {
+// Output schemas mirror the payloads exactly, so structuredContent is declared
+// rather than merely sent and clients can rely on the fields. v2 wants a schema
+// object here, not a raw shape: a bare { field: z.string() } record is the
+// deprecated form and is only auto-wrapped for inputSchema.
+const SPAWN_OUTPUT = z.object({
   sessionId: z.string().describe('Session id to pass to the other tools.'),
   pid: z.number().describe('Process id of the program in the terminal.'),
   title: z.string().describe('Label shown by pty_list.'),
-};
-const OK_SHAPE = { ok: z.boolean().describe('True when the call did what it says.') };
-const READ_SHAPE = {
+});
+const OK_OUTPUT = z.object({ ok: z.boolean().describe('True when the call did what it says.') });
+const READ_OUTPUT = z.object({
   data: z.string().describe('Output from cursor onward.'),
   cursor: z.number().describe('Byte offset to pass to the next read.'),
   exited: z.boolean().describe('Whether the program has exited.'),
   exitCode: z.number().nullable().describe('Exit code once exited, otherwise null.'),
   dropped: z.number().describe('Bytes the buffer discarded before this read.'),
   matched: z.boolean().describe('True when match was given and the text matched, or when no match was given.'),
-};
+});
 const SESSION_SHAPE = {
   sessionId: z.string(),
   pid: z.number(),
@@ -63,11 +65,11 @@ const SESSION_SHAPE = {
   bytes: z.number(),
   createdAt: z.string(),
 };
-const LIST_SHAPE = {
+const LIST_OUTPUT = z.object({
   sessions: z.array(z.object(SESSION_SHAPE)).describe('This page, newest last.'),
   total: z.number().describe('Sessions known in total, not just this page.'),
   nextOffset: z.number().nullable().describe('Offset of the next page, or null on the last one.'),
-};
+});
 
 export function createServer(options = {}) {
   const manager = options.manager ?? new SessionManager();
@@ -87,7 +89,7 @@ export function createServer(options = {}) {
         + 'PATH and PATHEXT, and a .cmd/.bat shim (npm, npx, pnpm, yarn, tsc) runs through cmd /c with its '
         + 'arguments quoted. Use this for anything you need to talk to '
         + '(dev servers, REPLs, installers that prompt), not for commands whose output you want once.',
-      inputSchema: {
+      inputSchema: z.object({
         command: z.string().describe('Executable to run: a name resolved on PATH, or an absolute path. No shell string.'),
         args: z.array(z.string()).optional().describe('Arguments for command, one array entry each.'),
         cwd: z.string().optional().describe('Working directory for the program. Must exist. Defaults to the server process cwd.'),
@@ -96,8 +98,8 @@ export function createServer(options = {}) {
         rows: z.number().int().min(1).max(1000).optional().describe('Terminal rows (default 24).'),
         title: z.string().optional().describe('Short label for this session, shown by pty_list. Defaults to the command name.'),
         description: z.string().describe('5-10 words saying what this session is for, so a later read makes sense on its own.'),
-      },
-      outputSchema: SPAWN_SHAPE,
+      }),
+      outputSchema: SPAWN_OUTPUT,
       annotations: MUTATING,
     },
     wrap(async (args) => manager.spawn(args)),
@@ -110,12 +112,12 @@ export function createServer(options = {}) {
       description:
         'Send keystrokes to a running session. newline (default true) appends a carriage return, which is what '
         + 'a shell or prompt is waiting for. Output produced in response is not returned here: read it with pty_read.',
-      inputSchema: {
+      inputSchema: z.object({
         sessionId: z.string().describe('Session id returned by pty_spawn.'),
         data: z.string().describe('Text to send. Escape sequences such as \\u0003 (Ctrl+C) are sent literally.'),
         newline: z.boolean().optional().describe('Append a carriage return after data (default true).'),
-      },
-      outputSchema: OK_SHAPE,
+      }),
+      outputSchema: OK_OUTPUT,
       annotations: MUTATING,
     },
     wrap(async ({ sessionId, data, newline }) => manager.write(sessionId, data, newline ?? true)),
@@ -134,15 +136,15 @@ export function createServer(options = {}) {
         + 'match is a regular expression that makes the read wait until the text from cursor matches it, or the '
         + 'session exits, or waitMs runs out, then reports matched: false on timeout — so a non-zero waitMs is what '
         + 'makes match useful.',
-      inputSchema: {
+      inputSchema: z.object({
         sessionId: z.string().describe('Session id returned by pty_spawn.'),
         cursor: z.number().int().min(0).optional().describe('Byte offset from the previous read. Omit to read from the start of the buffer.'),
         maxBytes: z.number().int().min(1).max(1048576).optional().describe('Maximum bytes to return (default 8000).'),
         waitMs: z.number().int().min(0).max(10000).optional().describe('Wait up to this many milliseconds for new output (default 0).'),
         stripAnsi: z.boolean().optional().describe('Remove ANSI escape sequences from data (default true). The cursor still counts raw bytes.'),
         match: z.string().optional().describe('Regular expression (at most 200 characters) the text from cursor must match before the read returns; with stripAnsi false it matches the raw text.'),
-      },
-      outputSchema: READ_SHAPE,
+      }),
+      outputSchema: READ_OUTPUT,
       annotations: READ_ONLY,
     },
     wrap(async ({ sessionId, cursor, maxBytes, waitMs, stripAnsi, match }) =>
@@ -162,11 +164,11 @@ export function createServer(options = {}) {
       description:
         'Terminate a session\'s program. Idempotent: killing an already-exited session returns ok. '
         + 'The session stays listed with its exit code so its last output can still be read.',
-      inputSchema: {
+      inputSchema: z.object({
         sessionId: z.string().describe('Session id returned by pty_spawn.'),
         signal: z.string().optional().describe('POSIX signal name (default SIGTERM). Ignored on Windows, where the process tree is terminated.'),
-      },
-      outputSchema: OK_SHAPE,
+      }),
+      outputSchema: OK_OUTPUT,
       annotations: DESTRUCTIVE,
     },
     wrap(async ({ sessionId, signal }) => manager.kill(sessionId, signal ?? 'SIGTERM')),
@@ -180,11 +182,11 @@ export function createServer(options = {}) {
         'List sessions this server knows about, newest last, one page at a time: sessionId, pid, title, command, '
         + 'exited, exitCode, bytes emitted, and createdAt. Returns {sessions, total, nextOffset}: total counts every '
         + 'session known, and nextOffset is null on the last page. Use it to recover a session id you lost.',
-      inputSchema: {
+      inputSchema: z.object({
         limit: z.number().int().min(1).max(200).optional().describe('Sessions to return (default 50, max 200).'),
         offset: z.number().int().min(0).optional().describe('Sessions to skip from the oldest (default 0).'),
-      },
-      outputSchema: LIST_SHAPE,
+      }),
+      outputSchema: LIST_OUTPUT,
       annotations: READ_ONLY,
     },
     wrap(async ({ limit, offset }) => manager.list({ limit, offset })),
