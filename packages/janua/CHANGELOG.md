@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-01
+
+### Added
+
+- `pty_read` takes `match`, a regular expression it waits for, and returns `matched`: the read returns
+  once the text from the cursor matches, or reports `matched: false` when `waitMs` runs out or the
+  session exits, so a non-zero `waitMs` is what makes it useful.
+- `pty_list` is paged with `limit`/`offset` and returns `{sessions, total, nextOffset}`, so a session
+  list longer than one page is still walkable and a lost session id is recoverable.
+- Every tool declares MCP `annotations` (read-only, mutating, destructive) and an `outputSchema`, so a
+  client can validate a result and judge a call before making it.
+
+### Changed
+
+- Windows: `pty_spawn` resolves a bare `command` through `PATH` x `PATHEXT` and runs a `.cmd`/`.bat`
+  shim (`npm`, `npx`, `pnpm`, `yarn`, `tsc`) through `cmd /c`, because `CreateProcess` consults
+  neither.
+- `pty_read` waits for visible text instead of returning an escape-only chunk: the cursor and title
+  sequences ConPTY emits ahead of any output no longer end a read early.
+- Migrated to MCP TypeScript SDK v2 (`@modelcontextprotocol/server` 2.4.0).
+
 ## [0.1.0] - 2026-10-31
 
 ### Added
