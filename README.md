@@ -4,7 +4,7 @@ OpenCode plugins, MCP servers and tooling by nathwn12.
 
 Each package installs on its own. There is no bundle and no all-in-one — you take one thing, not the set.
 
-## Usage
+## Install
 
 **[Browse `packages/`](https://github.com/nathwn12/oc-collections/tree/main/packages)**
 
@@ -44,6 +44,7 @@ npm run pack:check
 
 Releases use tags of the form `<package>@<version>`. The release workflow publishes over OIDC with provenance and no stored token.
 
-## License
+## Links
 
-MIT. See [LICENSE](LICENSE).
+- [Releases](https://github.com/nathwn12/oc-collections/releases)
+- [MIT](LICENSE)
