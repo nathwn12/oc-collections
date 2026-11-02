@@ -5,6 +5,10 @@
 //     the exit code and the tail of its output can still be collected;
 //   - the cap counts every known session, but exited sessions are purged first,
 //     so a long-lived server is not wedged by history;
+//   - a session can carry a name, and every lookup accepts either the id or the
+//     name, so a caller can keep a stable handle instead of a UUID;
+//   - `run` drives one fresh PTY to completion in a single call: spawn, write
+//     stdin, read in short slices, stop on exit, match or timeout;
 //   - nothing here throws a raw node-pty error across the boundary: spawn and
 //     write failures become typed JanuaError codes.
 
@@ -27,10 +31,28 @@ export const DEFAULT_COLS = 80;
 export const DEFAULT_ROWS = 24;
 // The same bound pty_spawn's schema enforces on a terminal dimension.
 export const MAX_DIMENSION = 1000;
-export const DEFAULT_MAX_SESSIONS = 16;
+export const DEFAULT_MAX_SESSIONS = 32;
 export const DEFAULT_MAX_BUFFER_BYTES = 1024 * 1024;
 export const DEFAULT_LIST_LIMIT = 50;
 export const MAX_LIST_LIMIT = 200;
+
+// One-shot run bounds. timeoutMs is the whole call (spawn, stdin, read), and
+// maxBytes is both the default and the ceiling of the returned data, so a run
+// can never hand back more than the ring retains.
+export const DEFAULT_RUN_TIMEOUT_MS = 120_000;
+export const MAX_RUN_TIMEOUT_MS = 3_600_000;
+export const MAX_RUN_BYTES = 1024 * 1024;
+// A run reads in short slices so a match or a timeout is noticed promptly
+// instead of after one long blocking read.
+export const RUN_SLICE_MS = 250;
+const RUN_READ_CHUNK = MAX_RUN_BYTES;
+// How much of the already-read text a match pattern is tested against. The
+// pattern must be able to span chunk boundaries; a match needing more context
+// than this is beyond what any prompt or marker would ask for.
+const RUN_SCAN_WINDOW = 1024 * 1024;
+
+export const MAX_NAME_CHARS = 64;
+export const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 // maxBytes is the read's data contract, but a character or escape sequence can
 // straddle its end, and a sequence can start on the window's first byte (a
@@ -193,6 +215,84 @@ function resolveCwd(cwd) {
   return cwd;
 }
 
+// A session name is a stable handle a caller can remember: a letter or digit
+// first, then letters, digits, dot, underscore and dash, 1..64 characters.
+export function resolveName(name) {
+  if (name === undefined || name === null) return null;
+  if (typeof name !== 'string') throw invalidArgs('name must be a string');
+  if (!NAME_PATTERN.test(name)) {
+    throw invalidArgs(
+      `name must be 1-${MAX_NAME_CHARS} characters matching ${NAME_PATTERN.source}`
+      + ` (a letter or digit first, then letters, digits, ".", "_" or "-"), got ${describeCause(name)}`,
+    );
+  }
+  return name;
+}
+
+function boolOption(name, value) {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'boolean') throw invalidArgs(`${name} must be a boolean`);
+  return value;
+}
+
+function resolveRunTimeout(timeoutMs) {
+  if (timeoutMs === undefined || timeoutMs === null) return DEFAULT_RUN_TIMEOUT_MS;
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_RUN_TIMEOUT_MS) {
+    throw invalidArgs(
+      `timeoutMs must be an integer between 1 and ${MAX_RUN_TIMEOUT_MS}, got ${describeCause(timeoutMs)}`,
+    );
+  }
+  return timeoutMs;
+}
+
+function resolveRunMaxBytes(maxBytes) {
+  if (maxBytes === undefined || maxBytes === null) return MAX_RUN_BYTES;
+  if (!Number.isInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_RUN_BYTES) {
+    throw invalidArgs(
+      `maxBytes must be an integer between 1 and ${MAX_RUN_BYTES}, got ${describeCause(maxBytes)}`,
+    );
+  }
+  return maxBytes;
+}
+
+// shell:true means the caller already wrote a command line, so args must be
+// empty. POSIX gets /bin/sh -c; Windows gets cmd /d /s /c with the line passed
+// as one pre-escaped CommandLine string, the same way a batch shim is started,
+// because node-pty would otherwise backslash-escape the embedded quotes.
+function shellPlan(command, env) {
+  if (process.platform !== 'win32') {
+    return { file: '/bin/sh', args: ['-c', command], viaShell: false, resolved: null };
+  }
+  const comspec = envValue(env, 'COMSPEC') || 'cmd.exe';
+  return {
+    file: comspec,
+    args: `/d /s /c "${command}"`,
+    viaShell: true,
+    resolved: null,
+  };
+}
+
+// The longest prefix of `text` whose UTF-8 encoding fits in maxBytes, cut on a
+// character boundary. The ring already hands back whole characters; this is
+// for the one cut run's own maxBytes makes, so a capped reply never ends in
+// U+FFFD.
+function takeUtf8Prefix(text, maxBytes) {
+  if (maxBytes <= 0) return '';
+  const buffer = Buffer.from(text, 'utf8');
+  if (buffer.length <= maxBytes) return text;
+  let end = maxBytes;
+  while (end > 0 && (buffer[end] & 0xc0) === 0x80) end -= 1;
+  return buffer.subarray(0, end).toString('utf8');
+}
+
+// Keep a bounded tail of the run's output for pattern matching, so a very
+// chatty command cannot grow the matcher's memory without limit.
+function appendScanWindow(scan, text) {
+  if (text === '') return scan;
+  const next = scan + text;
+  return next.length > RUN_SCAN_WINDOW ? next.slice(-RUN_SCAN_WINDOW) : next;
+}
+
 // A resize dimension: an omitted one keeps the size in force, so a caller that
 // only widens a TUI does not have to restate its height. Anything given must be
 // the same 1..1000 integer pty_spawn's schema accepts.
@@ -349,11 +449,223 @@ export class SessionManager {
     }
     const args = (input.args ?? []).map((arg) => String(arg));
     const cwd = resolveCwd(input.cwd);
-    const cols = input.cols ?? DEFAULT_COLS;
-    const rows = input.rows ?? DEFAULT_ROWS;
+    const name = resolveName(input.name);
+    const reuse = boolOption('reuse', input.reuse) !== false;
+    let stale = null;
+
+    if (name !== null) {
+      const existing = this.#byName(name);
+      if (existing) {
+        if (!existing.exited) {
+          if (!reuse) {
+            throw invalidArgs(
+              `name_taken: "${name}" is already used by live session ${existing.sessionId}; `
+              + 'kill it first or omit reuse:false',
+            );
+          }
+          // A live name is a handle to the session that already has it: a
+          // caller that lost the id gets the same terminal back, not a second
+          // copy of the program.
+          return {
+            sessionId: existing.sessionId,
+            pid: existing.pid,
+            title: existing.title,
+            name,
+            reused: true,
+          };
+        }
+        // An exited session does not keep its name: the new session takes it,
+        // and the old one stays readable under its id. The name is only
+        // released once the new session exists, so a failed spawn leaves the
+        // old one intact.
+        stale = existing;
+      }
+    }
+
     const title = (typeof input.title === 'string' && input.title.trim()) || basename(command) || command;
     const description = resolveDescription(input.description, title);
+    const session = this.#create({
+      command,
+      args,
+      cwd,
+      name,
+      env: input.env,
+      cols: input.cols ?? DEFAULT_COLS,
+      rows: input.rows ?? DEFAULT_ROWS,
+      title,
+      description,
+    });
+    if (stale) stale.name = null;
+    return {
+      sessionId: session.sessionId,
+      pid: session.pid,
+      title: session.title,
+      name: session.name,
+      reused: false,
+    };
+  }
 
+  // One call for a command whose output is wanted once: spawn a fresh PTY,
+  // write optional stdin immediately, then read in short slices until the child
+  // exits, `match` appears, or timeoutMs runs out. On match or timeout the tree
+  // is killed unless keep is true, so a run never leaves a program behind by
+  // accident. maxBytes caps the returned data while the loop keeps draining, so
+  // `bytes` still reports everything the command produced.
+  async run(input = {}) {
+    const startedAt = Date.now();
+    const command = typeof input.command === 'string' ? input.command.trim() : '';
+    if (!command) throw invalidArgs('command must be a non-empty string');
+    if (input.args !== undefined && !Array.isArray(input.args)) {
+      throw invalidArgs('args must be an array of strings');
+    }
+    const args = (input.args ?? []).map((arg) => String(arg));
+    const shell = boolOption('shell', input.shell) === true;
+    if (shell && args.length > 0) {
+      throw invalidArgs('with shell:true the whole command line goes in command; args must be empty');
+    }
+    const cwd = resolveCwd(input.cwd);
+    const timeoutMs = resolveRunTimeout(input.timeoutMs);
+    const maxBytes = resolveRunMaxBytes(input.maxBytes);
+    const keepAnsi = boolOption('stripAnsi', input.stripAnsi) === false;
+    const keep = boolOption('keep', input.keep) === true;
+    if (input.stdin !== undefined && typeof input.stdin !== 'string') {
+      throw invalidArgs('stdin must be a string');
+    }
+    const pattern = compileMatch(input.match);
+    const name = resolveName(input.name);
+    let stale = null;
+
+    if (name !== null) {
+      const existing = this.#byName(name);
+      if (existing) {
+        if (!existing.exited) {
+          throw invalidArgs(
+            `name_taken: "${name}" is already used by live session ${existing.sessionId}; `
+            + 'run never reuses a live session, so pick another name or kill that one',
+          );
+        }
+        stale = existing;
+      }
+    }
+
+    const label = shell ? command.split(/\s+/)[0] : basename(command);
+    const title = name ?? label ?? command;
+    const description = `one-shot: ${label}`.slice(0, MAX_DESCRIPTION_CHARS);
+    const session = this.#create({
+      command,
+      args,
+      cwd,
+      name,
+      shell,
+      env: input.env,
+      cols: DEFAULT_COLS,
+      rows: DEFAULT_ROWS,
+      title,
+      description,
+    });
+    if (stale) stale.name = null;
+
+    try {
+      if (typeof input.stdin === 'string' && input.stdin !== '') {
+        try {
+          // No added newline: the caller decided the exact bytes, including
+          // whether a prompt should see Enter.
+          session.term.write(input.stdin);
+        } catch (err) {
+          throw new JanuaError(
+            ERROR_CODES.PTY_WRITE_FAILED,
+            `could not write stdin to session ${session.sessionId}: ${describeCause(err)}`,
+          );
+        }
+      }
+
+      const deadline = startedAt + timeoutMs;
+      let cursor = session.ring.base;
+      let data = '';
+      let dataBytes = 0;
+      let truncated = false;
+      let dropped = 0;
+      let scan = '';
+      let matched = false;
+      let timedOut = false;
+
+      for (;;) {
+        const remaining = deadline - Date.now();
+        const waitMs = remaining > 0 ? Math.min(RUN_SLICE_MS, remaining) : 0;
+        const reply = await this.read(session.sessionId, {
+          cursor,
+          maxBytes: RUN_READ_CHUNK,
+          waitMs,
+          stripAnsi: !keepAnsi,
+        });
+        cursor = reply.cursor;
+        dropped += reply.dropped;
+        if (reply.truncated) truncated = true;
+
+        if (reply.data !== '') {
+          if (pattern !== null) scan = appendScanWindow(scan, reply.data);
+          const produced = Buffer.byteLength(reply.data, 'utf8');
+          if (dataBytes < maxBytes) {
+            const room = maxBytes - dataBytes;
+            const piece = produced <= room ? reply.data : takeUtf8Prefix(reply.data, room);
+            data += piece;
+            dataBytes += Buffer.byteLength(piece, 'utf8');
+            if (piece.length !== reply.data.length) truncated = true;
+          } else {
+            truncated = true;
+          }
+        }
+
+        if (pattern !== null && pattern.test(scan)) {
+          matched = true;
+          break;
+        }
+        if (reply.exited) {
+          // The child is gone: take whatever is still buffered past the
+          // cursor, then return. A read that filled its chunk leaves more.
+          if (cursor < session.ring.total) continue;
+          break;
+        }
+        if (Date.now() >= deadline) {
+          timedOut = true;
+          break;
+        }
+      }
+
+      if (!keep && (matched || timedOut)) {
+        // At most one answer was asked for, so nothing should keep running
+        // behind a session nobody will talk to.
+        await this.kill(session.sessionId);
+      }
+
+      return {
+        data,
+        exitCode: session.exitCode,
+        timedOut,
+        matched: pattern === null ? true : matched,
+        sessionId: session.sessionId,
+        name: session.name,
+        cursor,
+        dropped,
+        bytes: session.ring.total,
+        truncated,
+        durationMs: Date.now() - startedAt,
+      };
+    } catch (err) {
+      if (!keep) {
+        try {
+          await this.kill(session.sessionId);
+        } catch {
+          // the failure being reported is the one worth keeping
+        }
+      }
+      throw err;
+    }
+  }
+
+  // The one place that reserves a slot, starts the PTY and registers the
+  // session. spawn and run differ only in what they do before and after it.
+  #create(input) {
     this.#purgeExited();
     if (this.#sessions.size >= this.#maxSessions) {
       throw new JanuaError(
@@ -363,16 +675,23 @@ export class SessionManager {
     }
 
     const env = mergeEnv(input.env);
-    const plan = resolveSpawn(command, args, { env });
+    const plan = input.shell
+      ? shellPlan(input.command, env)
+      : resolveSpawn(input.command, input.args, { env });
     const sessionId = randomUUID();
 
     let term;
     try {
-      term = spawnPty(plan.file, plan.args, { cols, rows, cwd, env });
+      term = spawnPty(plan.file, plan.args, {
+        cols: input.cols,
+        rows: input.rows,
+        cwd: input.cwd,
+        env,
+      });
     } catch (err) {
       // The searched-for name is always in the message, and the resolved path
       // too when PATH turned the name into something else.
-      const target = plan.resolved ? `${command} (resolved to ${plan.resolved})` : command;
+      const target = plan.resolved ? `${input.command} (resolved to ${plan.resolved})` : input.command;
       throw new JanuaError(
         ERROR_CODES.SPAWN_FAILED,
         `could not start ${target}: ${describeCause(err)}`,
@@ -383,13 +702,14 @@ export class SessionManager {
       sessionId,
       term,
       pid: term.pid,
-      title,
-      command,
-      args,
-      description,
-      cwd,
-      cols,
-      rows,
+      name: input.name ?? null,
+      title: input.title,
+      command: input.command,
+      args: input.args,
+      description: input.description,
+      cwd: input.cwd,
+      cols: input.cols,
+      rows: input.rows,
       createdAt: new Date().toISOString(),
       exited: false,
       exitCode: null,
@@ -413,7 +733,7 @@ export class SessionManager {
     });
 
     this.#sessions.set(sessionId, session);
-    return { sessionId, pid: session.pid, title };
+    return session;
   }
 
   write(sessionId, data, newline = true) {
@@ -738,6 +1058,7 @@ export class SessionManager {
     }
     const all = [...this.#sessions.values()].map((session) => ({
       sessionId: session.sessionId,
+      name: session.name ?? null,
       pid: session.pid,
       title: session.title,
       command: session.command,
@@ -770,10 +1091,25 @@ export class SessionManager {
     }
   }
 
-  #get(sessionId) {
-    const session = this.#sessions.get(sessionId);
-    if (!session) throw sessionNotFound(sessionId);
-    return session;
+  #get(reference) {
+    if (typeof reference !== 'string' || reference === '') {
+      throw invalidArgs('sessionId must be a session id or a session name');
+    }
+    const direct = this.#sessions.get(reference);
+    if (direct) return direct;
+    const named = this.#byName(reference);
+    if (named) return named;
+    throw sessionNotFound(reference);
+  }
+
+  // Names are unique among live sessions by construction, so the first match
+  // is the only one; the scan tolerates an old exited holder only to report it
+  // when no live one exists.
+  #byName(name) {
+    for (const session of this.#sessions.values()) {
+      if (session.name === name) return session;
+    }
+    return null;
   }
 
   #notify(session) {

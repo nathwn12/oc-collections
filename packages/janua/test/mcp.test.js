@@ -7,7 +7,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const BIN = join(here, '..', 'bin', 'janua.js');
-const TOOL_NAMES = ['pty_kill', 'pty_list', 'pty_read', 'pty_resize', 'pty_spawn', 'pty_write'];
+const TOOL_NAMES = ['pty_kill', 'pty_list', 'pty_read', 'pty_resize', 'pty_spawn', 'pty_write', 'run'];
 const MISSING_ID = '22222222-2222-2222-2222-222222222222';
 
 function textOf(result) {
@@ -21,7 +21,7 @@ test('MCP handshake: tools/list, then spawn, read and kill over stdio', async (t
   const client = new Client({ name: 'janua-test', version: '0.0.0' }, { capabilities: {} });
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: [BIN],
+    args: [BIN, 'mcp'],
     stderr: 'pipe',
   });
   await client.connect(transport);
@@ -50,6 +50,8 @@ test('MCP handshake: tools/list, then spawn, read and kill over stdio', async (t
   assert.equal(byName.pty_resize.annotations.destructiveHint, false);
   assert.equal(byName.pty_kill.annotations.destructiveHint, true);
   assert.equal(byName.pty_spawn.annotations.destructiveHint, false);
+  assert.equal(byName.run.annotations.readOnlyHint, false, 'run starts a process, so it is not read-only');
+  assert.equal(byName.run.annotations.openWorldHint, false);
   assert.deepEqual(
     byName.pty_list.outputSchema.required?.sort(),
     ['nextOffset', 'sessions', 'total'],
@@ -68,6 +70,8 @@ test('MCP handshake: tools/list, then spawn, read and kill over stdio', async (t
   console.log(`pty_spawn -> ${JSON.stringify(spawnPayload)}`);
   assert.equal(spawned.isError, undefined);
   assert.ok(spawnPayload.sessionId);
+  assert.equal(spawnPayload.name, null, 'an unnamed spawn reports a null name');
+  assert.equal(spawnPayload.reused, false);
 
   let data = '';
   let cursor;
@@ -123,6 +127,7 @@ test('MCP handshake: tools/list, then spawn, read and kill over stdio', async (t
   assert.equal(page.total, 1);
   assert.equal(page.nextOffset, null);
   assert.equal(page.sessions[0].sessionId, spawnPayload.sessionId);
+  assert.equal(page.sessions[0].name, null, 'pty_list must carry the name, null when unnamed');
   assert.equal(typeof page.sessions[0].description, 'string', 'pty_list must return the description');
   assert.equal(page.sessions[0].description, 'handshake smoke test child process');
   assert.deepEqual(page.sessions[0].args, ['-e', "process.stdout.write('JANUA_MCP_OK'); setInterval(() => {}, 1000)"]);
@@ -193,4 +198,148 @@ test('pty_write with waitMs and match returns the answer in the same call', asyn
   assert.equal(typeof answered.dropped, 'number');
 
   await client.callTool({ name: 'pty_kill', arguments: { sessionId: spawned.sessionId } });
+});
+
+test('run executes a one-shot command over MCP', async (t) => {
+  const client = new Client({ name: 'janua-test', version: '0.0.0' }, { capabilities: {} });
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [BIN],
+    stderr: 'pipe',
+  });
+  await client.connect(transport);
+  t.after(async () => {
+    await client.close();
+  });
+
+  const ran = await client.callTool({
+    name: 'run',
+    arguments: {
+      command: process.execPath,
+      args: ['-e', "process.stdout.write('MCP_RUN_OK'); process.exit(5)"],
+      timeoutMs: 15000,
+    },
+  });
+  const payload = JSON.parse(textOf(ran));
+  console.log(`run -> ${JSON.stringify(payload)}`);
+  assert.equal(ran.isError, undefined);
+  assert.match(payload.data, /MCP_RUN_OK/);
+  assert.equal(payload.exitCode, 5);
+  assert.equal(payload.timedOut, false);
+  assert.equal(payload.matched, true);
+  assert.equal(payload.name, null);
+  assert.equal(payload.truncated, false);
+  assert.equal(typeof payload.bytes, 'number');
+  assert.equal(typeof payload.durationMs, 'number');
+  assert.deepEqual(ran.structuredContent, payload, 'structuredContent must match the payload');
+});
+
+test('named sessions: list, read/write/kill by name, reuse, and takeover after exit', async (t) => {
+  const client = new Client({ name: 'janua-test', version: '0.0.0' }, { capabilities: {} });
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [BIN],
+    stderr: 'pipe',
+  });
+  await client.connect(transport);
+  t.after(async () => {
+    await client.close();
+  });
+
+  const NAME = 'echo-named';
+  const ECHO = "process.stdin.on('data', (d) => "
+    + "process.stdout.write('ECHO:' + d.toString().trim() + '\\r\\nPROMPT> '));"
+    + 'setInterval(() => {}, 1000);';
+
+  const first = JSON.parse(textOf(await client.callTool({
+    name: 'pty_spawn',
+    arguments: {
+      command: process.execPath,
+      args: ['-e', ECHO],
+      name: NAME,
+      description: 'named echo session for name lookups',
+    },
+  })));
+  assert.equal(first.name, NAME);
+  assert.equal(first.reused, false);
+
+  const listed = JSON.parse(textOf(await client.callTool({ name: 'pty_list', arguments: { limit: 10 } })));
+  assert.equal(listed.sessions[0].name, NAME, 'pty_list must return the name');
+
+  // Read and write accept the name in place of a session id.
+  const written = JSON.parse(textOf(await client.callTool({
+    name: 'pty_write',
+    arguments: { sessionId: NAME, data: 'by-name', waitMs: 5000, match: 'PROMPT>' },
+  })));
+  assert.equal(written.matched, true, 'a write addressed by name must reach the session');
+  assert.match(written.data, /ECHO:by-name/);
+
+  const readByName = JSON.parse(textOf(await client.callTool({
+    name: 'pty_read',
+    arguments: { sessionId: NAME, cursor: written.cursor, waitMs: 100 },
+  })));
+  assert.equal(typeof readByName.cursor, 'number');
+
+  // A second spawn with a live name returns the same terminal, not a copy.
+  const reused = JSON.parse(textOf(await client.callTool({
+    name: 'pty_spawn',
+    arguments: { command: process.execPath, args: ['-e', ECHO], name: NAME },
+  })));
+  assert.equal(reused.sessionId, first.sessionId);
+  assert.equal(reused.pid, first.pid);
+  assert.equal(reused.reused, true);
+
+  const denied = await client.callTool({
+    name: 'pty_spawn',
+    arguments: {
+      command: process.execPath,
+      args: ['-e', 'setInterval(() => {}, 1000)'],
+      name: NAME,
+      reuse: false,
+    },
+  });
+  assert.equal(denied.isError, true);
+  assert.match(textOf(denied), /invalid_args/);
+  assert.match(textOf(denied), /name_taken/);
+
+  const killed = JSON.parse(textOf(await client.callTool({
+    name: 'pty_kill',
+    arguments: { sessionId: NAME },
+  })));
+  assert.equal(killed.ok, true);
+  assert.equal(killed.pid, first.pid);
+
+  // ConPTY reports the exit a moment after the kill: wait for it, then the
+  // name must be free for the next spawn.
+  let stopped = JSON.parse(textOf(await client.callTool({
+    name: 'pty_read',
+    arguments: { sessionId: NAME, waitMs: 1000 },
+  })));
+  const deadline = Date.now() + 10000;
+  while (!stopped.exited && Date.now() < deadline) {
+    stopped = JSON.parse(textOf(await client.callTool({
+      name: 'pty_read',
+      arguments: { sessionId: NAME, cursor: stopped.cursor, waitMs: 1000 },
+    })));
+  }
+  assert.equal(stopped.exited, true);
+
+  const replacement = JSON.parse(textOf(await client.callTool({
+    name: 'pty_spawn',
+    arguments: {
+      command: process.execPath,
+      args: ['-e', 'setInterval(() => {}, 1000)'],
+      name: NAME,
+    },
+  })));
+  assert.notEqual(replacement.sessionId, first.sessionId);
+  assert.equal(replacement.reused, false);
+  assert.equal(
+    JSON.parse(textOf(await client.callTool({ name: 'pty_list', arguments: { limit: 10 } })))
+      .sessions.filter((session) => session.name === NAME).length,
+    1,
+    'only the replacement holds the name',
+  );
+
+  await client.callTool({ name: 'pty_kill', arguments: { sessionId: replacement.sessionId } });
 });

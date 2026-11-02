@@ -1,8 +1,8 @@
 # janua guide
 
-Three worked examples of the thing a command runner cannot do: keep a program alive and talk to it.
-Tool calls are shown as the arguments you pass and the result you get back; long outputs are
-abbreviated.
+Four worked examples: three things a command runner cannot do (keep a program alive and talk to it)
+and one thing it can (run a command once and hand back the output). Tool calls are shown as the
+arguments you pass and the result you get back; long outputs are abbreviated.
 
 ---
 
@@ -161,9 +161,62 @@ End it with Ctrl+D (end of input) or kill the session:
 
 ---
 
+## 4. One-shot commands and named sessions
+
+Not every program needs a conversation. `run` is one call for one command: it starts a fresh PTY,
+writes `stdin` if you gave one, reads until the command exits, `match` appears, or `timeoutMs` runs
+out, and returns the output with the exit code.
+
+```jsonc
+// run - a test suite, bounded in time and in bytes
+{
+  "command": "npm",
+  "args": ["test"],
+  "cwd": "C:\\work\\site",
+  "timeoutMs": 300000,
+  "maxBytes": 40000,
+  "match": "failing"
+}
+// -> {"data":"...","exitCode":1,"timedOut":false,"matched":true,"sessionId":"e77a...",
+//     "name":null,"cursor":8123,"dropped":0,"bytes":8123,"truncated":false,"durationMs":1840}
+```
+
+- `stdin` is written as-is, with no newline added. Add the newline the program expects yourself
+  (`"stdin": "y\n"`; a Windows console wants `\r`, a POSIX terminal turns `\r` into `\n`).
+- `maxBytes` caps `data` only. The run keeps draining, so `bytes` counts everything produced and
+  `truncated: true` tells you the reply was cut.
+- A match or a timeout ends the run and kills the process tree, since a one-shot call has nobody left
+  to answer a prompt. `keep: true` leaves it running and addressable by id or name.
+- `shell: true` hands the whole `command` string to `cmd.exe /d /s /c` (Windows) or `/bin/sh -c`
+  (POSIX), so `args` must be empty: `{"command": "npm run build | tail -5", "shell": true}`.
+
+Where a session will be talked to more than once, give it a name. Every `sessionId` input accepts the
+name, and a spawn with a name that is already live returns that session instead of starting a second
+copy:
+
+```jsonc
+{"command":"node","args":["--interactive"],"name":"scratch-repl","title":"scratch-repl","description":"scratch REPL for quick checks"}
+// -> {"sessionId":"c91d...","pid":3312,"title":"scratch-repl","name":"scratch-repl","reused":false}
+
+{"sessionId":"scratch-repl","data":"const answer = 42"}
+{"sessionId":"scratch-repl","data":"answer"}
+// -> ...the REPL answers by name, exactly as it would by id...
+```
+
+A second spawn with `"name":"scratch-repl"` returns `reused: true` and the same id and pid.
+`"reuse": false` makes it `invalid_args` with `name_taken` instead. When the program exits the name
+is free for the next spawn; the old session stays readable under its id with `name: null` in
+`pty_list`. `run` never reuses a live name, because a one-shot call that attached itself to someone
+else's terminal would be a surprise.
+
+---
+
 ## Rules of thumb
 
-- One session per long-lived thing. Spawn once, talk many times, kill once.
+- One session per long-lived thing. Spawn once, talk many times, kill once. A command whose output
+  you want once is `run`, not a spawn and a read.
+- Give a session a `name` when you expect to address it again; every `sessionId` input takes it, and
+  a repeated spawn with that name returns the same session instead of a second program.
 - Always pass the `cursor` a read returned. Reading from 0 again re-delivers everything still
   buffered, which is useful for a full dump and wasteful for a diff.
 - `maxBytes` bounds the returned `data`. A read may exceed it by the bytes needed to finish the one
@@ -181,4 +234,4 @@ End it with Ctrl+D (end of input) or kill the session:
   running session, and `pty_list` reports it afterwards. Resize the session rather than respawning
   it and losing its state.
 - Kill what you started. A session lives until it exits or the server does.
-- 16 sessions is the default cap; `too_many_sessions` means kill one first.
+- 32 sessions is the default cap; `too_many_sessions` means kill one first.

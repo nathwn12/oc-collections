@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+### Added
+
+- `run`, a one-shot command runner: one call starts a fresh PTY, writes optional `stdin`, and returns
+  `data`, `exitCode`, `timedOut`, `matched`, `sessionId`, `name`, `cursor`, `dropped`, `bytes`,
+  `truncated` and `durationMs` when the command exits, `match` appears, or `timeoutMs` runs out.
+  `maxBytes` caps the returned data while the run keeps draining, so `bytes` and `truncated` stay
+  honest; a match or a timeout kills the process tree unless `keep: true`, and `keep` leaves the
+  session addressable by id or name. `shell: true` runs one platform command line through
+  `cmd.exe /d /s /c` or `/bin/sh -c`.
+- Named sessions: `pty_spawn` takes `name` (1-64 characters) and `reuse`. Every tool that takes a
+  `sessionId` also accepts the name; `pty_list` returns `name`, and `pty_spawn` returns
+  `{name, reused}`. A spawn with a live name returns that session (`reused: true`) instead of a second
+  copy, `reuse: false` is `invalid_args` with `name_taken`, and an exited session releases its name.
+- `janua` is now a CLI as well as an MCP server: `janua run [--cwd] [--timeout] [--stdin] [--json]
+  [--max-bytes] [--raw] [--shell] [--name] [--match] -- <command> [args...]` writes the
+  command's output to stdout with no added newline and exits with its code (124 on timeout, 2 on a
+  usage or spawn error); `--json` prints the whole result. `janua --version` prints the package
+  version and `janua --help` prints usage. Bare `janua` and `janua mcp` still start the stdio MCP
+  server exactly as before.
+
+### Changed
+
+- The default session cap is 32 instead of 16 (`JANUA_MAX_SESSIONS` still overrides it).
+
 ## [0.3.1] - 2026-11-01
 
 ### Fixed
