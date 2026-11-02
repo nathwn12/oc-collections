@@ -1,6 +1,6 @@
 // Offline contract tests for the plugin surface.
 //
-// These prove what a host can break without any peer running: all nine verbs
+// These prove what a host can break without any peer running: all eight verbs
 // register with their exact routing descriptions, one prefix rewrite never
 // stacks, `done` is a lock the lifecycle verbs refuse while `open` alone lifts
 // it, and title resolution answers with candidates or near-misses instead of a
@@ -23,7 +23,7 @@ let loads = 0;
 // state, and a cached module would carry one test's registration into the next.
 const load = () => import(pathToFileURL(ENTRY).href + '?n=' + ++loads);
 
-const NINE = [
+const EIGHT = [
   'session_list',
   'session_send',
   'session_read',
@@ -32,7 +32,6 @@ const NINE = [
   'session_kick',
   'session_park',
   'session_kill',
-  'session_await',
 ];
 
 const DESCRIPTIONS = {
@@ -42,7 +41,7 @@ const DESCRIPTIONS = {
     'Lists only: it never sends, reads, wakes, or steers anything.',
   session_send:
     'Deliver one text message to another session by id (ses_...) or unambiguous title substring, with resume defaulting to true. ' +
-    'Fire instead of dispatching a lane whenever a peer must act; `delivery` is `queue` by default so the peer finishes its turn, and `steer` preempts that turn instead. ' +
+    'Fire instead of dispatching a lane whenever a peer must act; `delivery` is `steer` by default so a correction preempts the peer\'s running turn, and `queue` waits behind it. ' +
     'Refuses a `done ` session with a typed error, and never guesses: a missing or ambiguous title fails with candidates.',
   session_read:
     "Read another session's newest messages by id (ses_...) or unambiguous title substring, newest first, default 20, text verbatim. " +
@@ -57,7 +56,7 @@ const DESCRIPTIONS = {
     'The only verb that may lift `done`; zero matches create, several fail ambiguous with candidates, and a capped scan creates instead of reviving. ' +
     'Fire when work needs a fresh lane, or a closed one revived.',
   session_kick:
-    'Wake a live session with one message, renaming it to `active <work>` first; `delivery` is `queue` by default so the peer finishes its turn, `steer` to preempt that turn. ' +
+    'Wake a live session with one message, renaming it to `active <work>` first; `delivery` is `steer` by default so the message preempts the peer\'s running turn, `queue` to wait behind it. ' +
     'Fire when a peer already exists and must act now. ' +
     'Refuses a `done ` session with a typed error: reopen it with session_open instead.',
   session_park:
@@ -67,10 +66,6 @@ const DESCRIPTIONS = {
   session_kill:
     'Stop a live session hard: rewrite its title to `parked <work>`, then interrupt its active execution; park is graceful, kill is hard. ' +
     'The interrupt covers only the target session: cascaded is always false and live child sessions return as children ids, never claimed stopped. ' +
-    'Refuses a `done ` session with a typed error; session_open is the only revival path.',
-  session_await:
-    'Send one message then wait for the reply, polling the session messages about once per second up to timeoutMs (default 60s, cap 300s), returning {text, messageId} or {timeout: true, lastSeen}. ' +
-    'Fire when you are blocked on the answer; `delivery` is `steer` by default so the message preempts the peer\'s current turn, and `queue` waits behind it. ' +
     'Refuses a `done ` session with a typed error; session_open is the only revival path.',
 };
 
@@ -94,7 +89,7 @@ function host() {
   return { ctx, added };
 }
 
-test('the V2 definition registers all nine tools through setup', async () => {
+test('the V2 definition registers all eight tools through setup', async () => {
   const mod = await load();
 
   // A host with no tool domain registers nothing and must not throw.
@@ -103,13 +98,33 @@ test('the V2 definition registers all nine tools through setup', async () => {
 
   const { ctx, added } = host();
   await mod.default.setup(ctx);
-  assert.deepEqual(added.map((t) => t.name), NINE);
+  assert.deepEqual(added.map((t) => t.name), EIGHT);
 
   for (const tool of added) {
     assert.equal(typeof tool.execute, 'function');
     assert.equal(tool.options.codemode, false);
     assert.equal(tool.description, DESCRIPTIONS[tool.name], 'routing description drifted: ' + tool.name);
   }
+});
+
+// The send-then-poll wait verb queued its message behind the long turn it then
+// waited on, so it was removed rather than fixed. An absent tool must fail here
+// before a host can offer it again.
+test('session_await is not registered, and the surface is exactly the eight verbs', async () => {
+  const mod = await load();
+  const { ctx, added } = host();
+  await mod.default.setup(ctx);
+  const names = added.map((t) => t.name);
+
+  assert.ok(!names.includes('session_await'), 'session_await must not be registered');
+  // Exactly the remaining verbs, in order: no ninth verb and no renamed one.
+  assert.deepEqual(names, EIGHT);
+  assert.equal(names.length, 8);
+
+  // The source carries no registration for it either, nor its wait budget, so a
+  // stray block cannot come back with the tool list silently left at eight.
+  const src = fs.readFileSync(ENTRY, 'utf8');
+  assert.doesNotMatch(src, /session_await|timeoutMs|AWAIT_/);
 });
 
 // The port itself. The V2 host loads a V1 object export and never calls its
@@ -236,7 +251,7 @@ test('`done` is a lock: kick refuses it, open alone revives', async () => {
   const { ctx, added } = host();
   await mod.default.setup(ctx);
   const body = (name) => added.find((t) => t.name === name).execute.toString();
-  for (const name of ['session_send', 'session_kick', 'session_park', 'session_kill', 'session_await']) {
+  for (const name of ['session_send', 'session_kick', 'session_park', 'session_kill']) {
     assert.match(body(name), /doneRefusal\(/, name + ' must refuse a done session');
   }
   for (const name of ['session_open', 'session_list', 'session_read', 'session_close']) {
@@ -290,7 +305,7 @@ test('session_send refuses a `done` session, and retitle re-checks the lock itse
   // retitle re-reads the session, so it carries its own check: a close landing
   // between the caller's check and that read is refused there, not only above.
   const src = fs.readFileSync(ENTRY, 'utf8');
-  const retitle = src.slice(src.indexOf('async function retitle('), src.indexOf('// The only timer'));
+  const retitle = src.slice(src.indexOf('async function retitle('), src.indexOf('// `delivery` decides'));
   const relock = retitle.indexOf('doneRefusal(');
   assert.ok(relock >= 0, 'retitle must re-check the done lock itself');
   assert.ok(retitle.indexOf("'/api/session/'") > relock, 'retitle must check the lock before it patches');
@@ -299,7 +314,7 @@ test('session_send refuses a `done` session, and retitle re-checks the lock itse
 test('source carries no credential, localhost reference or removal verb', () => {
   const src = fs.readFileSync(ENTRY, 'utf8');
   assert.doesNotMatch(src, /password|service\.json|127\.0\.0\.1/);
-  // No removal capability in any spelling: the surface is nine verbs, none of
+  // No removal capability in any spelling: the surface is eight verbs, none of
   // which removes a session. The one exclusion is bookkeeping on this module's
   // own registration map, which is not a tool and not an API route.
   const surface = src.replaceAll('registrations.delete(key)', '');
@@ -348,10 +363,9 @@ function promptBody(calls) {
 
 // tool -> the delivery its caller means by default, plus a minimal valid input.
 const DELIVERY_DEFAULTS = [
-  { tool: 'session_send', input: { to: 'ses_a', text: 'hi' }, want: 'queue' },
-  { tool: 'session_kick', input: { to: 'ses_a', text: 'hi' }, want: 'queue' },
+  { tool: 'session_send', input: { to: 'ses_a', text: 'hi' }, want: 'steer' },
+  { tool: 'session_kick', input: { to: 'ses_a', text: 'hi' }, want: 'steer' },
   { tool: 'session_open', input: { work: 'api-smoke-tests', text: 'hi' }, want: 'queue' },
-  { tool: 'session_await', input: { to: 'ses_a', text: 'hi' }, want: 'steer' },
 ];
 
 test('each prompt tool sends its own default delivery, and an explicit value wins', async () => {
@@ -429,7 +443,7 @@ test('a reload re-registers tools: setup twice leaves exactly one live registrat
 
   await mod.ensureTools(ctx);
   assert.equal(registrations.length, 1, 'the first call must register');
-  assert.deepEqual(registrations[0].added.map((t) => t.name), NINE);
+  assert.deepEqual(registrations[0].added.map((t) => t.name), EIGHT);
   assert.equal(registrations[0].disposed, 0, 'the first registration starts live');
 
   // The reload shape: the host disposed the previous transform and re-ran setup
@@ -439,7 +453,7 @@ test('a reload re-registers tools: setup twice leaves exactly one live registrat
   assert.equal(registrations.length, 2, 'a reload must register again, not skip');
   assert.equal(registrations[0].disposed, 1, 'the previous registration must be disposed');
   assert.equal(registrations[1].disposed, 0, 'the new registration must be the live one');
-  assert.deepEqual(registrations[1].added.map((t) => t.name), NINE);
+  assert.deepEqual(registrations[1].added.map((t) => t.name), EIGHT);
 
   // The same shape through the public surface the host actually calls.
   const viaSetup = reloadHost();
@@ -459,7 +473,7 @@ test('setup resolves to void and leaves exactly one live registration', async ()
   // registration across a reload.
   assert.equal(await mod.default.setup(ctx), undefined);
   assert.equal(registrations.length, 1, 'setup must register');
-  assert.deepEqual(registrations[0].added.map((t) => t.name), NINE);
+  assert.deepEqual(registrations[0].added.map((t) => t.name), EIGHT);
   assert.equal(registrations[0].disposed, 0, 'the registration is live after setup');
 });
 
@@ -482,8 +496,8 @@ test('two host locations each keep their own live registration', async () => {
   assert.equal(second.registrations.length, 1, 'the second location must register');
   assert.equal(first.registrations[0].disposed, 0, 'the second location must not dispose the first location\'s tools');
   assert.equal(second.registrations[0].disposed, 0, 'the second location\'s own registration is live');
-  assert.deepEqual(first.registrations[0].added.map((t) => t.name), NINE);
-  assert.deepEqual(second.registrations[0].added.map((t) => t.name), NINE);
+  assert.deepEqual(first.registrations[0].added.map((t) => t.name), EIGHT);
+  assert.deepEqual(second.registrations[0].added.map((t) => t.name), EIGHT);
 
   // A reload of one location disposes only its own previous registration.
   await mod.ensureTools(first.ctx);

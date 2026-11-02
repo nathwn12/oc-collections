@@ -1,12 +1,13 @@
 // oc-talk — cross-session talk for any OpenCode harness.
 //
-// Nine tools, one for each lifecycle verb: session_list, session_send,
+// Eight tools, one for each lifecycle verb: session_list, session_send,
 // session_read, session_close, session_open, session_kick, session_park,
-// session_kill, session_await.
+// session_kill.
 //
-// Ported verb for verb from the harness plugin `session-talk.ts` (662 lines,
-// nine tools) so the package and the plugin it ships beside cannot drift.
-// Nine verbs and no removal verb: nothing here ends a session's existence.
+// Ported verb for verb from the harness plugin `session-talk.ts` so the package
+// and the plugin it ships beside cannot drift. The send-then-poll wait verb is
+// gone: it queued its message behind the long turn it then waited on.
+// Eight verbs and no removal verb: nothing here ends a session's existence.
 //
 // The backend is the `opencode` CLI itself, reached with argv (no shell) and a
 // hard timeout. That CLI discovers and authenticates with the harness's own
@@ -258,9 +259,6 @@ function messageText(m) {
   return '';
 }
 
-const AWAIT_DEFAULT_MS = 60000;
-const AWAIT_MAX_MS = 300000;
-const AWAIT_POLL_MS = 1000;
 const PREFIXES = ['active ', 'parked ', 'done '];
 
 // One shared prefix rewrite: strip any existing lifecycle prefix, apply the new
@@ -284,7 +282,7 @@ function isDone(title) {
   return String(title || '').startsWith('done ');
 }
 
-// `done` is a lock: send, kick, park, kill and await refuse; open alone may lift it.
+// `done` is a lock: send, kick, park and kill refuse; open alone may lift it.
 function doneRefusal(session) {
   if (!isDone(session.title)) return null;
   return { error: 'session_closed', reason: 'session "' + session.title + '" is closed (done); session_open is the only verb that may revive it' };
@@ -315,11 +313,6 @@ async function retitle(id, prefix) {
   const r = await runApi(['patch', '/api/session/' + id, '--data', JSON.stringify({ title: titleAfter })]);
   if (!r.ok) return r;
   return { ok: true, titleBefore, titleAfter, renamed: true };
-}
-
-// The only timer in this module: the await poll's inter-round pause.
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // `delivery` decides whether a prompt preempts the peer's running turn (steer)
@@ -387,7 +380,7 @@ async function ensureTools(ctx) {
       name: 'session_send',
       description:
         'Deliver one text message to another session by id (ses_...) or unambiguous title substring, with resume defaulting to true. ' +
-        'Fire instead of dispatching a lane whenever a peer must act; `delivery` is `queue` by default so the peer finishes its turn, and `steer` preempts that turn instead. ' +
+        'Fire instead of dispatching a lane whenever a peer must act; `delivery` is `steer` by default so a correction preempts the peer\'s running turn, and `queue` waits behind it. ' +
         'Refuses a `done ` session with a typed error, and never guesses: a missing or ambiguous title fails with candidates.',
       input: {
         type: 'object',
@@ -395,7 +388,7 @@ async function ensureTools(ctx) {
           to: { type: 'string', description: 'Session id (ses_...) or exact title substring' },
           text: { type: 'string', description: 'Message text, delivered verbatim' },
           resume: { type: 'boolean', description: 'Let the receiver loop run; default true' },
-          delivery: { type: 'string', description: '`steer` preempts the peer\'s current turn, `queue` waits for it; default queue' },
+          delivery: { type: 'string', description: '`steer` preempts the peer\'s current turn, `queue` waits for it; default steer' },
         },
         required: ['to', 'text'],
         additionalProperties: false,
@@ -406,7 +399,7 @@ async function ensureTools(ctx) {
         if (typeof args.text !== 'string' || !args.text) {
           return fail('bad_request', 'text must be a non-empty string');
         }
-        const dlv = deliveryOf(args, 'queue');
+        const dlv = deliveryOf(args, 'steer');
         if (!dlv.ok) return fail(dlv.error, dlv.reason);
         const resume = args.resume === undefined ? true : !!args.resume;
         const t = await resolveTarget(args.to);
@@ -590,7 +583,7 @@ async function ensureTools(ctx) {
     tools.add({
       name: 'session_kick',
       description:
-        'Wake a live session with one message, renaming it to `active <work>` first; `delivery` is `queue` by default so the peer finishes its turn, `steer` to preempt that turn. ' +
+        'Wake a live session with one message, renaming it to `active <work>` first; `delivery` is `steer` by default so the message preempts the peer\'s running turn, `queue` to wait behind it. ' +
         'Fire when a peer already exists and must act now. ' +
         'Refuses a `done ` session with a typed error: reopen it with session_open instead.',
       input: {
@@ -599,7 +592,7 @@ async function ensureTools(ctx) {
           to: { type: 'string', description: 'Session id (ses_...) or exact title substring' },
           text: { type: 'string', description: 'Message text, delivered verbatim' },
           resume: { type: 'boolean', description: 'Let the receiver loop run; default true' },
-          delivery: { type: 'string', description: '`steer` preempts the peer\'s current turn, `queue` waits for it; default queue' },
+          delivery: { type: 'string', description: '`steer` preempts the peer\'s current turn, `queue` waits for it; default steer' },
         },
         required: ['to', 'text'],
         additionalProperties: false,
@@ -610,7 +603,7 @@ async function ensureTools(ctx) {
         if (typeof args.text !== 'string' || !args.text) {
           return fail('bad_request', 'text must be a non-empty string');
         }
-        const dlv = deliveryOf(args, 'queue');
+        const dlv = deliveryOf(args, 'steer');
         if (!dlv.ok) return fail(dlv.error, dlv.reason);
         const resume = args.resume === undefined ? true : !!args.resume;
         const t = await resolveTarget(args.to);
@@ -712,75 +705,6 @@ async function ensureTools(ctx) {
           return fail(r.code, 'interrupt failed: ' + r.detail);
         }
         return done({ sessionID: t.id, titleBefore: rt.titleBefore, titleAfter: rt.titleAfter, interrupted: !!((r.json.data) || {}).interrupted, cascaded: false, children });
-      },
-    });
-
-    tools.add({
-      name: 'session_await',
-      description:
-        'Send one message then wait for the reply, polling the session messages about once per second up to timeoutMs (default 60s, cap 300s), returning {text, messageId} or {timeout: true, lastSeen}. ' +
-        'Fire when you are blocked on the answer; `delivery` is `steer` by default so the message preempts the peer\'s current turn, and `queue` waits behind it. ' +
-        'Refuses a `done ` session with a typed error; session_open is the only revival path.',
-      input: {
-        type: 'object',
-        properties: {
-          to: { type: 'string', description: 'Session id (ses_...) or exact title substring' },
-          text: { type: 'string', description: 'Message text, delivered verbatim' },
-          timeoutMs: { type: 'number', description: 'Wait budget in ms; default 60000, capped at 300000' },
-          delivery: { type: 'string', description: '`steer` preempts the peer\'s current turn, `queue` waits for it; default steer' },
-        },
-        required: ['to', 'text'],
-        additionalProperties: false,
-      },
-      options: { codemode: false },
-      execute: async (input) => {
-        const args = input ?? {};
-        if (typeof args.text !== 'string' || !args.text) {
-          return fail('bad_request', 'text must be a non-empty string');
-        }
-        const dlv = deliveryOf(args, 'steer');
-        if (!dlv.ok) return fail(dlv.error, dlv.reason);
-        let budget = args.timeoutMs === undefined ? AWAIT_DEFAULT_MS : Math.floor(args.timeoutMs);
-        if (!Number.isFinite(budget)) return fail('bad_request', 'timeoutMs must be a number');
-        budget = Math.min(Math.max(budget, 1), AWAIT_MAX_MS);
-        const t = await resolveTarget(args.to);
-        if (!t.ok) return fail(t.error, t.reason, t.candidates, t.truncated);
-        const f = await findSession(t.id);
-        if (!f.ok) {
-          if (f.code === 'session_not_found') return fail('session_not_found', 'session ' + t.id + ' is gone: ' + f.detail);
-          return fail(f.code, 'list failed: ' + f.detail);
-        }
-        const lock = doneRefusal(f.session);
-        if (lock) return fail(lock.error, lock.reason);
-        const sentAt = Date.now();
-        const r = await runApi(['post', '/api/session/' + t.id + '/prompt', '--data', JSON.stringify({ text: args.text, resume: true, delivery: dlv.value })]);
-        if (!r.ok) {
-          if (r.code === 'session_not_found') return fail('session_not_found', 'session ' + t.id + ' is gone: ' + r.detail);
-          return fail(r.code, 'send failed: ' + r.detail);
-        }
-        const since = Math.max(sentAt, (((r.json.data) || {}).time || {}).created || 0);
-        const deadline = Date.now() + budget;
-        let lastSeen = '';
-        for (;;) {
-          const rm = await runApi(['session.message.list', '--param', 'sessionID=' + t.id, '--param', 'limit=10', '--param', 'order=desc']);
-          if (!rm.ok) {
-            if (rm.code === 'session_not_found') return fail('session_not_found', 'session ' + t.id + ' is gone: ' + rm.detail);
-            return fail(rm.code, 'read failed: ' + rm.detail);
-          }
-          const rows = Array.isArray(rm.json.data) ? rm.json.data : [];
-          for (const m of rows) {
-            const created = (m.time && m.time.created) || 0;
-            if (m.type === 'assistant' && created > since) {
-              const text = messageText(m);
-              if (text) return done({ sessionID: t.id, text, messageId: m.id, timeoutMs: budget });
-            }
-          }
-          if (rows.length) lastSeen = messageText(rows[0]);
-          if (Date.now() >= deadline) {
-            return done({ sessionID: t.id, timeout: true, lastSeen, timeoutMs: budget });
-          }
-          await sleep(Math.min(AWAIT_POLL_MS, Math.max(deadline - Date.now(), 1)));
-        }
       },
     });
   });

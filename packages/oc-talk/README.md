@@ -1,16 +1,16 @@
 # oc-talk
 
-Gives an agent nine tools to run the session lifecycle across the sessions next door: find a peer, hand it a message, read what it answered, park it, wake it, close it.
+Gives an agent eight tools to run the session lifecycle across the sessions next door: find a peer, hand it a message, read what it answered, park it, wake it, close it.
 
 ## Install
 
 The package is published on npm as `oc-talk`, and OpenCode installs it from the registry: add it to the `plugins` array in your `opencode.jsonc`.
 
 ```json
-{ "plugins": ["oc-talk@0.1.1"] }
+{ "plugins": ["oc-talk@0.1.8"] }
 ```
 
-Restart OpenCode. The plugin registers its nine tools when the session starts, and uses the same `opencode` binary that is running it.
+Restart OpenCode. The plugin registers its eight tools when the session starts, and uses the same `opencode` binary that is running it.
 
 ### Development
 
@@ -42,12 +42,11 @@ Restart OpenCode either way.
 | Tool | What it does for you |
 | --- | --- |
 | `session_list` | Turns a title you remember into the `ses_…` id every other tool accepts, one page at a time. |
-| `session_send` | Delivers one message to a peer verbatim and lets its loop run, so the peer actually does the work. |
+| `session_send` | Delivers one message to a peer verbatim and lets its loop run; it preempts the peer's running turn unless you ask for `queue`. |
 | `session_read` | Reads the peer's newest messages, verbatim, newest first — nothing is pushed to you. |
-| `session_await` | Sends and then waits for the reply in one call, returning the reply text or a readable timeout instead of hanging. |
 | `session_close` | Renames to `done <work>` and compacts, in that order, so a finished session stops reading as live. |
 | `session_open` | Creates `active <work>`, or revives the one live session whose title matches, and is the only way back from `done`. |
-| `session_kick` | Wakes a live session: marks it active, then delivers one message. |
+| `session_kick` | Wakes a live session: marks it active, then delivers one message ahead of its running turn. |
 | `session_park` | Marks a session idle by title only — no message, no compaction, nothing already running is touched. |
 | `session_kill` | Parks the session and interrupts its active execution, covering that session alone. |
 
