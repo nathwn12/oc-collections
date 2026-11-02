@@ -1,4 +1,6 @@
-# janua
+<h1 align="center">janua</h1>
+
+<p align="center"><strong>A terminal for agents: one-shot when you need an answer, persistent when you need a conversation.</strong></p>
 
 A terminal you can talk to, and a command runner that answers once. `janua` gives an agent both
 halves of running a program: `run` executes a command once and returns its output and exit code in a
@@ -50,6 +52,57 @@ The same package is a normal command when no MCP client is involved:
 npx -y @nathwn12/janua run -- node -v
 ```
 
+## Upgrade
+
+```bash
+npx -y @nathwn12/janua upgrade
+```
+
+`upgrade` installs the newest published version beside the one that is running, under `JANUA_HOME`
+(`%LOCALAPPDATA%\janua` on Windows, `${XDG_DATA_HOME:-~/.local/share}/janua` everywhere else), then
+makes the new copy answer for itself - `--version` must print the version that was asked for, and a
+real `run` must come back - and only then points `current.json` at it:
+
+```
+janua upgrade: 0.3.1 -> 0.4.0
+  home:     <JANUA_HOME>
+  staged:   versions/0.4.0
+  verified: --version 0.4.0, run UPGRADE_OK
+  switched: current.json -> 0.4.0
+  kept:     versions/0.3.1
+restart the MCP client to load 0.4.0
+```
+
+Pass a version to pin one: `janua upgrade 0.3.1`. Four things this buys you:
+
+- **Nothing changes until the new version works.** Either check failing leaves `current.json` exactly
+  as it was and exits non-zero, so a bad release costs a download and nothing else.
+- **The old version stays.** `versions/0.3.1` is still on disk; edit `current.json` back to it, or run
+  `janua upgrade 0.3.1`, to return to it.
+- **A process that is already running keeps running.** An upgrade moves the pointer for the next
+  start; it never touches the server a client is connected to. Restart the MCP client to load the new
+  version, because the client holds the process it started.
+- **The command you configured never changes.** The MCP client runs the same small launcher, which
+  reads `current.json` and hands over to the version it names.
+
+Each version is a complete npm install of its own - `versions/0.4.0/node_modules/@nathwn12/janua` and
+the dependencies beside it - moved into place as one directory, so a half-installed version never
+exists. Set `JANUA_HOME` to keep the versions somewhere else.
+
+One upgrade runs at a time. A second one started while another is still working is refused with
+`upgrade_in_progress` rather than waiting, and nothing else is touched. A lock is only ever removed by
+the upgrade that took it, so a killed upgrade leaves its `upgrade.lock` behind. What that leaves you
+with depends on how far it got, and the pointer is only written after the new version has been
+verified:
+
+- **Killed before the pointer write:** `current.json` still names the old version, which stays current
+  and keeps working.
+- **Killed after the pointer write:** `current.json` names the new version, already verified before the
+  pointer moved, which is current. The only leftover is the stale lock.
+
+Either way the next upgrade refuses with `upgrade_in_progress` and names the lock. Confirm no
+`janua upgrade` is running, delete that `upgrade.lock` directory, and run the upgrade again.
+
 ## The seven tools
 
 | Tool | What it does |
@@ -77,7 +130,7 @@ runs never share a session.
 {
   "command": "npm",
   "args": ["test"],
-  "cwd": "C:\\work\\site",
+  "cwd": "<checkout>",
   "timeoutMs": 300000,
   "maxBytes": 40000,
   "match": "FAIL|failing"

@@ -17,7 +17,7 @@ environment is identical.
 {
   "command": "cmd.exe",
   "args": ["/d", "/k"],
-  "cwd": "C:\\work\\site",
+  "cwd": "<checkout>",
   "title": "site-dev",
   "description": "shell for the site dev server"
 }
@@ -99,19 +99,22 @@ An installer asks a question and exits if nobody answers. `pty_read` shows the q
 answers it. The newline default appends the carriage return the prompt is waiting for.
 
 ```jsonc
-{"command":"npx","args":["-y","create-something@latest","my-app"],"cwd":"C:\\work","description":"scaffold a new project"}
+{"command":"npx","args":["-y","create-something@latest","my-app"],"cwd":"<projects>","description":"scaffold a new project"}
 // -> {"sessionId":"b2a8...","pid":7744,"title":"npx"}
 
 // On Windows npx is a .cmd shim: janua resolves it through PATH x PATHEXT and runs it through
 // cmd /d /s /c, so the spawn above works without wrapping it in a shell yourself.
 
 {"sessionId":"b2a8...","cursor":0,"waitMs":5000}
-// -> {"data":"Need to install the following packages:\ncreate-something@1.4.0\nOk to proceed? (y) ",
+// -> {"data":"
+//       Need to install the following packages:
+//       create-something@1.4.0
+//       Ok to proceed? (y) ",
 //     "cursor":84,"exited":false,"exitCode":null,"dropped":0,"matched":true}
 
 // Answer it and read what it prints next, in one call
 {"sessionId":"b2a8...","data":"y","waitMs":10000,"match":"created"}
-// -> {"ok":true,"data":"\r\n✔ Project created in C:\\work\\my-app\r\n","cursor":137,
+// -> {"ok":true,"data":"\r\n✔ Project created in <projects>\\my-app\r\n","cursor":137,
 //     "exited":false,"exitCode":null,"dropped":0,"matched":true}
 
 {"sessionId":"b2a8...","data":"","newline":true}  // bare Enter, when a default is offered
@@ -132,7 +135,7 @@ A REPL keeps state between commands, which is exactly what a one-shot `node -e` 
 cursor moving so each read shows only the new result.
 
 ```jsonc
-{"command":"node","args":["--interactive"],"cwd":"C:\\work\\scratch","title":"node-repl","description":"scratch REPL for quick checks"}
+{"command":"node","args":["--interactive"],"cwd":"<scratch>","title":"node-repl","description":"scratch REPL for quick checks"}
 // -> {"sessionId":"c91d...","pid":3312,"title":"node-repl"}
 
 {"sessionId":"c91d...","cursor":0,"waitMs":5000}
@@ -173,7 +176,7 @@ exits, `match` appears, or `timeoutMs` runs out, and returns the output with the
 {
   "command": "npm",
   "args": ["test"],
-  "cwd": "C:\\work\\site",
+  "cwd": "<checkout>",
   "timeoutMs": 300000,
   "maxBytes": 40000,
   "match": "failing"
@@ -217,6 +220,52 @@ else's terminal would be a surprise.
 
 The CLI takes the same path: `janua run -- node -v` uses pipes, and
 `janua run --tty -- node --interactive` asks for a PTY.
+
+---
+
+## Upgrade
+
+`janua upgrade` replaces the command layer without replacing a running one:
+
+```bash
+janua upgrade            # newest published version
+janua upgrade 0.3.1      # one specific version
+```
+
+It runs `npm install --prefix <home>/versions/<version> @nathwn12/janua@<version>` into a fresh
+directory, then asks that copy to prove itself: `--version` must answer with the version that was
+installed, and `janua run -- node -e "process.stdout.write('UPGRADE_OK')"` from that copy must come
+back with the marker. Only then is `current.json` replaced, by writing a temp file and renaming it, so
+a failure at any earlier point leaves the old pointer byte-identical. The receipt says what happened:
+
+```
+janua upgrade: 0.3.1 -> 0.4.0
+  home:     <JANUA_HOME>
+  staged:   versions/0.4.0
+  verified: --version 0.4.0, run UPGRADE_OK
+  switched: current.json -> 0.4.0
+  kept:     versions/0.3.1
+restart the MCP client to load 0.4.0
+```
+
+`JANUA_HOME` decides where `versions/` and `current.json` live: `%LOCALAPPDATA%\janua` on Windows,
+`${XDG_DATA_HOME:-~/.local/share}/janua` elsewhere. Each `versions/<version>` is a complete npm
+prefix, with the package under `node_modules/@nathwn12/janua` and its dependencies beside it, moved
+into place in one rename after the candidate answers from the staged copy and again from its final
+path. One directory per version means the old one is kept, and a failed candidate is a directory you
+can throw away.
+
+An upgrade never touches a process that is already running. The client you have open keeps talking to
+the version it started; the new one takes effect on its next start, so restart the client. To go back,
+run `janua upgrade 0.3.1` (or edit `current.json` to name `0.3.1`); the kept directory answers for
+itself again, so a rollback needs no download.
+
+Two upgrades at once would race on the same pointer, so one takes the `upgrade.lock` directory and any
+other is refused with `upgrade_in_progress` instead of waiting. Only the upgrade that took the lock
+removes it, so a killed upgrade leaves the lock behind, and what is current depends on how far it got:
+a kill before the pointer write leaves the old version current, and a kill after the pointer write
+leaves the new version current, since it is verified before the pointer moves. In both cases the next
+attempt refuses and says to delete the lock once you have confirmed no `janua upgrade` is running.
 
 ---
 
