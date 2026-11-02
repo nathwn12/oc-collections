@@ -20,6 +20,8 @@ const USAGE = `janua ${version}
 Usage:
   janua run [options] -- <command> [args...]
   janua mcp                     start the stdio MCP server (the default)
+  janua upgrade [version]       install a version beside the running one, verify
+                                it, then point current.json at it
   janua --version, -v           print the version
   janua --help, -h              print this help
 
@@ -44,6 +46,11 @@ it does in a console. pty_spawn (MCP) always uses a PTY.
 Without --json the command's output is written to stdout unchanged (no added
 newline) and the exit status is the command's own; 124 means --timeout ran out
 and 2 means a usage or spawn failure.
+
+upgrade installs the newest published version (or the one named) under
+JANUA_HOME, checks that it answers --version and can run a command, and only then
+switches current.json. The previous version stays on disk and a process already
+running keeps running; restart the MCP client to load the new one.
 `;
 
 class UsageError extends Error {}
@@ -186,6 +193,51 @@ async function runCommand(argv) {
   }
 }
 
+// `janua upgrade` prints what it did: staged, verified, switched. A failure
+// prints the typed error and exits non-zero with the pointer untouched.
+function formatUpgrade(receipt, marker) {
+  if (receipt.alreadyCurrent) {
+    return `janua upgrade: ${receipt.to} is already current\n`;
+  }
+  const lines = [
+    `janua upgrade: ${receipt.from ?? 'none'} -> ${receipt.to}`,
+    `  home:     ${receipt.home}`,
+    `  staged:   versions/${receipt.to}${receipt.staged ? '' : ' (already installed)'}`,
+    `  verified: --version ${receipt.to}, run ${marker}`,
+    `  switched: current.json -> ${receipt.to}`,
+  ];
+  if (receipt.previous) lines.push(`  kept:     versions/${receipt.from}`);
+  lines.push(`restart the MCP client to load ${receipt.to}`);
+  return `${lines.join('\n')}\n`;
+}
+
+async function upgradeCommand(argv) {
+  let version;
+  try {
+    if (argv.length > 1) throw new UsageError('upgrade takes one version at most');
+    if (argv[0] !== undefined) {
+      if (argv[0].startsWith('-')) throw new UsageError(`unknown option ${argv[0]}`);
+      version = argv[0];
+    }
+  } catch (err) {
+    await writeStderr(`janua: ${err.message}\n\n${USAGE}`);
+    return 2;
+  }
+
+  // Loaded here so run and the MCP server never pay for the upgrade code.
+  const { upgrade, RUN_MARKER } = await import('./upgrade.js');
+  try {
+    const receipt = await upgrade(version === undefined ? {} : { version });
+    await writeStdout(formatUpgrade(receipt, RUN_MARKER));
+    return 0;
+  } catch (err) {
+    const code = err && typeof err.code === 'string' ? err.code : 'internal_error';
+    const message = err && typeof err.message === 'string' ? err.message : String(err);
+    await writeStderr(`janua: ${code}: ${message}\n`);
+    return code === 'invalid_args' ? 2 : 1;
+  }
+}
+
 // The MCP server is imported lazily so `janua run` does not pay for the MCP
 // stack, and its shutdown behaviour is the one the old binary had.
 async function startMcp() {
@@ -234,6 +286,9 @@ export async function main(argv = process.argv.slice(2)) {
     // The CLI is one call: the process ends here and every PTY closes with it.
     // stdout has already been flushed by runCommand.
     process.exit(code);
+  }
+  if (first === 'upgrade') {
+    process.exit(await upgradeCommand(rest));
   }
   await writeStderr(`janua: unknown command "${first}"\n\n${USAGE}`);
   process.exitCode = 2;

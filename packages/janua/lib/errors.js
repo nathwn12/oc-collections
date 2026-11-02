@@ -12,6 +12,9 @@ export const ERROR_CODES = Object.freeze({
   PTY_RESIZE_FAILED: 'pty_resize_failed',
   TOO_MANY_SESSIONS: 'too_many_sessions',
   PTY_KILL_FAILED: 'pty_kill_failed',
+  // `janua upgrade`: the candidate was not installed, verified, or switched.
+  UPGRADE_FAILED: 'upgrade_failed',
+  UPGRADE_IN_PROGRESS: 'upgrade_in_progress',
   // Anything unexpected. Never used for a condition the codes above cover.
   INTERNAL: 'internal_error',
 });

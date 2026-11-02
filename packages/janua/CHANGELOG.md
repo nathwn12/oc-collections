@@ -21,6 +21,18 @@
   usage or spawn error); `--json` prints the whole result. `janua --version` prints the package
   version and `janua --help` prints usage. Bare `janua` and `janua mcp` still start the stdio MCP
   server exactly as before.
+- `janua upgrade [version]`: installs a version beside the running one under `JANUA_HOME`
+  (`%LOCALAPPDATA%\janua` on Windows, `${XDG_DATA_HOME:-~/.local/share}/janua` elsewhere), verifies
+  the candidate's own `--version` and a real `run` before switching `current.json` atomically, and
+  leaves the previous version installed, so an upgrade can be rolled back with
+  `janua upgrade <old version>`. Each version directory is a complete npm prefix, moved into place in
+  one rename after it answers from both the staged copy and its final path. A failed install or check
+  leaves the pointer untouched. `bin/janua.js` is now a thin launcher that runs the version
+  `current.json` names, so an upgrade takes effect when the MCP client restarts; the direct entry is
+  `bin/janua-cli.js`. One upgrade runs at a time: the `upgrade.lock` directory is only removed by the
+  upgrade that took it, so a second one is refused with `upgrade_in_progress`, and a lock left by a
+  killed run is cleared by hand once nothing is running. A kill before the pointer write leaves the
+  old version current; a kill after it leaves the already-verified new version current.
 
 ### Changed
 

@@ -184,10 +184,13 @@ test('pty_write with waitMs and match returns the answer in the same call', asyn
   console.log(`pty_write(no wait) -> ${JSON.stringify(bare)}`);
   assert.deepEqual(Object.keys(bare), ['ok'], 'without waitMs the payload stays {ok}');
 
-  // With waitMs and match the reply arrives here, not in a second call.
+  // With waitMs and match the reply arrives here, not in a second call. The
+  // pattern is the program's echo of *this* line: waiting on 'PROMPT>' would be
+  // satisfied by the prompt the previous write already produced, and the read
+  // would return before the answer it is meant to wait for.
   const answered = JSON.parse(textOf(await client.callTool({
     name: 'pty_write',
-    arguments: { sessionId: spawned.sessionId, data: 'hello', waitMs: 5000, match: 'PROMPT>' },
+    arguments: { sessionId: spawned.sessionId, data: 'hello', waitMs: 5000, match: 'ECHO:hello' },
   })));
   console.log(`pty_write(wait) -> ${JSON.stringify(answered)}`);
   assert.equal(answered.ok, true);
