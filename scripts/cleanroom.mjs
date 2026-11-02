@@ -13,6 +13,10 @@
  *   - every declared entry point exists (main, exports targets, bin),
  *   - every `files` entry landed in the install,
  *   - the package declares something a consumer can load at all,
+ *   - every loadable entry point evaluates: library entries are imported and
+ *     must export something, bins must answer `--version`/`--help` (a bin
+ *     executes on import, so executing it is the load proof that still forces
+ *     node to parse and evaluate the module),
  *
  * then, with the same cwd, the package's own `test` command when the tarball
  * ships the test tree it names. No tarball in this repo ships one (pack-check
@@ -22,8 +26,9 @@
  * Order is the workspace-plan order, the same list the root fan-out uses.
  *
  * `--check` proves this harness in both directions, offline against fixtures:
- * a good fixture installs and probes clean, a broken one (wrong `main`) must be
- * refused, and the zero-workspace preflight must fail closed. Exit 1 when an
+ * a good fixture installs and probes clean; a wrong `main`, an entry file
+ * that throws on import, and a package with no entry point must all be
+ * refused; and the zero-workspace preflight must fail closed. Exit 1 when an
  * expectation is violated.
  *
  * Failures set process.exitCode and return; a forced exit can truncate the
@@ -39,6 +44,8 @@ import { PLAN, ROOT, workspaceDirs } from "./workspace-plan.mjs"
 const PROBE = `
 import fs from "node:fs"
 import path from "node:path"
+import { spawnSync } from "node:child_process"
+import { pathToFileURL } from "node:url"
 
 const [dir, name] = process.argv.slice(2)
 
@@ -51,7 +58,13 @@ function leaves(value, out = []) {
   return out
 }
 
-const manifest = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"))
+let manifest
+try {
+  manifest = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"))
+} catch (err) {
+  console.log(\`  FAIL unreadable package.json: \${err.message}\`)
+  process.exit(1)
+}
 if (manifest.name !== name) {
   console.log(\`  FAIL installed name \${manifest.name} != \${name}\`)
   process.exit(1)
@@ -70,13 +83,78 @@ const missingEntries = [...entries]
 const files = (manifest.files ?? []).map((entry) => entry.replace(/\\/+$/, ""))
 const missingFiles = files.filter((entry) => !fs.existsSync(path.join(dir, entry)))
 
-if (entries.size === 0 && files.length === 0) {
-  console.log("  FAIL declares no entry point and no files: nothing a consumer can load")
+if (entries.size === 0) {
+  console.log("  FAIL declares no entry point: nothing a consumer can load")
   process.exit(1)
 }
 for (const entry of missingEntries) console.log(\`  FAIL missing entry \${entry}\`)
 for (const entry of missingFiles) console.log(\`  FAIL missing files entry \${entry}\`)
 if (missingEntries.length > 0 || missingFiles.length > 0) process.exit(1)
+
+// Existence is not loading: import every loadable library entry and prove it
+// evaluates to a namespace with an export. Type declarations and TypeScript
+// sources are not runnable modules, so they keep the existence check above
+// and are skipped here; JSON subpaths are data, not modules. A bin executes
+// on import, so importing one here would run the command: the load proof for
+// a bin is executing it, which still forces node to parse and evaluate the
+// module before it can answer.
+const withoutPrefix = (entry) => {
+  const raw = String(entry)
+  return raw.startsWith("./") ? raw.slice(2) : raw
+}
+const binSet = new Set(bins.map(withoutPrefix))
+const stripped = [...entries].map(withoutPrefix)
+const isRunnable = (entry) => !(
+  entry.endsWith(".d.ts") ||
+  entry.endsWith(".d.mts") ||
+  entry.endsWith(".d.cts") ||
+  entry.endsWith(".ts") ||
+  entry.endsWith(".tsx") ||
+  entry.endsWith(".mts") ||
+  entry.endsWith(".cts") ||
+  entry.endsWith(".json")
+)
+const libs = stripped.filter((entry) => !binSet.has(entry) && isRunnable(entry))
+let loadFailures = 0
+for (const entry of libs) {
+  let ns
+  try {
+    ns = await import(pathToFileURL(path.join(dir, entry)).href)
+  } catch (err) {
+    console.log(\`  FAIL loads \${entry}: \${err && err.message ? err.message : String(err)}\`)
+    loadFailures += 1
+    continue
+  }
+  if (!ns || Object.keys(ns).length === 0) {
+    console.log(\`  FAIL loads \${entry}: evaluated but exports nothing\`)
+    loadFailures += 1
+    continue
+  }
+  console.log(\`  LOAD \${entry}: evaluated with exports\`)
+}
+for (const entry of binSet) {
+  let ok = false
+  let detail = ""
+  for (const flag of ["--version", "--help"]) {
+    const probed = spawnSync(process.execPath, [path.join(dir, entry), flag], {
+      cwd: dir,
+      encoding: "utf8",
+      timeout: 30000,
+    })
+    detail = (String(probed.stdout ?? "") + String(probed.stderr ?? "")).trim().slice(-160)
+    if (!probed.error && probed.status === 0) {
+      ok = true
+      break
+    }
+  }
+  if (!ok) {
+    console.log(\`  FAIL loads \${entry}: bin did not answer --version/--help\${detail ? ": " + detail : ""}\`)
+    loadFailures += 1
+    continue
+  }
+  console.log(\`  LOAD \${entry}: bin answered\`)
+}
+if (loadFailures > 0) process.exit(1)
 console.log(\`  PASS \${name}@\${manifest.version}: \${entries.size} entry point(s) and \${files.length} files entr\${files.length === 1 ? "y" : "ies"} present\`)
 `
 
@@ -277,6 +355,20 @@ function runCheck() {
         dirName: "broken",
         manifest: { name: "@fixture/broken", version: "1.0.0", main: "./dist/missing.js", files: ["index.js"] },
         files: { "index.js": "module.exports = 1\n" },
+      }, false),
+    )
+    results.push(
+      fixtureRun(root, {
+        dirName: "throwing",
+        manifest: { name: "@fixture/throwing", version: "1.0.0", main: "./index.js", files: ["index.js"] },
+        files: { "index.js": "throw new Error('fixture boom')\n" },
+      }, false),
+    )
+    results.push(
+      fixtureRun(root, {
+        dirName: "noentry",
+        manifest: { name: "@fixture/noentry", version: "1.0.0", files: ["README.md"] },
+        files: { "README.md": "# noentry\n" },
       }, false),
     )
     const emptyClosed = preflight([], true) === false
