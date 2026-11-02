@@ -15,8 +15,9 @@ const { version } = require('../package.json');
 
 const INSTRUCTIONS = [
   'janua runs commands once and gives you persistent interactive terminals.',
-  'Use run for a command whose output you want once: it starts a fresh PTY, optionally writes stdin, and returns',
-  'when the command exits, the match pattern appears, or timeoutMs passes (killing the tree unless keep is true).',
+  'Use run for a command whose output you want once: it runs with pipes by default (tty: true gives it a PTY),',
+  'optionally writes stdin, and returns when the command exits, the match pattern appears, or timeoutMs passes',
+  '(killing the tree unless keep is true).',
   'Use pty_spawn for long-lived work you will talk to over several calls (dev servers, REPLs, anything that',
   'prompts), and give it a name to address the session by that name later. Keep the returned sessionId or name,',
   'read with pty_read using the cursor it returns so output is never duplicated, write with pty_write, resize',
@@ -113,8 +114,9 @@ const SESSION_SHAPE = {
   args: z.array(z.string()).describe('Arguments the program was started with.'),
   cwd: z.string().describe('Working directory the program was started in.'),
   description: z.string().describe('What the session is for, as given at spawn.'),
-  cols: z.number().describe('Terminal columns.'),
-  rows: z.number().describe('Terminal rows.'),
+  cols: z.number().describe('Terminal columns (0 for a pipe session).'),
+  rows: z.number().describe('Terminal rows (0 for a pipe session).'),
+  pipe: z.boolean().describe('True when the session runs with pipes and has no terminal to resize.'),
   exited: z.boolean(),
   exitCode: z.number().nullable(),
   bytes: z.number(),
@@ -138,14 +140,17 @@ export function createServer(options = {}) {
     {
       title: 'Run a one-shot command',
       description:
-        'Run a command once in a fresh PTY and return when it exits, when match appears in its output, or when '
-        + 'timeoutMs passes: {data, exitCode, timedOut, matched, sessionId, name, cursor, dropped, bytes, '
-        + 'truncated, durationMs}. stdin (a string, no newline added) is written immediately. maxBytes caps data '
-        + '(default and maximum 1048576) and truncated: true means the command produced more. On match or timeout '
-        + 'the process tree is killed unless keep is true; with keep the session stays addressable by sessionId or '
-        + 'name for pty_read, pty_write and pty_kill. shell: true takes command as one platform command line '
-        + '(cmd.exe /d /s /c on Windows, /bin/sh -c elsewhere) and requires args to be empty. Use this for '
-        + 'commands whose output you want once; use pty_spawn for long-lived work you will talk to over several calls.',
+        'Run a command once and return when it exits, when match appears in its output, or when timeoutMs '
+        + 'passes: {data, exitCode, timedOut, matched, sessionId, name, cursor, dropped, bytes, truncated, '
+        + 'durationMs}. Runs with pipes by default, which is much faster than a PTY; tty: true gives the '
+        + 'command a real terminal for an interactive program that prompts or draws a TUI. stdout and stderr '
+        + 'are merged in arrival order. stdin (a string, no newline added) is written immediately. maxBytes caps '
+        + 'data (default and maximum 1048576) and truncated: true means the command produced more. On match or '
+        + 'timeout the process tree is killed unless keep is true; with keep the session stays addressable by '
+        + 'sessionId or name for pty_read, pty_write and pty_kill. shell: true takes command as one platform '
+        + 'command line (cmd.exe /d /s /c on Windows, /bin/sh -c elsewhere) and requires args to be empty. Use '
+        + 'this for commands whose output you want once; use pty_spawn for long-lived work you will talk to '
+        + 'over several calls.',
       inputSchema: z.object({
         command: z.string().describe('Executable to run: a name resolved on PATH, an absolute path, or — with shell: true — one command line.'),
         args: z.array(z.string()).optional().describe('Arguments for command, one array entry each. Must be empty when shell is true.'),
@@ -157,6 +162,7 @@ export function createServer(options = {}) {
         stripAnsi: z.boolean().optional().describe('Remove ANSI escape sequences from data (default true).'),
         match: z.string().optional().describe('Regular expression (at most 200 characters) that ends the run early when the output matches it.'),
         shell: z.boolean().optional().describe('Run command as one platform command line through cmd.exe /d /s /c on Windows or /bin/sh -c elsewhere (default false).'),
+        tty: z.boolean().optional().describe('Use a PTY for an interactive command (default false: one-shot runs use pipes and are faster).'),
         name: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/).optional().describe('Optional session name (1-64 characters: letter or digit first, then letters, digits, ".", "_" or "-"). A live name is refused rather than reused.'),
         keep: z.boolean().optional().describe('Leave the session running on match or timeout instead of killing the tree (default false).'),
       }),
@@ -201,8 +207,10 @@ export function createServer(options = {}) {
     {
       title: 'Write to terminal',
       description:
-        'Send keystrokes to a running session. newline (default true) appends a carriage return, which is what '
-        + 'a shell or prompt is waiting for. Returns {ok}. Give waitMs (and optionally match, with the same '
+        'Send keystrokes to a running session. newline (default true) appends a line ending: a carriage return '
+        + 'to a PTY session, which is what a shell or prompt is waiting for, or a newline to a pipe session '
+        + 'from run, because a pipe has no terminal translation. Returns {ok}. Give waitMs (and optionally '
+        + 'match, with the same '
         + 'semantics as pty_read) to read the answer in the same call: the response then also carries '
         + '{data, cursor, exited, exitCode, dropped, matched, incomplete, truncated}. Without waitMs nothing '
         + 'is read, so a caller that expects output must either pass waitMs here or call pty_read next.',
@@ -279,7 +287,8 @@ export function createServer(options = {}) {
         + 'keeps the size in force. The program is told at once: on POSIX it receives SIGWINCH, on Windows the '
         + 'ConPTY itself is resized, so a TUI redraws at the new size instead of staying at the old one. Returns '
         + '{ok, cols, rows} for the size now in force, which pty_list also reports. A call naming neither dimension '
-        + 'is invalid_args; resizing a session whose program has already exited is pty_resize_failed.',
+        + 'is invalid_args; resizing a session whose program has already exited is pty_resize_failed, and so is a '
+        + 'pipe session from run, which has no terminal (rerun it with tty: true when it needs a PTY).',
       inputSchema: z.object({
         sessionId: z.string().describe('Session id or name: the id pty_spawn or run returned, or the name given at spawn.'),
         cols: z.number().int().min(1).max(1000).optional().describe('Terminal columns to apply. Omit to keep the current columns; at least one of cols and rows is required.'),
@@ -317,9 +326,10 @@ export function createServer(options = {}) {
       title: 'List terminals',
       description:
         'List sessions this server knows about, newest last, one page at a time: sessionId, name, pid, title, '
-        + 'command, args, cwd, description, cols, rows, exited, exitCode, bytes emitted, and createdAt. name is the '
-        + 'name given at spawn (or null). cols and rows are the size in force now, so a session resized with '
-        + 'pty_resize reports the new geometry here. Returns {sessions, total, nextOffset}: total counts every '
+        + 'command, args, cwd, description, cols, rows, pipe, exited, exitCode, bytes emitted, and createdAt. name is '
+        + 'the name given at spawn (or null). cols and rows are the size in force now, so a session resized with '
+        + 'pty_resize reports the new geometry here; pipe is true for a run session with no terminal, and its '
+        + 'cols and rows are 0. Returns {sessions, total, nextOffset}: total counts every '
         + 'session known, and nextOffset is null on the last page. Use it to recover a session id or name you lost, '
         + 'or to recall what an existing session was for.',
       inputSchema: z.object({

@@ -163,9 +163,10 @@ End it with Ctrl+D (end of input) or kill the session:
 
 ## 4. One-shot commands and named sessions
 
-Not every program needs a conversation. `run` is one call for one command: it starts a fresh PTY,
-writes `stdin` if you gave one, reads until the command exits, `match` appears, or `timeoutMs` runs
-out, and returns the output with the exit code.
+Not every program needs a conversation. `run` is one call for one command: by default it starts the
+command with pipes (fast, no terminal), writes `stdin` if you gave one, reads until the command
+exits, `match` appears, or `timeoutMs` runs out, and returns the output with the exit code. Set
+`tty: true` when the program prompts or draws a full-screen UI; `pty_spawn` is always a PTY.
 
 ```jsonc
 // run - a test suite, bounded in time and in bytes
@@ -181,8 +182,13 @@ out, and returns the output with the exit code.
 //     "name":null,"cursor":8123,"dropped":0,"bytes":8123,"truncated":false,"durationMs":1840}
 ```
 
-- `stdin` is written as-is, with no newline added. Add the newline the program expects yourself
-  (`"stdin": "y\n"`; a Windows console wants `\r`, a POSIX terminal turns `\r` into `\n`).
+- `stdin` is written as-is, with no newline added. On the default pipe path it is a pipe: send `\n`
+  for a line reader, and closing stdin signals EOF. With `tty: true` it is a console, so a Windows
+  program wants `\r` (a POSIX terminal turns `\r` into `\n`).
+- `tty: true` replaces the pipes with a real PTY, for a program that prompts, uses colour, or draws
+  a full-screen UI. A pipe session shows `pipe: true` in `pty_list` with `cols`/`rows` 0, and
+  `pty_resize` refuses it with `pty_resize_failed` naming `tty: true`. Writing to a kept pipe
+  session ends a line with `\n` by default; a PTY session still gets `\r`.
 - `maxBytes` caps `data` only. The run keeps draining, so `bytes` counts everything produced and
   `truncated: true` tells you the reply was cut.
 - A match or a timeout ends the run and kills the process tree, since a one-shot call has nobody left
@@ -208,6 +214,9 @@ A second spawn with `"name":"scratch-repl"` returns `reused: true` and the same 
 is free for the next spawn; the old session stays readable under its id with `name: null` in
 `pty_list`. `run` never reuses a live name, because a one-shot call that attached itself to someone
 else's terminal would be a surprise.
+
+The CLI takes the same path: `janua run -- node -v` uses pipes, and
+`janua run --tty -- node --interactive` asks for a PTY.
 
 ---
 

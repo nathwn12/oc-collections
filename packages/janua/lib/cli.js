@@ -30,9 +30,16 @@ Run options:
   --max-bytes <n>    cap returned output (default and max 1048576)
   --raw              keep ANSI escape sequences (default: strip them)
   --shell            take the whole command as one shell command line
+  --tty              give the command a real PTY for an interactive program
+                     (default: pipes, which start far faster)
   --name <name>      name the session, reported in the JSON
   --match <re>       stop early when the output matches this regular expression
   --json             print the whole result as JSON instead of just data
+
+By default run gives the command pipes, not a terminal: one-shot commands start
+in milliseconds and stdout and stderr are merged as they arrive. --tty gives it
+a real terminal, so a program that prompts or draws a full-screen UI behaves as
+it does in a console. pty_spawn (MCP) always uses a PTY.
 
 Without --json the command's output is written to stdout unchanged (no added
 newline) and the exit status is the command's own; 124 means --timeout ran out
@@ -98,6 +105,9 @@ function parseRunArgs(argv) {
       case '--shell':
         parsed.shell = true;
         break;
+      case '--tty':
+        parsed.tty = true;
+        break;
       case '--cwd':
         parsed.cwd = optionValue(argv, index, token);
         index += 1;
@@ -154,6 +164,7 @@ async function runCommand(argv) {
   if (parsed.match !== undefined) input.match = parsed.match;
   if (parsed.name !== undefined) input.name = parsed.name;
   if (parsed.shell) input.shell = true;
+  if (parsed.tty) input.tty = true;
   if (parsed.raw) input.stripAnsi = false;
 
   const manager = new SessionManager();

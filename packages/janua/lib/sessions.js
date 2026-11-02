@@ -1,4 +1,5 @@
-// Session registry: one PTY per session id, with a bounded output ring.
+// Session registry: one process per session id — a PTY for interactive work,
+// or piped stdio for a one-shot run — with a bounded output ring.
 //
 // Deliberate properties:
 //   - a session outlives its child: after exit it stays listed and readable so
@@ -7,16 +8,17 @@
 //     so a long-lived server is not wedged by history;
 //   - a session can carry a name, and every lookup accepts either the id or the
 //     name, so a caller can keep a stable handle instead of a UUID;
-//   - `run` drives one fresh PTY to completion in a single call: spawn, write
-//     stdin, read in short slices, stop on exit, match or timeout;
-//   - nothing here throws a raw node-pty error across the boundary: spawn and
-//     write failures become typed JanuaError codes.
+//   - `run` drives one fresh process to completion in a single call: spawn,
+//     write stdin, read in short slices, stop on exit, match or timeout. It
+//     uses pipes by default, which is fast, and a PTY only for tty: true;
+//   - nothing here throws a raw node-pty or child_process error across the
+//     boundary: spawn and write failures become typed JanuaError codes.
 
 import { randomUUID } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
+import { spawn as spawnProcess, spawnSync } from 'node:child_process';
 import { readdirSync, statSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { basename, extname, join } from 'node:path';
-import { spawn as spawnPty } from '@lydell/node-pty';
 import { OutputRing } from './ring.js';
 import { stripAnsi, escapeSequenceEnd, incompleteEscapeStart } from './ansi.js';
 import {
@@ -26,6 +28,19 @@ import {
   invalidArgs,
   sessionNotFound,
 } from './errors.js';
+
+const require = createRequire(import.meta.url);
+
+// The PTY runtime is a native addon, so it is loaded on first PTY use rather
+// than at import time: a pipe run never needs a terminal, and loading the
+// addon is pure start-up cost there. The module is cached, so every later
+// pty_spawn and tty: true run reuses the same handle.
+let ptyRuntime = null;
+
+function loadPty() {
+  if (ptyRuntime === null) ptyRuntime = require('@lydell/node-pty');
+  return ptyRuntime;
+}
 
 export const DEFAULT_COLS = 80;
 export const DEFAULT_ROWS = 24;
@@ -375,18 +390,55 @@ function terminate(term, signal) {
   term.kill(signal ?? 'SIGTERM');
 }
 
+// A pipe session's child is spawned detached on POSIX, so it leads its own
+// process group and a negative pid reaches the whole tree: the program plus the
+// descendants it started. Windows has no equivalent group here and uses
+// taskkill /T. The direct child.kill is the POSIX fallback for a pid that is not
+// a group leader (a group already reaped, or a spawn that ignored detached).
+function killPipe(session, signal) {
+  const child = session.child;
+  if (!Number.isInteger(child.pid) || child.pid <= 0) return;
+  if (process.platform === 'win32') {
+    if (!isProcessAlive(child.pid)) return;
+    const result = spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { encoding: 'utf8' });
+    if (result.status === 0) return;
+    const output = `${result.stdout ?? ''}${result.stderr ?? ''}`.toLowerCase();
+    if (output.includes('not found') || output.includes('not running')) return;
+    try {
+      child.kill();
+    } catch {
+      // already gone
+    }
+    return;
+  }
+  try {
+    // Negative pid is the group, not the process: a shell's background child
+    // dies with it instead of leaking past the run's timeout or match.
+    process.kill(-child.pid, signal ?? 'SIGTERM');
+    return;
+  } catch {
+    // no group to signal: fall back to the direct child
+  }
+  try {
+    child.kill(signal ?? 'SIGTERM');
+  } catch {
+    // already gone
+  }
+}
+
 export const MAX_MATCH_PATTERN = 200;
 
-// A poll, not a busy wait: the event loop must stay free for the PTY's own exit
-// callback while the kill is being confirmed.
+// A poll, not a busy wait: the loop stays free for the child's own exit while
+// the kill is being confirmed. The timer is deliberately referenced: a pipe
+// session has no PTY handle keeping the loop alive, so an unref'd poll would
+// let Node report event-loop-resolved while the kill is still pending.
 async function waitForGone(isGone, timeoutMs, pollMs) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     if (isGone()) return true;
     if (Date.now() >= deadline) return false;
     await new Promise((resolve) => {
-      const timer = setTimeout(resolve, pollMs);
-      if (typeof timer.unref === 'function') timer.unref();
+      setTimeout(resolve, pollMs);
     });
   }
 }
@@ -545,6 +597,7 @@ export class SessionManager {
     const maxBytes = resolveRunMaxBytes(input.maxBytes);
     const keepAnsi = boolOption('stripAnsi', input.stripAnsi) === false;
     const keep = boolOption('keep', input.keep) === true;
+    const tty = boolOption('tty', input.tty) === true;
     if (input.stdin !== undefined && typeof input.stdin !== 'string') {
       throw invalidArgs('stdin must be a string');
     }
@@ -568,7 +621,7 @@ export class SessionManager {
     const label = shell ? command.split(/\s+/)[0] : basename(command);
     const title = name ?? label ?? command;
     const description = `one-shot: ${label}`.slice(0, MAX_DESCRIPTION_CHARS);
-    const session = this.#create({
+    const sessionInput = {
       command,
       args,
       cwd,
@@ -579,11 +632,28 @@ export class SessionManager {
       rows: DEFAULT_ROWS,
       title,
       description,
-    });
+    };
+    // Pipes by default: a ConPTY costs about a second to stand up, which is the
+    // whole budget of a one-shot command. tty: true opts back into a terminal.
+    const session = tty ? this.#create(sessionInput) : this.#createPipe(sessionInput);
     if (stale) stale.name = null;
 
     try {
-      if (typeof input.stdin === 'string' && input.stdin !== '') {
+      const hasStdin = typeof input.stdin === 'string' && input.stdin !== '';
+      if (session.pipe) {
+        try {
+          // No added newline here either: the caller decided the exact bytes.
+          // EOF is what tells a reader there is no more input, so stdin is
+          // ended unless keep asked for a session that can still be written to.
+          if (hasStdin) session.stdin.write(input.stdin);
+          if (!keep) session.stdin.end();
+        } catch (err) {
+          throw new JanuaError(
+            ERROR_CODES.PTY_WRITE_FAILED,
+            `could not write stdin to session ${session.sessionId}: ${describeCause(err)}`,
+          );
+        }
+      } else if (hasStdin) {
         try {
           // No added newline: the caller decided the exact bytes, including
           // whether a prompt should see Enter.
@@ -649,6 +719,11 @@ export class SessionManager {
         }
       }
 
+      // A failed spawn reports through the child's 'error' event, after this
+      // call has already created the session; the read loop has seen it exit,
+      // so the typed failure replaces the empty success it would otherwise be.
+      if (session.spawnError) throw session.spawnError;
+
       if (!keep && (matched || timedOut)) {
         // At most one answer was asked for, so nothing should keep running
         // behind a session nobody will talk to.
@@ -683,13 +758,7 @@ export class SessionManager {
   // The one place that reserves a slot, starts the PTY and registers the
   // session. spawn and run differ only in what they do before and after it.
   #create(input) {
-    this.#purgeExited();
-    if (this.#sessions.size >= this.#maxSessions) {
-      throw new JanuaError(
-        ERROR_CODES.TOO_MANY_SESSIONS,
-        `session limit reached (${this.#maxSessions}); kill a session with pty_kill before spawning another`,
-      );
-    }
+    this.#reserveSlot();
 
     const env = mergeEnv(input.env);
     const plan = input.shell
@@ -699,7 +768,7 @@ export class SessionManager {
 
     let term;
     try {
-      term = spawnPty(plan.file, plan.args, {
+      term = loadPty().spawn(plan.file, plan.args, {
         cols: input.cols,
         rows: input.rows,
         cwd: input.cwd,
@@ -717,6 +786,7 @@ export class SessionManager {
 
     const session = {
       sessionId,
+      pipe: false,
       term,
       pid: term.pid,
       name: input.name ?? null,
@@ -733,6 +803,7 @@ export class SessionManager {
       ring: new OutputRing(this.#maxBufferBytes),
       waiters: new Set(),
       pendingResize: null,
+      spawnError: null,
     };
 
     term.onData((chunk) => {
@@ -753,6 +824,137 @@ export class SessionManager {
     return session;
   }
 
+  // The pipe half of #create: node's own spawn with piped stdio, which is what
+  // makes a one-shot run fast (there is no ConPTY to stand up). stdout and
+  // stderr append to the same ring as they arrive, so the caller reads one
+  // interleaved stream. PATH/PATHEXT resolution is the same as for a PTY; a
+  // batch shim's plan holds one pre-escaped command line, so it is passed as
+  // the single argument and Windows must hand that line to cmd.exe verbatim.
+  #createPipe(input) {
+    this.#reserveSlot();
+    const env = mergeEnv(input.env);
+    const sessionId = randomUUID();
+
+    let child;
+    let target = input.command;
+    try {
+      if (input.shell) {
+        child = spawnProcess(input.command, {
+          cwd: input.cwd,
+          env,
+          stdio: ['pipe', 'pipe', 'pipe'],
+          windowsHide: true,
+          // POSIX: the child leads its own group, so killPipe can signal the
+          // whole tree. Windows uses taskkill /T and must stay attached.
+          detached: process.platform !== 'win32',
+          shell: true,
+        });
+      } else {
+        const plan = resolveSpawn(input.command, input.args, { env });
+        target = plan.resolved ? `${input.command} (resolved to ${plan.resolved})` : input.command;
+        child = spawnProcess(
+          plan.file,
+          Array.isArray(plan.args) ? plan.args : [plan.args],
+          {
+            cwd: input.cwd,
+            env,
+            stdio: ['pipe', 'pipe', 'pipe'],
+            windowsHide: true,
+            detached: process.platform !== 'win32',
+            windowsVerbatimArguments: plan.viaShell,
+          },
+        );
+      }
+    } catch (err) {
+      throw new JanuaError(
+        ERROR_CODES.SPAWN_FAILED,
+        `could not start ${target}: ${describeCause(err)}`,
+      );
+    }
+
+    const session = {
+      sessionId,
+      pipe: true,
+      term: null,
+      child,
+      stdin: child.stdin,
+      pid: child.pid,
+      name: input.name ?? null,
+      title: input.title,
+      command: input.command,
+      args: input.args,
+      description: input.description,
+      cwd: input.cwd,
+      cols: 0,
+      rows: 0,
+      createdAt: new Date().toISOString(),
+      exited: false,
+      exitCode: null,
+      ring: new OutputRing(this.#maxBufferBytes),
+      waiters: new Set(),
+      pendingResize: null,
+      spawnError: null,
+      stdinError: null,
+    };
+
+    const append = (chunk) => {
+      session.ring.append(chunk);
+      this.#notify(session);
+    };
+    child.stdout.on('data', append);
+    child.stderr.on('data', append);
+    // A write can fail after the child is gone, asynchronously; without a
+    // listener that 'error' would be unhandled and take the server down.
+    child.stdin.on('error', (err) => {
+      session.stdinError = err;
+    });
+    child.on('error', (err) => {
+      // spawn reports ENOENT and friends this way rather than by throwing.
+      session.spawnError = new JanuaError(
+        ERROR_CODES.SPAWN_FAILED,
+        `could not start ${target}: ${describeCause(err)}`,
+      );
+      session.exited = true;
+      this.#notify(session);
+    });
+    child.on('exit', (code) => {
+      // exit is the direct child, not its stdio: a background descendant can
+      // hold an inherited pipe open long after the program this run owns is
+      // gone, and waiting for close would hang a timeout or a match forever.
+      session.exited = true;
+      session.exitCode = typeof code === 'number' ? code : null;
+      this.#notify(session);
+    });
+    child.on('close', (code) => {
+      // Fallback only: exit normally arrives first. A killed child reports a
+      // null code (the signal that ended it), so nothing here invents one; an
+      // already-exited session is never flipped back, and a code exit already
+      // supplied is never overwritten.
+      if (session.exited) {
+        if (session.exitCode === null && typeof code === 'number') session.exitCode = code;
+        return;
+      }
+      session.exited = true;
+      session.exitCode = typeof code === 'number' ? code : null;
+      this.#notify(session);
+    });
+
+    this.#sessions.set(sessionId, session);
+    return session;
+  }
+
+  // The one place the cap is enforced, shared by both session kinds. Exited
+  // sessions are purged first, so history cannot wedge a long-lived server.
+  #reserveSlot() {
+    this.#purgeExited();
+    if (this.#sessions.size >= this.#maxSessions) {
+      throw new JanuaError(
+        ERROR_CODES.TOO_MANY_SESSIONS,
+        `session limit reached (${this.#maxSessions}); kill a session with pty_kill before spawning another`,
+      );
+    }
+  }
+
   write(sessionId, data, newline = true) {
     const session = this.#get(sessionId);
     if (typeof data !== 'string') throw invalidArgs('data must be a string');
@@ -761,6 +963,29 @@ export class SessionManager {
         ERROR_CODES.PTY_WRITE_FAILED,
         `session ${sessionId} has exited (exit code ${session.exitCode}); nothing is listening`,
       );
+    }
+    if (session.pipe) {
+      // The same keystroke contract, written to the child's stdin instead of a
+      // terminal: a stream ended by run, or one the child closed, has nobody
+      // listening and reports the same typed error as a dead PTY.
+      if (session.stdin.destroyed || session.stdin.writableEnded) {
+        throw new JanuaError(
+          ERROR_CODES.PTY_WRITE_FAILED,
+          `session ${sessionId} stdin is closed; nothing is listening`,
+        );
+      }
+      try {
+        // A pipe has no line discipline to translate bytes, so its line
+        // ending is the literal \n; the PTY path below keeps \r, which is what
+        // a console prompt reads as Enter.
+        session.stdin.write(newline ? `${data}\n` : data);
+      } catch (err) {
+        throw new JanuaError(
+          ERROR_CODES.PTY_WRITE_FAILED,
+          `write to session ${sessionId} failed: ${describeCause(err)}`,
+        );
+      }
+      return { ok: true };
     }
     try {
       session.term.write(newline ? `${data}\r` : data);
@@ -782,6 +1007,15 @@ export class SessionManager {
   // produced its first byte yet takes the size as soon as it does (flushResize).
   resize(sessionId, input = {}) {
     const session = this.#get(sessionId);
+    if (session.pipe) {
+      // A pipe has no terminal, no geometry and no way to tell the child about
+      // one. Refuse rather than record a size that nothing can apply.
+      throw new JanuaError(
+        ERROR_CODES.PTY_RESIZE_FAILED,
+        `session ${sessionId} runs with pipes and has no terminal to resize; `
+        + 'rerun it with tty:true (or use pty_spawn) when it needs a PTY',
+      );
+    }
     if ((input.cols === undefined || input.cols === null)
       && (input.rows === undefined || input.rows === null)) {
       throw invalidArgs(
@@ -1031,7 +1265,8 @@ export class SessionManager {
       return { ok: true, exited: true, exitCode: session.exitCode, pid: session.pid };
     }
     try {
-      terminate(session.term, signal);
+      if (session.pipe) killPipe(session, signal);
+      else terminate(session.term, signal);
     } catch (err) {
       throw new JanuaError(
         ERROR_CODES.INTERNAL,
@@ -1087,6 +1322,9 @@ export class SessionManager {
       description: session.description,
       cols: session.cols,
       rows: session.rows,
+      // True for a one-shot run on pipes: the session has no terminal, so
+      // pty_resize refuses it and its geometry is 0x0.
+      pipe: session.pipe === true,
       exited: session.exited,
       exitCode: session.exitCode,
       bytes: session.ring.total,
@@ -1101,7 +1339,8 @@ export class SessionManager {
     for (const session of this.#sessions.values()) {
       if (session.exited) continue;
       try {
-        terminate(session.term);
+        if (session.pipe) killPipe(session);
+        else terminate(session.term);
       } catch {
         // shutting down: a session that refuses to die must not block the rest
       }
