@@ -164,6 +164,10 @@ that contradicted the declared shape would be rejected by a validating client.
   `invalid_args` before anything is spawned.
 - Every session is killed when the server exits, and on `SIGINT`/`SIGTERM`.
 
+## Standalone by design
+
+janua does not require OpenCode, oc-talk, gladius, puppet, or any orchestrator. Any MCP stdio client can mount it, and any shell can call it. Integrations such as oc-talk are optional examples and adapters, never dependencies; the 0.5 MCP gateway will proxy any stdio MCP server, and no specific session model is required.
+
 ## Use it from any harness
 
 janua is one process with two faces. Neither face needs an orchestrator, a daemon, or another tool:
