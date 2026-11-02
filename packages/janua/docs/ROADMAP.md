@@ -1,6 +1,13 @@
 # janua roadmap
 
-Locked scope for the next two releases. Nothing here is started: 0.5 is a plan, not a work log.
+Locked scope for 0.5. Nothing here is started: 0.5 is a plan, not a work log.
+
+## 0.5 — self-upgrade and lockout prevention
+
+- A global `janua` install is never uninstalled before its replacement is installed and proven. `janua upgrade` stages the new version in a versioned directory, verifies `janua --version` and one real `janua run` from the staged binary, then switches the command shim atomically; the old version stays until the new one answers, and a failed switch rolls back.
+- Windows can hold a live package open through a running MCP server or daemon. The upgrade must not overwrite a live package in place: stop only the old adapter or defer the shim switch, never the harness/service process, and handle EBUSY/EPERM as a typed refusal with the recovery step.
+- Once the daemon owns sessions, upgrading the daemon does not kill them; clients reconnect after the shim switch.
+- Harness rule: the command layer is never uninstalled; shell remains the fallback until the new binary answers. A self-lockout is a harness defect, not a janua outage.
 
 ## 0.5 — daemon + reattach
 
@@ -22,11 +29,14 @@ client and an older or newer daemon.
 forward calls to them, and namespace them by server. One janua mount then gives a barebones harness
 every MCP it needs, and servers are added or removed at runtime without editing harness config.
 
+oc-talk is the first adapter: janua proxies it as an MCP server, never absorbs its OpenCode session semantics.
+
 Costs and risks: faithful schema and result passthrough, tool-name collisions across servers,
 auth and environment for child servers, child lifecycle and cleanup, error mapping back to the
 caller, and janua becoming a trusted gateway for everything behind it.
 
 ## Order
 
-Daemon first, then gateway: the gateway's session-like children want the daemon to own them.
-0.4 (`run`, names, CLI) is the prerequisite for both. Neither is started.
+Self-upgrade first, then daemon, then gateway: self-upgrade protects the command layer before
+anything else changes it, and the gateway's session-like children want the daemon to own them.
+0.4 (`run`, names, CLI) is the prerequisite for all three. None is started.
