@@ -14,7 +14,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { statSync } from 'node:fs';
+import { readdirSync, statSync } from 'node:fs';
 import { basename, extname, join } from 'node:path';
 import { spawn as spawnPty } from '@lydell/node-pty';
 import { OutputRing } from './ring.js';
@@ -98,6 +98,23 @@ function envValue(env, name) {
   return key === undefined ? undefined : env[key];
 }
 
+// Windows lookup is case-insensitive, so `statSync` finds `node.exe` through the
+// candidate `node.EXE` and the candidate is left carrying PATHEXT's casing,
+// which is not the casing the directory holds. The resolved path is reported to
+// callers and compared as text, so return the name as it is on disk; a
+// directory that cannot be listed falls back to the candidate, which still
+// names the same file.
+function onDiskName(directory, candidate) {
+  const wanted = basename(candidate).toLowerCase();
+  try {
+    const actual = readdirSync(directory).find((entry) => entry.toLowerCase() === wanted);
+    if (actual !== undefined) return join(directory, actual);
+  } catch {
+    // unreadable directory: the candidate names the same file
+  }
+  return candidate;
+}
+
 // The first file on PATH that answers to `command`, in PATHEXT order, the way
 // cmd.exe finds it. A name that already carries a PATHEXT extension is looked
 // up as-is; anything else gets each extension appended in turn.
@@ -118,7 +135,7 @@ function findOnPath(command, env) {
     for (const suffix of suffixes) {
       const candidate = join(directory, `${command}${suffix}`);
       try {
-        if (statSync(candidate).isFile()) return candidate;
+        if (statSync(candidate).isFile()) return onDiskName(directory, candidate);
       } catch {
         // not here, try the next extension or directory
       }

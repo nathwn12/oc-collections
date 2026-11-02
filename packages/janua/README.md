@@ -231,3 +231,9 @@ PTY engine: @lydell/node-pty (MIT)
 
 `docs/GUIDE.md` has four worked examples: restarting a dev server, answering an interactive prompt,
 driving a REPL, and one-shot commands with named sessions.
+
+## Links
+
+- Repository: https://github.com/nathwn12/oc-collections/tree/main/packages/janua
+- Changelog: [CHANGELOG.md](CHANGELOG.md)
+- License: [LICENSE](LICENSE) (MIT)

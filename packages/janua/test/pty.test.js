@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { basename } from 'node:path';
 import { SessionManager } from '../lib/sessions.js';
 
 const MISSING_ID = '11111111-1111-1111-1111-111111111111';
@@ -28,7 +29,7 @@ test('spawn, read, list and kill a session', async (t) => {
   });
   assert.equal(typeof spawned.sessionId, 'string');
   assert.ok(spawned.pid > 0);
-  assert.equal(spawned.title, 'node.exe');
+  assert.equal(spawned.title, basename(process.execPath));
 
   const seen = await readUntil(manager, spawned.sessionId, /JANUA_OK/);
   assert.match(seen.text, /JANUA_OK/);
