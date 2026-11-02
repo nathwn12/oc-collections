@@ -5,6 +5,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.8] - 2026-11-02
+
+### Changed
+
+- Removed the `session_await` tool (send-then-poll queued messages behind long turns); `session_send` and `session_kick` now default to `steer`.
+
+### Removed
+
+- The `timeoutMs` argument, which only `session_await` took.
+
 ## [0.1.7] - 2026-11-01
 
 ### Fixed

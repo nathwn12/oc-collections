@@ -4,7 +4,7 @@ This package is published on npm as `oc-talk` and installable from the registry;
 
 ## How it works
 
-The plugin registers nine tools on session start and shells out to the `opencode api` CLI it is running inside: `session.list`, `session.get`, `session.message.list`, `post /api/session`, `patch /api/session/{id}`, `post /api/session/{id}/prompt`, `post /api/session/{id}/compact` and `post /api/session/{id}/interrupt`. It spawns that binary with an argument vector — no shell, no interpolation — and a 20-second timeout per call.
+The plugin registers eight tools on session start and shells out to the `opencode api` CLI it is running inside: `session.list`, `session.get`, `session.message.list`, `post /api/session`, `patch /api/session/{id}`, `post /api/session/{id}/prompt`, `post /api/session/{id}/compact` and `post /api/session/{id}/interrupt`. It spawns that binary with an argument vector — no shell, no interpolation — and a 20-second timeout per call.
 
 That CLI already discovers and authenticates with the harness's own background server. **This package never handles credentials:** it opens no auth file, reads no environment secret, resolves no port, and never returns or logs anything of the kind. The only thing it sees from the child process is the JSON that child prints.
 
@@ -20,7 +20,7 @@ A session's state is its title prefix, and there are three:
 
 The prefix is **replaced, never stacked**. Every rename strips an existing lifecycle prefix first, so `parked active foo` collapses to `active foo` instead of piling up. A rename that would change nothing sends no request.
 
-`done` is a **lock**. `session_send`, `session_kick`, `session_park`, `session_kill` and `session_await` refuse it with `{ "error": "session_closed", … }`. `session_open` is the only verb that may lift it, and the only way back in. The `done` lock is advisory: it is checked before an action and again inside the rename, but neither check is atomic with the write it guards, so a close that races an in-flight call can be overwritten.
+`done` is a **lock**. `session_send`, `session_kick`, `session_park` and `session_kill` refuse it with `{ "error": "session_closed", … }`. `session_open` is the only verb that may lift it, and the only way back in. The `done` lock is advisory: it is checked before an action and again inside the rename, but neither check is atomic with the write it guards, so a close that races an in-flight call can be overwritten.
 
 `session_park` is graceful: the title only, no message, no compaction. `session_kill` is hard: the same rename, then an interrupt of the active execution. That interrupt covers only the target — `cascaded` is always `false`, and child session ids come back as a `children` id list, never claimed stopped.
 
@@ -39,8 +39,7 @@ There is nothing to configure. The plugin reads no config file, takes no options
 | Setting | Default | Effect |
 | --- | --- | --- |
 | *(none)* | — | The package has no options and no environment variables. |
-| per-call `timeoutMs` | `60000`, capped at `300000` | `session_await`'s wait budget after the send. |
-| per-call `delivery` | `queue`, `steer` for `session_await` | Whether a prompt preempts the peer's running turn (`steer`) or waits behind it (`queue`); an explicit value wins, anything else is a typed `bad_request`. |
+| per-call `delivery` | `steer` for `session_send` and `session_kick`, `queue` for `session_open` | Whether a prompt preempts the peer's running turn (`steer`) or waits behind it (`queue`); an explicit value wins, anything else is a typed `bad_request`. |
 | internal call timeout | `20000` ms | Per backend round trip, fixed in the source. |
 
 ## Tools
@@ -66,7 +65,7 @@ session_list
 | `to` | yes | Session id (`ses_…`) or an unambiguous title substring |
 | `text` | yes | Message text, delivered verbatim |
 | `resume` | no | Let the receiver's loop run; defaults to `true` |
-| `delivery` | no | `steer` preempts the peer's current turn, `queue` waits for it; defaults to `queue` |
+| `delivery` | no | `steer` preempts the peer's current turn, `queue` waits for it; defaults to `steer` |
 
 Sends one message and returns `{ id, sessionID, created }`. It never reads history, and it refuses a `done` session — that lock is lifted only by `session_open`.
 
@@ -91,22 +90,6 @@ session_read { "to": "ses_1f2e…", "limit": 2 }
 ```
 
 The newest message is first, so the peer's answer is the first element.
-
-### `session_await`
-
-| Argument | Required | Meaning |
-| --- | --- | --- |
-| `to` | yes | Session id (`ses_…`) or an unambiguous title substring |
-| `text` | yes | Message text, delivered verbatim |
-| `timeoutMs` | no | Wait budget in ms; default 60000, capped at 300000 |
-| `delivery` | no | `steer` preempts the peer's current turn, `queue` waits for it; defaults to `steer` |
-
-Sends one message with `resume` forced to `true`, then polls the session's messages about once a second for an assistant message created after the send. On a reply it returns `{ sessionID, text, messageId, timeoutMs }`; on expiry `{ sessionID, timeout: true, lastSeen, timeoutMs }` with the newest text it saw, so a slow peer is a readable answer rather than a hung call. The budget bounds the wait **after** the send, not the whole call: each poll is one backend round trip with its own 20-second timeout, so a call can overrun its budget by up to one poll. It refuses a `done` session.
-
-```json
-session_await { "to": "api-smoke-tests", "text": "Run the smoke suite and reply with the failing test names.", "timeoutMs": 120000 }
-→ { "sessionID": "ses_1f2e…", "text": "Two failures: auth.rejects_expired and auth.timeout_429.", "messageId": "msg_9a02…", "timeoutMs": 120000 }
-```
 
 ### `session_close`
 
@@ -145,7 +128,7 @@ session_open { "work": "api-smoke-tests" }
 | `to` | yes | Session id (`ses_…`) or an unambiguous title substring |
 | `text` | yes | Message text, delivered verbatim |
 | `resume` | no | Let the receiver's loop run; defaults to `true` |
-| `delivery` | no | `steer` preempts the peer's current turn, `queue` waits for it; defaults to `queue` |
+| `delivery` | no | `steer` preempts the peer's current turn, `queue` waits for it; defaults to `steer` |
 
 Wakes a live session: renames it to `active <work>`, then delivers one message. Returns `{ sessionID, titleBefore, titleAfter, messageID, resumed }`. A `done` session is refused — reopen it with `session_open` first.
 
@@ -185,8 +168,8 @@ session_kill { "to": "ses_1f2e…" }
 You are the agent in a build session and the test session is running beside you.
 
 1. Find the peer with `session_list`.
-2. Hand it a job with `session_send`. `resume` is left off, so it defaults to `true` and the peer actually runs.
-3. The peer replies into its own session, as a normal assistant message. Nothing is pushed to you — you read it with `session_read`, and the newest message is first. Poll once more if the peer is still working: a session that has not answered yet simply has no newer assistant message. When one call is cleaner than two, `session_await` does steps 2 and 3 together and returns the reply text itself, or `{ "timeout": true, "lastSeen": … }` if the budget runs out first.
+2. Hand it a job with `session_send`. `resume` is left off, so it defaults to `true` and the peer actually runs; `delivery` is left off too, so the job preempts whatever that peer was already doing rather than waiting behind it.
+3. The peer replies into its own session, as a normal assistant message. Nothing is pushed to you — you read it with `session_read`, and the newest message is first. Poll once more if the peer is still working: a session that has not answered yet simply has no newer assistant message.
 4. Close it with `session_close` when it is finished, so the next reader sees a closed session rather than a live one.
 
 ## Troubleshooting
@@ -194,8 +177,6 @@ You are the agent in a build session and the test session is running beside you.
 **A tool returns `session_closed`.** The target is `done`. Only `session_open` lifts that lock; reopen it, or pick a live session.
 
 **A tool returns `ambiguous_session`.** The title substring matches more than one session. Pass the `ses_…` id from `session_list` instead — an id is resolved directly, with no scan and no ambiguity.
-
-**`session_await` returns `timeout: true`.** The peer had not answered within the budget. `lastSeen` carries the newest text it saw, so you can tell "still working" from "answered before the send". Raise `timeoutMs`, up to 300000.
 
 **A title looks like `parked active foo`.** It should not: every rename strips the previous lifecycle prefix first. If you see a stacked prefix, it was written by something other than this plugin.
 
@@ -217,6 +198,7 @@ You are the agent in a build session and the test session is running beside you.
 - `session_list` returns one page, newest first, 50 by default. It is not the whole estate.
 - Title resolution is a bounded scan: 1000 sessions a page, at most 20 pages. Beyond that it refuses rather than guessing.
 - No delete verb, by design. A session is the record of what was attempted.
+- No wait verb, by design: `session_send` returns as soon as the peer accepts the message, and `session_read` is how the answer is picked up.
 - No credentials handling of any kind: the CLI it spawns owns discovery and authentication.
 
 ## Links
