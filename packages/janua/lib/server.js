@@ -1,6 +1,8 @@
-// MCP server surface: exactly seven tools.
+// MCP server surface: exactly six tools, all of them PTY sessions.
 //
-// run / pty_spawn / pty_write / pty_read / pty_resize / pty_kill / pty_list.
+// pty_spawn / pty_write / pty_read / pty_resize / pty_kill / pty_list.
+// One-shot commands are not an MCP concern: a caller that wants one answer uses
+// the shell, and a script that needs the matcher uses the CLI `janua run`.
 // Every handler funnels through wrap(), so a throw becomes a typed tool error
 // and never escapes into the JSON-RPC transport.
 
@@ -14,10 +16,10 @@ const require = createRequire(import.meta.url);
 const { version } = require('../package.json');
 
 const INSTRUCTIONS = [
-  'janua runs commands once and gives you persistent interactive terminals.',
-  'Use run for a command whose output you want once: it runs with pipes by default (tty: true gives it a PTY),',
-  'optionally writes stdin, and returns when the command exits, the match pattern appears, or timeoutMs passes',
-  '(killing the tree unless keep is true).',
+  'janua gives you persistent interactive terminals: this server is for long-lived work you will talk to',
+  'over several calls (dev servers, REPLs, anything that prompts). A command whose output you want once',
+  'is not a tool here: run it in the shell, and in a script that needs the match pattern, the timeout or',
+  'the JSON result use the CLI `janua run`.',
   'Use pty_spawn for long-lived work you will talk to over several calls (dev servers, REPLs, anything that',
   'prompts), and give it a name to address the session by that name later. Keep the returned sessionId or name,',
   'read with pty_read using the cursor it returns so output is never duplicated, write with pty_write, resize',
@@ -53,21 +55,6 @@ const SPAWN_OUTPUT = z.object({
   title: z.string().describe('Label shown by pty_list.'),
   name: z.string().nullable().describe('Name given at spawn, or null when the session is anonymous.'),
   reused: z.boolean().describe('True when the name already belonged to a live session and that session was returned instead of a new one.'),
-});
-// run is one call for one command: it returns the command's output and exit
-// code, and says whether the answer came from a match or ran out of time.
-const RUN_OUTPUT = z.object({
-  data: z.string().describe('Output the command produced, stripped of ANSI sequences unless stripAnsi is false.'),
-  exitCode: z.number().nullable().describe('Exit code once the program has exited, otherwise null.'),
-  timedOut: z.boolean().describe('True when timeoutMs ran out before the program exited or match appeared.'),
-  matched: z.boolean().describe('True when match was given and the output matched it, or when no match was given.'),
-  sessionId: z.string().describe('Session id the command ran under; pass it or name to pty_read/pty_write/pty_kill when keep is true.'),
-  name: z.string().nullable().describe('Name given at run, or null.'),
-  cursor: z.number().describe('Byte offset to pass to pty_read to continue after the returned data.'),
-  dropped: z.number().describe('Bytes the buffer discarded before this run could read them.'),
-  bytes: z.number().describe('Total bytes the command produced, including bytes beyond maxBytes.'),
-  truncated: z.boolean().describe('True when maxBytes cut the returned data, so the command produced more.'),
-  durationMs: z.number().describe('Wall-clock milliseconds the whole call took.'),
 });
 // pty_write only carries read fields when waitMs > 0, so every one of them is
 // optional: a caller that just types gets {ok}, a caller that waits gets the
@@ -133,43 +120,6 @@ export function createServer(options = {}) {
   const server = new McpServer(
     { name: 'janua', version },
     { instructions: INSTRUCTIONS },
-  );
-
-  server.registerTool(
-    'run',
-    {
-      title: 'Run a one-shot command',
-      description:
-        'Run a command once and return when it exits, when match appears in its output, or when timeoutMs '
-        + 'passes: {data, exitCode, timedOut, matched, sessionId, name, cursor, dropped, bytes, truncated, '
-        + 'durationMs}. Runs with pipes by default, which is much faster than a PTY; tty: true gives the '
-        + 'command a real terminal for an interactive program that prompts or draws a TUI. stdout and stderr '
-        + 'are merged in arrival order. stdin (a string, no newline added) is written immediately. maxBytes caps '
-        + 'data (default and maximum 1048576) and truncated: true means the command produced more. On match or '
-        + 'timeout the process tree is killed unless keep is true; with keep the session stays addressable by '
-        + 'sessionId or name for pty_read, pty_write and pty_kill. shell: true takes command as one platform '
-        + 'command line (cmd.exe /d /s /c on Windows, /bin/sh -c elsewhere) and requires args to be empty. Use '
-        + 'this for commands whose output you want once; use pty_spawn for long-lived work you will talk to '
-        + 'over several calls.',
-      inputSchema: z.object({
-        command: z.string().describe('Executable to run: a name resolved on PATH, an absolute path, or — with shell: true — one command line.'),
-        args: z.array(z.string()).optional().describe('Arguments for command, one array entry each. Must be empty when shell is true.'),
-        cwd: z.string().optional().describe('Working directory for the command. Must exist. Defaults to the server process cwd.'),
-        env: z.record(z.string(), z.string()).optional().describe('Extra environment variables, merged over the server environment.'),
-        stdin: z.string().optional().describe('Text written to the command stdin immediately after spawn, with no newline added.'),
-        timeoutMs: z.number().int().min(1).max(3600000).optional().describe('Give up after this many milliseconds (default 120000, max 3600000).'),
-        maxBytes: z.number().int().min(1).max(1048576).optional().describe('Maximum bytes of data to return (default 1048576); the rest is drained and reported in bytes with truncated: true.'),
-        stripAnsi: z.boolean().optional().describe('Remove ANSI escape sequences from data (default true).'),
-        match: z.string().optional().describe('Regular expression (at most 200 characters) that ends the run early when the output matches it.'),
-        shell: z.boolean().optional().describe('Run command as one platform command line through cmd.exe /d /s /c on Windows or /bin/sh -c elsewhere (default false).'),
-        tty: z.boolean().optional().describe('Use a PTY for an interactive command (default false: one-shot runs use pipes and are faster).'),
-        name: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/).optional().describe('Optional session name (1-64 characters: letter or digit first, then letters, digits, ".", "_" or "-"). A live name is refused rather than reused.'),
-        keep: z.boolean().optional().describe('Leave the session running on match or timeout instead of killing the tree (default false).'),
-      }),
-      outputSchema: RUN_OUTPUT,
-      annotations: MUTATING,
-    },
-    wrap(async (args) => manager.run(args)),
   );
 
   server.registerTool(

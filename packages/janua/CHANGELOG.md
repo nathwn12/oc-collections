@@ -4,7 +4,7 @@
 
 ### Added
 
-- `run`, a one-shot command runner: one call starts a fresh PTY, writes optional `stdin`, and returns
+- `janua run`, a one-shot command runner: one call starts a fresh PTY, writes optional `stdin`, and returns
   `data`, `exitCode`, `timedOut`, `matched`, `sessionId`, `name`, `cursor`, `dropped`, `bytes`,
   `truncated` and `durationMs` when the command exits, `match` appears, or `timeoutMs` runs out.
   `maxBytes` caps the returned data while the run keeps draining, so `bytes` and `truncated` stay
@@ -37,6 +37,10 @@
 ### Changed
 
 - The default session cap is 32 instead of 16 (`JANUA_MAX_SESSIONS` still overrides it).
+
+### Removed
+
+- Removed the MCP run tool; one-shot commands belong to the shell, the CLI run remains.
 
 ## [0.3.1] - 2026-11-01
 

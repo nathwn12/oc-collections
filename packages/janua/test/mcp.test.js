@@ -7,7 +7,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const BIN = join(here, '..', 'bin', 'janua.js');
-const TOOL_NAMES = ['pty_kill', 'pty_list', 'pty_read', 'pty_resize', 'pty_spawn', 'pty_write', 'run'];
+const TOOL_NAMES = ['pty_kill', 'pty_list', 'pty_read', 'pty_resize', 'pty_spawn', 'pty_write'];
 const MISSING_ID = '22222222-2222-2222-2222-222222222222';
 
 function textOf(result) {
@@ -32,7 +32,11 @@ test('MCP handshake: tools/list, then spawn, read and kill over stdio', async (t
   const listed = await client.listTools();
   const names = listed.tools.map((tool) => tool.name).sort();
   console.log(`tools/list -> ${names.join(', ')}`);
+  // The MCP surface is PTY-only: six session tools, and no one-shot runner.
+  // A one-shot command belongs to the shell, or to the CLI `janua run`.
+  assert.equal(names.length, 6, 'the MCP surface is exactly six tools');
   assert.deepEqual(names, TOOL_NAMES);
+  assert.equal(names.includes('run'), false, 'no run tool may be registered');
 
   // Every tool declares its output shape and its effect on the world, so a
   // client can validate structuredContent and decide what to auto-approve.
@@ -50,8 +54,6 @@ test('MCP handshake: tools/list, then spawn, read and kill over stdio', async (t
   assert.equal(byName.pty_resize.annotations.destructiveHint, false);
   assert.equal(byName.pty_kill.annotations.destructiveHint, true);
   assert.equal(byName.pty_spawn.annotations.destructiveHint, false);
-  assert.equal(byName.run.annotations.readOnlyHint, false, 'run starts a process, so it is not read-only');
-  assert.equal(byName.run.annotations.openWorldHint, false);
   assert.deepEqual(
     byName.pty_list.outputSchema.required?.sort(),
     ['nextOffset', 'sessions', 'total'],
@@ -201,40 +203,6 @@ test('pty_write with waitMs and match returns the answer in the same call', asyn
   assert.equal(typeof answered.dropped, 'number');
 
   await client.callTool({ name: 'pty_kill', arguments: { sessionId: spawned.sessionId } });
-});
-
-test('run executes a one-shot command over MCP', async (t) => {
-  const client = new Client({ name: 'janua-test', version: '0.0.0' }, { capabilities: {} });
-  const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: [BIN],
-    stderr: 'pipe',
-  });
-  await client.connect(transport);
-  t.after(async () => {
-    await client.close();
-  });
-
-  const ran = await client.callTool({
-    name: 'run',
-    arguments: {
-      command: process.execPath,
-      args: ['-e', "process.stdout.write('MCP_RUN_OK'); process.exit(5)"],
-      timeoutMs: 15000,
-    },
-  });
-  const payload = JSON.parse(textOf(ran));
-  console.log(`run -> ${JSON.stringify(payload)}`);
-  assert.equal(ran.isError, undefined);
-  assert.match(payload.data, /MCP_RUN_OK/);
-  assert.equal(payload.exitCode, 5);
-  assert.equal(payload.timedOut, false);
-  assert.equal(payload.matched, true);
-  assert.equal(payload.name, null);
-  assert.equal(payload.truncated, false);
-  assert.equal(typeof payload.bytes, 'number');
-  assert.equal(typeof payload.durationMs, 'number');
-  assert.deepEqual(ran.structuredContent, payload, 'structuredContent must match the payload');
 });
 
 test('named sessions: list, read/write/kill by name, reuse, and takeover after exit', async (t) => {
