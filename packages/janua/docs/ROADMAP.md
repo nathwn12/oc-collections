@@ -29,7 +29,7 @@ client and an older or newer daemon.
 forward calls to them, and namespace them by server. One janua mount then gives a barebones harness
 every MCP it needs, and servers are added or removed at runtime without editing client config.
 
-oc-talk is the first adapter we test, not a dependency: any stdio MCP server works, and no OpenCode session model is required.
+Any stdio MCP server works; no specific session model is required.
 
 Costs and risks: faithful schema and result passthrough, tool-name collisions across servers,
 auth and environment for child servers, child lifecycle and cleanup, error mapping back to the

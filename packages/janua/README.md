@@ -166,12 +166,11 @@ that contradicted the declared shape would be rejected by a validating client.
 
 ## Standalone by design
 
-janua does not require OpenCode, oc-talk, gladius, puppet, or any orchestrator. Any MCP stdio client can mount it, and any shell can call it. Integrations such as oc-talk are optional examples and adapters, never dependencies; the 0.5 MCP gateway will proxy any stdio MCP server, and no specific session model is required.
+janua is standalone. It does not require an orchestrator, a specific editor, another service, or a particular agent framework. Any MCP stdio client can mount it, and any shell can call it. Integrations are optional adapters, never dependencies.
 
 ## Use it from any harness
 
-janua is one process with two faces. Neither face needs an orchestrator, a daemon, or another tool:
-a barebones harness that can start a process and read its stdout can use it.
+janua is one process with two faces. A barebones harness that can start a process and read its stdout can use either one.
 
 **As an MCP server.** Any MCP client that speaks stdio can launch it; the config from
 [Install](#install) is the whole setup. With no arguments (or with `janua mcp`) the process serves
