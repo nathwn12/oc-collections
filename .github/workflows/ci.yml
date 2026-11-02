@@ -1,7 +1,11 @@
-# nathwn12 house CI — static gate only: fmt, clippy, gitleaks, compile check.
-# Build + test live in release.yml (`cargo build --release --locked`,
-# `cargo test --release --locked`), so this gate never compiles twice for the
-# same answer. Job name `build` is the required check — do not rename.
+# nathwn12 house CI — static gate plus the one conformance binary: fmt,
+# clippy, gitleaks, compile check, and the payload-vs-schema gate
+# (envelope_truth). The full build + test matrix still lives in
+# release.yml (`cargo build --release --locked`, `cargo test
+# --release --locked`), so this gate never compiles twice for the same
+# answer — except the single conformance binary, which is the check that
+# stops a schema-violating payload ever reaching a release. Job name
+# `build` is the required check — do not rename.
 name: ci
 on:
   pull_request:
@@ -42,3 +46,5 @@ jobs:
           & (Join-Path $Dir 'gitleaks.exe') detect --source . --config .gitleaks.toml --redact --no-banner
       - name: check (compile, no link)
         run: cargo check --locked
+      - name: conformance (payload vs own outputSchema)
+        run: cargo test --release --locked --test envelope_truth

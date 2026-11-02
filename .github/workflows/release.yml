@@ -282,6 +282,17 @@ jobs:
           $bundle = "dist\puppet-$tag-windows-x86_64.zip"
           if (-not (Test-Path -LiteralPath $bundle)) { throw "built archive missing: $bundle" }
           node scripts/cleanroom-check.mjs --tarball "$tgz" --bundle "$bundle"
+      # Payload-vs-schema conformance on the binary THIS job built: one
+      # tools/call per listed tool (diff on two identical PNGs, so the
+      # bbox:null shape that once violated its own schema is proven here),
+      # each structuredContent validated against its own declared
+      # outputSchema. Same build job, blocking: any FAIL fails the build,
+      # so publish (needs: build) can never run on a red gate.
+      - name: payload conformance (built artifact)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          node scripts/conformance-check.mjs --exe target\release\puppet.exe
       # Artifacts hand files to the publish job only; retention-days: 1 keeps
       # them out of the plan allowance (no public-repo exemption).
       - uses: actions/upload-artifact@v7
