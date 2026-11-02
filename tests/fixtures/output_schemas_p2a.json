@@ -35,7 +35,14 @@
         "type": "number"
       },
       "bbox": {
-        "type": "array"
+        "anyOf": [
+          {
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ]
       },
       "identical": {
         "type": "boolean"
@@ -50,7 +57,14 @@
         "type": "integer"
       },
       "diff_out": {
-        "type": "object"
+        "anyOf": [
+          {
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ]
       }
     },
     "required": [
