@@ -1,8 +1,9 @@
 # janua guide
 
-Four worked examples: three things a command runner cannot do (keep a program alive and talk to it)
-and one thing it can (run a command once and hand back the output). Tool calls are shown as the
-arguments you pass and the result you get back; long outputs are abbreviated.
+Four worked examples of a persistent terminal: restarting a dev server, answering an interactive
+prompt, driving a REPL, and naming a session. The MCP server is these tools only; a command whose
+output you want once belongs to the shell, or to the CLI `janua run` for a script. Tool calls are
+shown as the arguments you pass and the result you get back; long outputs are abbreviated.
 
 ---
 
@@ -164,40 +165,26 @@ End it with Ctrl+D (end of input) or kill the session:
 
 ---
 
-## 4. One-shot commands and named sessions
+## 4. Named sessions
 
-Not every program needs a conversation. `run` is one call for one command: by default it starts the
-command with pipes (fast, no terminal), writes `stdin` if you gave one, reads until the command
-exits, `match` appears, or `timeoutMs` runs out, and returns the output with the exit code. Set
-`tty: true` when the program prompts or draws a full-screen UI; `pty_spawn` is always a PTY.
+Not every program needs a conversation. When a command is one-shot - it prints, exits, and nobody
+answers it - run it in the shell. When a script needs to wait for a pattern, bound the time, or take
+the result as JSON, use the CLI, which is not an MCP tool:
 
-```jsonc
-// run - a test suite, bounded in time and in bytes
-{
-  "command": "npm",
-  "args": ["test"],
-  "cwd": "<checkout>",
-  "timeoutMs": 300000,
-  "maxBytes": 40000,
-  "match": "failing"
-}
-// -> {"data":"...","exitCode":1,"timedOut":false,"matched":true,"sessionId":"e77a...",
-//     "name":null,"cursor":8123,"dropped":0,"bytes":8123,"truncated":false,"durationMs":1840}
+```bash
+janua run -- npm test                              # output on stdout, exit code is the child's
+janua run --json --match "failing" -- npm test     # the whole result, stopping at the first failure
+janua run --timeout 30000 -- node slow.js          # 124 when the timeout wins
+janua run --tty -- node --interactive              # a real terminal for a program that prompts
 ```
 
-- `stdin` is written as-is, with no newline added. On the default pipe path it is a pipe: send `\n`
-  for a line reader, and closing stdin signals EOF. With `tty: true` it is a console, so a Windows
-  program wants `\r` (a POSIX terminal turns `\r` into `\n`).
-- `tty: true` replaces the pipes with a real PTY, for a program that prompts, uses colour, or draws
-  a full-screen UI. A pipe session shows `pipe: true` in `pty_list` with `cols`/`rows` 0, and
-  `pty_resize` refuses it with `pty_resize_failed` naming `tty: true`. Writing to a kept pipe
-  session ends a line with `\n` by default; a PTY session still gets `\r`.
-- `maxBytes` caps `data` only. The run keeps draining, so `bytes` counts everything produced and
-  `truncated: true` tells you the reply was cut.
+- `--json` prints `{data, exitCode, timedOut, matched, sessionId, name, cursor, dropped, bytes,
+  truncated, durationMs}`. `--max-bytes` caps `data` only: the run keeps draining, so `bytes` counts
+  everything produced and `truncated: true` says the reply was cut.
 - A match or a timeout ends the run and kills the process tree, since a one-shot call has nobody left
-  to answer a prompt. `keep: true` leaves it running and addressable by id or name.
-- `shell: true` hands the whole `command` string to `cmd.exe /d /s /c` (Windows) or `/bin/sh -c`
-  (POSIX), so `args` must be empty: `{"command": "npm run build | tail -5", "shell": true}`.
+  to answer a prompt. The CLI is one-shot end to end: nothing it started outlives the process.
+- `--shell` hands the whole `command` string to `cmd.exe /d /s /c` (Windows) or `/bin/sh -c` (POSIX),
+  so quote it: `janua run --shell -- "npm run build | tail -5"`.
 
 Where a session will be talked to more than once, give it a name. Every `sessionId` input accepts the
 name, and a spawn with a name that is already live returns that session instead of starting a second
@@ -215,11 +202,11 @@ copy:
 A second spawn with `"name":"scratch-repl"` returns `reused: true` and the same id and pid.
 `"reuse": false` makes it `invalid_args` with `name_taken` instead. When the program exits the name
 is free for the next spawn; the old session stays readable under its id with `name: null` in
-`pty_list`. `run` never reuses a live name, because a one-shot call that attached itself to someone
-else's terminal would be a surprise.
+`pty_list`. The CLI `run` never reuses a live name, because a one-shot call that attached itself to
+someone else's terminal would be a surprise.
 
-The CLI takes the same path: `janua run -- node -v` uses pipes, and
-`janua run --tty -- node --interactive` asks for a PTY.
+The CLI is one-shot: the session it starts ends with its process, so a name it reports in `--json`
+cannot be addressed again afterwards. The MCP server is where a session outlives one call.
 
 ---
 
@@ -272,7 +259,7 @@ attempt refuses and says to delete the lock once you have confirmed no `janua up
 ## Rules of thumb
 
 - One session per long-lived thing. Spawn once, talk many times, kill once. A command whose output
-  you want once is `run`, not a spawn and a read.
+  you want once is the shell, or the CLI `janua run`, not a spawn and a read.
 - Give a session a `name` when you expect to address it again; every `sessionId` input takes it, and
   a repeated spawn with that name returns the same session instead of a second program.
 - Always pass the `cursor` a read returned. Reading from 0 again re-delivers everything still

@@ -1,12 +1,12 @@
 <h1 align="center">janua</h1>
 
-<p align="center"><strong>A terminal for agents: one-shot when you need an answer, persistent when you need a conversation.</strong></p>
+<p align="center"><strong>A terminal for agents: a program that stays alive, ready to be written to and read.</strong></p>
 
-A terminal you can talk to, and a command runner that answers once. `janua` gives an agent both
-halves of running a program: `run` executes a command once and returns its output and exit code in a
-single call, and `pty_spawn` keeps a program alive in a real pseudo-terminal so it can be written to
-and read across several calls. Both are available over MCP, and `run` is also a plain CLI command, so
-any harness - or a shell script with no harness at all - can use it.
+`janua` is an MCP server for persistent interactive terminals. `pty_spawn` keeps a program alive in a
+real pseudo-terminal so it can be written to and read across several calls, and the other five tools
+read, write, resize, list and kill those sessions. One-shot commands are not on the MCP surface: an
+agent runs those in the shell, and a script that needs a matcher, a timeout or a JSON result uses the
+CLI `janua run`, which ships in the same package.
 
 Half the programs an agent needs are not one-shot: a dev server you have to restart, an installer
 that stops on a prompt, a REPL where the second command depends on the first. `janua` keeps the
@@ -103,57 +103,39 @@ verified:
 Either way the next upgrade refuses with `upgrade_in_progress` and names the lock. Confirm no
 `janua upgrade` is running, delete that `upgrade.lock` directory, and run the upgrade again.
 
-## The seven tools
+## The six tools
 
 | Tool | What it does |
 | --- | --- |
-| `run` | Run `command` once and return when it exits, when `match` appears in the output, or when `timeoutMs` (default 120000, max 3600000) runs out. Runs with pipes by default (stdout and stderr merged in arrival order), which is the fast path; `tty: true` gives the command a real PTY for an interactive program. Returns `{data, exitCode, timedOut, matched, sessionId, name, cursor, dropped, bytes, truncated, durationMs}`. `stdin` (a string, no newline added) is written immediately; `maxBytes` (default and max 1 MiB) caps `data` while `bytes` reports everything produced, with `truncated: true` when data was cut. On match or timeout the process tree is killed unless `keep: true`; with `keep` the session stays addressable by id or name. `shell: true` takes one platform command line (`cmd.exe /d /s /c` on Windows, `/bin/sh -c` elsewhere) and requires `args` to be empty. |
 | `pty_spawn` | Start `command` with `args` in a new PTY. Takes an optional `cwd`, `env`, `cols`/`rows` (defaults 80x24), `title`, `description` (5-10 words is the useful length, at most 200 characters; defaults to the title), and `name` (1-64 characters: letter or digit first, then letters, digits, `.`, `_` or `-`). Returns `{sessionId, pid, title, name, reused}`. A spawn with the name of a live session returns that session with `reused: true` instead of starting a second copy; `reuse: false` makes that `invalid_args` with `name_taken`, and a name held by an exited session is free for the new one. No shell string: command and args are passed as given, there is no `shell: true`. On Windows a bare name is resolved through `PATH` x `PATHEXT` and a batch shim runs through `cmd /c` (see Windows notes). |
-| `pty_write` | Send `data` to a session (id or name). `newline` (default true) appends a line ending: a carriage return to a PTY session, which is what a prompt is waiting for, or a newline to a pipe session from `run`, because a pipe has no terminal translation. Returns `{ok}`. Add `waitMs` (and optionally `match`, `cursor`, `maxBytes`, `stripAnsi`, with the same meaning as in `pty_read`) to read the reply in the same call: the response then also carries `{data, cursor, exited, exitCode, dropped, matched, incomplete, truncated}`. |
+| `pty_write` | Send `data` to a session (id or name). `newline` (default true) appends a line ending: a carriage return to a PTY session, which is what a prompt is waiting for, or a newline to a pipe session, because a pipe has no terminal translation. Returns `{ok}`. Add `waitMs` (and optionally `match`, `cursor`, `maxBytes`, `stripAnsi`, with the same meaning as in `pty_read`) to read the reply in the same call: the response then also carries `{data, cursor, exited, exitCode, dropped, matched, incomplete, truncated}`. |
 | `pty_read` | Read output from `cursor` onward, up to `maxBytes` (default 8000). `waitMs` waits up to 10 s for new output; `stripAnsi` (default true) removes colour and cursor-control sequences; `match` (a regex of at most 200 characters) makes the read wait until the text from `cursor` matches it. Returns `{data, cursor, exited, exitCode, dropped, matched, incomplete, truncated}`. |
 | `pty_resize` | Change the size of a running session's terminal. `cols` and `rows` are integers 1-1000: give both, or give one and the other keeps the size in force. The program itself is told (SIGWINCH on POSIX, a resize of the ConPTY on Windows), so a full-screen program redraws at the new size instead of staying at the geometry it was spawned with. Returns `{ok, cols, rows}` for the geometry now in force, which `pty_list` reports from then on. A call naming neither dimension is `invalid_args`; resizing a session whose program has already exited is `pty_resize_failed`. |
 | `pty_kill` | Terminate the program and confirm it. Idempotent. Takes a session id or name. `signal` defaults to `SIGTERM` and is honoured on POSIX; Windows terminates the process tree. Returns `{ok, exited, exitCode, pid}`: `exited` is the state observed after the kill, so `ok: false` with an `error` naming the pid (and the fallback to use) means the process survived. |
-| `pty_list` | Sessions newest last, one page at a time: `limit` (1-200, default 50) and `offset` (default 0). Returns `{sessions, total, nextOffset}`, where `total` counts every session known and `nextOffset` is null on the last page. Each session carries `sessionId`, `name` (or null), `pid`, `title`, `command`, `args`, `cwd`, `description`, `cols`, `rows`, `pipe`, `exited`, `exitCode`, `bytes` and `createdAt`. `pipe` is true for a run session with no terminal, whose `cols` and `rows` are 0. |
+| `pty_list` | Sessions newest last, one page at a time: `limit` (1-200, default 50) and `offset` (default 0). Returns `{sessions, total, nextOffset}`, where `total` counts every session known and `nextOffset` is null on the last page. Each session carries `sessionId`, `name` (or null), `pid`, `title`, `command`, `args`, `cwd`, `description`, `cols`, `rows`, `pipe`, `exited`, `exitCode`, `bytes` and `createdAt`. `pipe` is true for a session with no terminal, whose `cols` and `rows` are 0. |
 
 ### One-shot commands
 
-`run` is the command runner: one call, one command, its output and its exit code. By default it
-starts the command with pipes (not a terminal), merges stdout and stderr in arrival order, writes
-`stdin` right away, reads in short slices, and returns when the program exits, when `match` appears,
-or when `timeoutMs` runs out. That is the fast path: no ConPTY is created, so a one-shot command
-starts in milliseconds. Set `tty: true` when the program needs a terminal - a prompt, colour, or a
-full-screen UI - and it runs in a fresh PTY exactly as `pty_spawn` does. Nothing is reused, so two
-runs never share a session.
+A command whose output you want once does not need a terminal, and it is not a tool here: with an MCP
+client, run it in the shell. A script that needs to wait for a pattern, bound the time, or take the
+result as JSON uses the CLI, which stays for exactly that:
 
-```jsonc
-// run - npm test, with the first failure line as the stopping point
-{
-  "command": "npm",
-  "args": ["test"],
-  "cwd": "<checkout>",
-  "timeoutMs": 300000,
-  "maxBytes": 40000,
-  "match": "FAIL|failing"
-}
-// -> {"data":"...","exitCode":1,"timedOut":false,"matched":true,"sessionId":"...","name":null,
-//     "cursor":8123,"dropped":0,"bytes":8123,"truncated":false,"durationMs":1840}
+```bash
+janua run -- npm test                                  # stdout is the output, exit code is the child's
+janua run --json --match "FAIL|failing" -- npm test    # structured result, stopping at the first failure
+janua run --timeout 30000 -- node slow.js              # 124 when the timeout wins
+janua run --tty -- node --interactive                  # a real terminal for a program that prompts
 ```
 
-- `stdin` is sent exactly as given, with no newline added. On the default pipe path stdin is a pipe,
-  so a literal `\n` is what a line reader sees and closing stdin is what signals EOF. With
-  `tty: true` the program reads a console instead: a Windows console wants `\r`, and a POSIX
-  terminal translates it.
-- `maxBytes` caps `data`, not the run: the output is still drained so `bytes`, `exitCode` and
-  `truncated` are honest.
+- `--json` prints `{data, exitCode, timedOut, matched, sessionId, name, cursor, dropped, bytes,
+  truncated, durationMs}`; `--max-bytes` caps `data` while `bytes` still reports everything produced,
+  so `truncated: true` tells you the reply was cut.
 - A match or a timeout ends the run and kills the process tree, because a one-shot call has nobody
-  left to answer a prompt. `keep: true` leaves the session running and addressable by `sessionId` or
-  `name`, which is how a run turns into a conversation.
-- `tty: true` replaces the pipes with a real PTY. A pipe session has no terminal, so `pty_list`
-  reports `pipe: true` with `cols`/`rows` 0, and `pty_resize` refuses it with `pty_resize_failed`
-  naming `tty: true`.
-- `shell: true` is for a real command line (`"echo $HOME"`, `"npm run build | tail -1"`): the whole
-  string goes to `cmd.exe /d /s /c` or `/bin/sh -c`, so `args` must be empty and quoting is the
-  shell's business.
+  left to answer a prompt. The CLI is one-shot end to end: nothing it spawned outlives the process.
+- `--tty` replaces the pipes with a real PTY, for a program that prompts, uses colour, or draws a
+  full-screen UI. Pipes are the default because they are the fast path.
+- `--shell` takes one platform command line (`cmd.exe /d /s /c` on Windows, `/bin/sh -c` elsewhere),
+  so quote the whole thing: `janua run --shell -- "npm run build | tail -5"`.
 
 ### Named sessions
 
@@ -176,7 +158,7 @@ of a UUID. Names are 1-64 characters, start with a letter or digit, and may cont
 - A name is only held by a live session. Once the program exits the name is free, and the next spawn
   with it starts fresh (the old session stays readable under its id, and its `pty_list` entry shows
   `name: null`).
-- `run` never reuses a live name: it reports `name_taken` rather than attach a second program to an
+- The CLI `run` never reuses a live name: it reports `name_taken` rather than attach a second program to an
   id the caller believes it owns.
 
 ### Reading without duplicates
@@ -219,7 +201,7 @@ that contradicted the declared shape would be rejected by a validating client.
 - 32 concurrent sessions (`JANUA_MAX_SESSIONS` overrides it). Exited sessions are purged first when
   the cap is reached; if none can be purged the spawn fails with `too_many_sessions`.
 - 1 MiB of retained output per session (`JANUA_MAX_BUFFER_BYTES` overrides it).
-- `run` waits 120 s by default (`timeoutMs`, max 3600000) and returns at most 1 MiB of data
+- The CLI `run` waits 120 s by default (`timeoutMs`, max 3600000) and returns at most 1 MiB of data
   (`maxBytes`); it keeps draining past the cap so `bytes` and `truncated` stay honest.
 - `cwd` must exist and be a directory, and `command` must not be empty: both are refused with
   `invalid_args` before anything is spawned.
@@ -235,8 +217,8 @@ janua is one process with two faces. A barebones harness that can start a proces
 
 **As an MCP server.** Any MCP client that speaks stdio can launch it; the config from
 [Install](#install) is the whole setup. With no arguments (or with `janua mcp`) the process serves
-JSON-RPC on stdout and nothing else, which is what the client expects. `run` is the tool for
-one-shot commands, `pty_spawn` is the tool for long-lived ones.
+JSON-RPC on stdout and nothing else, which is what the client expects. `pty_spawn` is the tool for
+long-lived work; a one-shot command is the shell's job, not a tool call.
 
 **As a CLI.** The same package installs a `janua` binary, so a shell script, a Makefile, a CI step or
 an agent with only a command tool can use it:
@@ -253,9 +235,9 @@ janua --help                              # usage, including every run option
 
 `run` writes `data` to stdout with no added newline and exits with the child's code, so it composes
 with pipes and `$?`/`%ERRORLEVEL%` like any other command. It uses pipes by default too, which is
-why a one-shot command starts in milliseconds; `--tty` gives it a real terminal, the same thing the
-MCP tool's `tty: true` does. `--json` is for a harness that wants the
-structured result (`exitCode`, `timedOut`, `matched`, `truncated`, `sessionId`, ...) instead of text.
+why a one-shot command starts in milliseconds; `--tty` gives it a real terminal instead. `--json` is
+for a harness that wants the structured result (`exitCode`, `timedOut`, `matched`, `truncated`,
+`sessionId`, ...) instead of text.
 `--name` labels the session and reports it in the JSON; the CLI is one-shot, so the session ends with the process. The MCP server is the place where a session outlives one call and can be addressed by name again.
 
 The CLI runs on Windows, Linux and macOS. On Windows, `npx` itself is a `.cmd` shim; if a script
@@ -294,7 +276,7 @@ PTY engine: @lydell/node-pty (MIT)
 ## Going deeper
 
 `docs/GUIDE.md` has four worked examples: restarting a dev server, answering an interactive prompt,
-driving a REPL, and one-shot commands with named sessions.
+driving a REPL, and naming a session.
 
 ## Links
 
