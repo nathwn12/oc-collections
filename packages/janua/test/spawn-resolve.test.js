@@ -9,7 +9,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { SessionManager, resolveSpawn } from '../lib/sessions.js';
 
@@ -69,6 +69,22 @@ test('an .exe on PATH resolves to its absolute path and runs directly', { skip: 
   assert.match(plan.file, /node\.exe$/i);
   assert.equal(plan.viaShell, false);
   assert.deepEqual(plan.args, ['-v']);
+});
+
+// A volume can hold `MiXeD.CMD` where the resolver asked for `mixed.CMD`,
+// because Windows lookup ignores case. The path it reports is compared and
+// logged as text, so it must carry the casing the directory actually holds.
+test('a resolved name keeps the casing the disk holds, not PATHEXT casing', { skip: WINDOWS_ONLY }, (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'janua-case-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(join(dir, 'MiXeD.CMD'), '@echo off\r\n');
+
+  const plan = resolveSpawn('mixed', [], {
+    env: { PATH: dir, PATHEXT: '.COM;.EXE;.BAT;.CMD' },
+  });
+
+  assert.equal(basename(plan.resolved).toLowerCase(), 'mixed.cmd', 'the file found is the mixed-case shim');
+  assert.equal(basename(plan.resolved), 'MiXeD.CMD', 'the path keeps the on-disk basename');
 });
 
 test('a .cmd shim found on PATH runs and its marker arrives', { skip: WINDOWS_ONLY }, async (t) => {
