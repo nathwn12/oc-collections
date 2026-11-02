@@ -1,5 +1,6 @@
-# The gate. One Windows job that installs the workspaces and runs the real
-# per-workspace checks through the root wrapper.
+# The gate. Two jobs: `index` installs the workspaces on Windows and runs the
+# real per-workspace checks through the root wrapper; `posix` runs janua's own
+# tests on Ubuntu, where its POSIX pipe path executes instead of skipping.
 #
 # `npm run check` is the documented root gate: scripts/check-docs.mjs, then its
 # selftest, then scripts/workspace-run.mjs check, which runs each workspace's
@@ -9,8 +10,8 @@
 # tree fails here too.
 #
 # The previous gate ran on ubuntu-latest and only proved four root files were
-# tracked. Every package here is Windows-only, so Ubuntu could never exercise
-# them.
+# tracked. janua is cross-platform: the Windows job keeps the full gate, and
+# the `posix` job proves the POSIX branch that a Windows run cannot reach.
 name: ci
 
 on:
@@ -65,3 +66,25 @@ jobs:
 
       - name: Workspace check
         run: npm run check
+
+  # janua's pipe path has POSIX-only branches: a detached child leading its own
+  # process group, and negative-pid group kills. The Windows index job skips the
+  # descendant test, so this job runs janua's own suite where it executes.
+  posix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # Only janua: the root gate covers every workspace on Windows, and this
+      # job exists to exercise this package's POSIX path.
+      - name: Install janua workspace
+        run: npm ci --workspace @nathwn12/janua
+
+      - name: Run janua tests
+        run: npm test --workspace @nathwn12/janua
