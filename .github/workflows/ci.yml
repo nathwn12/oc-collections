@@ -69,7 +69,9 @@ jobs:
 
   # janua's pipe path has POSIX-only branches: a detached child leading its own
   # process group, and negative-pid group kills. The Windows index job skips the
-  # descendant test, so this job runs janua's own suite where it executes.
+  # descendant test, so this job runs the pipe test where that branch executes.
+  # The rest of janua's suite is left to the Windows gate: its pre-existing PTY
+  # tests assume Windows and are outside this job's scope.
   posix:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -82,9 +84,10 @@ jobs:
           cache: npm
 
       # Only janua: the root gate covers every workspace on Windows, and this
-      # job exists to exercise this package's POSIX path.
+      # job exists to exercise this package's POSIX pipe path.
       - name: Install janua workspace
         run: npm ci --workspace @nathwn12/janua
 
-      - name: Run janua tests
-        run: npm test --workspace @nathwn12/janua
+      - name: Run POSIX pipe tests
+        working-directory: packages/janua
+        run: node --test "test/pipe.test.js"

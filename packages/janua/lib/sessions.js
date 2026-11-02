@@ -916,9 +916,23 @@ export class SessionManager {
       session.exited = true;
       this.#notify(session);
     });
+    child.on('exit', (code) => {
+      // exit is the direct child, not its stdio: a background descendant can
+      // hold an inherited pipe open long after the program this run owns is
+      // gone, and waiting for close would hang a timeout or a match forever.
+      session.exited = true;
+      session.exitCode = typeof code === 'number' ? code : null;
+      this.#notify(session);
+    });
     child.on('close', (code) => {
-      // close, not exit: both stdio pipes are drained, so the ring holds every
-      // byte the command produced before the caller reads the tail.
+      // Fallback only: exit normally arrives first. A killed child reports a
+      // null code (the signal that ended it), so nothing here invents one; an
+      // already-exited session is never flipped back, and a code exit already
+      // supplied is never overwritten.
+      if (session.exited) {
+        if (session.exitCode === null && typeof code === 'number') session.exitCode = code;
+        return;
+      }
       session.exited = true;
       session.exitCode = typeof code === 'number' ? code : null;
       this.#notify(session);
