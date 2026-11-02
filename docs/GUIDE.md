@@ -59,34 +59,38 @@ that passes every other check is still `target_gone`. An ambiguous or vanished t
 typed error (`ambiguous_target` with the candidate list, or `target_gone`) and the call
 does nothing. There is **no fallback to the foreground window, ever**.
 
-### Why it does not steal focus
+### Why it never steals focus, moves the pointer, or writes the clipboard
 
-With a target, acting verbs go UIA patterns first (`Invoke`, `Toggle`, `ExpandCollapse`,
-`SelectionItem`, `ValuePattern.SetValue`, `ScrollPattern`), then `PostMessage` /
-`SendMessage` to the locked hwnd with exact integer client coordinates.
-`SendInput`, `SetCursorPos`, `SetForegroundWindow`, `BringWindowToTop` and `mouse_event`
-are reachable only when the call mints the right permit:
+Background-only policy, absolute: the server may be driving a machine whose
+owner is playing a fullscreen game, so puppet works purely in the background
+or says it cannot. There is **no escalation path**: `SendInput` is never
+called, `SetCursorPos` / `SetForegroundWindow` / `BringWindowToTop` /
+`mouse_event` have zero call sites anywhere (pinned by a source scan in
+`tests/no_steal.rs`), and the schemas keep `allow_foreground` /
+`allow_cursor` / `allow_clipboard` only so old callers get a typed refusal
+instead of an "unexpected keyword" error.
 
-| Verb | Needs |
+| Verb | Result |
 |---|---|
-| `invoke`, `toggle`, expand/collapse, `scroll` with `element` | nothing — pattern-driven |
-| `type` with a resolvable element, `set_value` | `allow_foreground:true` (the UIA provider may focus the control it writes) |
-| plain `type`, `key`, `hotkey` | `allow_foreground:true` (escalates to real `SendInput`) |
-| `move`, `click` with `x`/`y`, `drag`, `scroll` with `x`/`y` | **both** `allow_foreground:true` and `allow_cursor:true` |
-| `window` `action:"focus"` | the verb **and** `allow_foreground:true` |
-| `window` `action:"maximize"` | `allow_foreground:true` (no documented no-activate maximize form) |
-| `clipboard_set` | `allow_clipboard:true` |
+| `invoke`, `toggle`, expand/collapse, `scroll` with `element`, `click`/`down`/`up`/`drag`/`scroll` with coords on a locked target | posted (`PostMessage`) or UIA pattern |
+| plain `type`, `key`, `hotkey` on a locked target | posted `WM_CHAR` / `WM_KEYDOWN` / `WM_SYSKEYDOWN` (verified by default, see below) |
+| `delivery:"sendinput"` or any call with `allow_foreground:true` | refused with `no_foreground_policy`, never acted on |
+| `move`, or any click/drag/scroll that needs a real cursor | refused with `no_cursor_policy` |
+| `focus_window`, `window` `action:"focus"`, `window` `action:"maximize"` | refused with `no_foreground_policy` (focusing IS taking the foreground; maximizing covers a monitor) |
+| `clipboard_set` | refused with `no_clipboard_policy` (`clipboard_get` stays — reading cannot disturb) |
+| `type` with an element, `set_value` | refused with `background_unavailable` naming the control (their UIA provider may take the foreground) |
 
-Without the flags you get `foreground_required`, `cursor_move_required` or
-`clipboard_write_required` **before anything is sent**, and the desktop is untouched.
-`window` `move`/`resize`/`minimize`/`restore`/`topmost`/`close` use `SWP_NOACTIVATE`,
-`SW_SHOWMINNOACTIVE`, `SW_SHOWNOACTIVATE` or `WM_CLOSE` and never activate or raise.
+Without a locked target, keyboard verbs refuse with `target_required` — the
+foreground is never an option. Every refusal happens **before anything is
+sent**, under `dry_run` too. `window` `move`/`resize`/`minimize`/`restore`/
+`topmost`/`close` use `SWP_NOACTIVATE`, `SW_SHOWMINNOACTIVE`,
+`SW_SHOWNOACTIVATE` or `WM_CLOSE` and never activate or raise.
 
-The guarantee is structural, not a promise: every forbidden call site lives in one module
-(`src/gate.rs`) behind permit tokens only the explicit flags can mint, and
-`tests/no_steal.rs` proves no other source file names those APIs. Every acting or capturing
-call also records `GetForegroundWindow` and `GetCursorPos` before and after and returns
-`foregroundUnchanged` / `cursorUnchanged` — that is telemetry, not the guarantee.
+The guarantee is structural, not a promise: there is no injection API to
+reach, and `tests/no_steal.rs` proves the symbols appear nowhere. Every
+acting or capturing call also records `GetForegroundWindow` and `GetCursorPos`
+before and after and returns `foregroundUnchanged` / `cursorUnchanged` —
+that is telemetry, not the guarantee.
 
 ### Coordinates
 
@@ -149,7 +153,7 @@ Tool-level defaults live with each tool below.
 
 ## Every tool
 
-All six are declared in `src/schemas.rs` with a real `outputSchema`; the tool descriptions
+All seven are declared in `src/schemas.rs` with a real `outputSchema`; the tool descriptions
 are the contract.
 
 ### `screenshot`
@@ -169,6 +173,7 @@ pointer.
 | `grid` | `false` | Overlay a light 128 px lattice. |
 | `allow_crop_fallback` | `false` | Permit a foreground-only desktop crop to `dwm_rect` when `PrintWindow` refuses. |
 | `elements` | `false` | Append a third content block with the element model. |
+| `out` | `null` | Absolute path: also write the exact returned bytes to disk (parent dirs created) and add `out:{path,bytes,fmt}` to the payload. PNG when `out` is set and `fmt` is omitted (a diff needs lossless pixels). |
 
 **Returns** `[image, coordinate_map_json]`, plus the element block when `elements=true`.
 The map carries `source{x,y,w,h,kind}`, `scale`, `monitors{count,origin,virtual,rects}`,
@@ -190,10 +195,37 @@ describes the FOREGROUND window (not the captured image), and the map names it i
 the name and the block it describes always agree.
 
 Errors are `["error: <code>: <detail>"]` with
-`bad_display|bad_region|bad_window|ambiguous_window|empty_crop|capture_failed|ambiguous_target|target_gone|window_minimized|capture_unavailable`.
+`bad_display|bad_region|bad_window|ambiguous_window|empty_crop|capture_failed|ambiguous_target|target_gone|window_minimized|capture_unavailable|bad_out`.
 
 ```json
 { "target": { "titleContains": "Untitled - Notepad" }, "max_px": 1280 }
+```
+
+### `diff`
+
+Pixel diff for "only the intended pixels changed": compare two captures and
+report exactly which pixels moved. Read-only: no activation, no input. Errors
+never raise.
+
+| Argument | Default | Meaning |
+|---|---|---|
+| `base` | required | `{path:"<png>"}` (absolute .png path, decoded as-is) or a capture target (`{target\|window, display, region}` with the screenshot selector grammar; captured side-effect-free at native pixels). |
+| `next` | required | Same shape as `base`. |
+| `threshold` | `0` | Per-channel tolerance 0..255; only tolerance there is. |
+| `max_px` | `1280` | Long-edge clamp for the returned diff image, aspect-preserving, never upscaling. |
+| `out` | `null` | Absolute path: write the diff PNG to disk (parent dirs created). |
+| `bbox` | `true` | Toggle the union box of changed pixels. |
+
+Both sides must land on the SAME pixel dimensions: a mismatch is a typed
+`size_mismatch` naming both sizes, never a silent scale.
+
+**Returns** `{changed,total,ratio,bbox:[x,y,w,h]|null,identical,base:{w,h},next:{w,h},threshold,diff_out?}`.
+When anything changed, a second content block carries the diff image (changed
+pixels solid red over a dimmed greyscale copy of `base`); when identical there
+is no image block and `bbox` is `null`.
+
+```json
+{ "base": {"path": "C:/captures/before.png"}, "next": {"path": "C:/captures/after.png"} }
 ```
 
 ### `list_windows`
@@ -224,7 +256,11 @@ minimized, maximized, foreground, cloaked, visible, dpi, elevated, appId? }] }`.
 | `hwnd` | `null` | Window handle. |
 | `x`, `y` | `null` | Required when `action:"move"`. |
 | `width`, `height` | `null` | Required when `action:"resize"`. |
-| `allow_foreground` | `false` | Required for `focus` and `maximize`. |
+| `allow_foreground` | `false` | Retained for compatibility: passing it refuses the whole call with `no_foreground_policy`. |
+
+`action:"focus"` and `action:"maximize"` are refused with
+`no_foreground_policy` — focusing IS taking the foreground, and maximizing
+covers the monitor (Win32 documents no no-activate form).
 
 **Returns** `{ ok, action, hwnd, x, y, width, height, error, candidates, code,
 foregroundUnchanged, cursorUnchanged, target_locked }`. An ambiguous match is `ok:false`
@@ -245,18 +281,19 @@ Burst tool — one MCP round-trip runs an ordered batch. Full action list and or
 | `target` | `null` | Selector locking one window for the whole call. |
 | `dry_run` | `false` | Validate and report; inject nothing. |
 | `settle_ms` | `0` | Sleep between actions. |
-| `focus_guard` | `false` | Restore the entry foreground window if it changed during the call. |
+| `focus_guard` | `false` | Dead guard: restoring would take the foreground, so a changed foreground is reported with `focus_guard_error` and `focus_restored:false` instead of being restored. |
 | `background` | `null` | Legacy window selector; alternative lock (`target` wins). |
 | `background_args` | `null` | argv for a `desktop:"hidden"` launch only. |
 | `desktop` | `null` | Only `"hidden"` is accepted. See [HEADLESS.md](HEADLESS.md). |
-| `allow_foreground` | `false` | Permit `SendInput` keyboard/text escalation. |
-| `allow_cursor` | `false` | Permit pointer movement (with `allow_foreground`). |
-| `allow_clipboard` | `false` | Permit `clipboard_set`. |
+| `allow_foreground` | `false` | Retained for compatibility: passing it refuses every action with `no_foreground_policy`. |
+| `allow_cursor` | `false` | Retained for compatibility: the pointer is never moved. |
+| `allow_clipboard` | `false` | Retained for compatibility: `clipboard_set` is always refused. |
 
-**Returns** `{ results: [{ index, type, ok, ms, mode? }], total_ms, sendinput_calls,
+**Returns** `{ results: [{ index, type, ok, ms, mode?, delivered?, effect?, posted?, changed?, bbox?, code?, error? }], total_ms, sendinput_calls,
 sendinput_ms, events, focus_before, focus_after, foregroundUnchanged, cursorUnchanged,
 target_locked?, target_pid?, target_exe? }`, plus `hidden_desktop` under
-`desktop:"hidden"`.
+`desktop:"hidden"`. `sendinput_calls` and `sendinput_ms` are always 0
+(`SendInput` is never called); `events` counts posted messages.
 
 A burst is bounded: at most **256 actions** and **300 s** of total wall-clock time.
 Exceeding either is a typed `burst_budget_exceeded` result naming the limit and the
@@ -268,7 +305,7 @@ reported the same way — the global input lock is never held past the budget.
 ```json
 {
   "target": { "titleContains": "Untitled - Notepad" },
-  "actions": [{ "type": "type", "text": "hello", "x": 40, "y": 60 }],
+  "actions": [{ "type": "type", "text": "hello" }],
   "dry_run": true
 }
 ```
@@ -335,20 +372,20 @@ foregroundUnchanged, cursorUnchanged }`. Each entry is
 
 | Type | Arguments | Delivery |
 |---|---|---|
-| `move` | `x`,`y` or `dx`,`dy` (±32767), `relative` | pointer; relative needs no desktop gate |
-| `click` | `x`,`y` or `element`+`index`+`expect_fp`, `button` (left/right/middle), `count`, `hover` | UIA pattern first, else one posted down+up |
-| `down` / `up` | `button` | posted button message |
-| `drag` | `from`[2], `to`[2], `button` | posted down/move/up at exact points |
-| `scroll` | `x`,`y` or `element`, `amount`, `axis` (`v`/`h`) | `WM_MOUSEWHEEL` at the point, or UIA `ScrollPattern` |
-| `type` | `text`, `chunk_chars`, `chunk_ms`, `element` (`name:`/`auto_id:`/`path:`), `index`, `expect_fp` | UIA `ValuePattern.SetValue` with an element; else `SendInput` |
-| `key` | `name`, `hold_ms` (0..60000), `repeat` (1..100), `gap_ms` | `SendInput` only |
-| `hotkey` | `keys` (array or string) | `SendInput` only |
+| `move` | `x`,`y` or `dx`,`dy` | always refused with `no_cursor_policy` |
+| `click` | `x`,`y` or `element`+`index`+`expect_fp`, `button` (left/right/middle), `count`, `hover` | UIA pattern first on an element, else one posted down+up; needs a locked target or `no_cursor_policy` |
+| `down` / `up` | `button` | posted button message on a locked target, else `no_cursor_policy` |
+| `drag` | `from`[2], `to`[2], `button` | posted down/move/up at exact points on a locked target, else `no_cursor_policy` |
+| `scroll` | `x`,`y` or `element`, `amount`, `axis` (`v`/`h`) | `WM_MOUSEWHEEL` at the point on a locked target, or UIA `ScrollPattern` |
+| `type` | `text` | `WM_CHAR` posted to the locked target's writable text control (`delivered:"posted"`, `effect:"unverified"`) |
+| `key` | `name`, `delivery` (`auto`\|`posted`\|`sendinput`, default `auto`), `hold_ms` (default 80), `repeat` (1..100), `gap_ms`, `verify` (default `true`) | `WM_KEYDOWN`/`WM_SYSKEYDOWN` posted to the locked target with a correct lParam (repeat 1, scan code, extended bit, key-up bits); verified by default with a before/after pixel diff |
+| `hotkey` | `keys` (array or string), `delivery`, `hold_ms`, `verify` | pressed in order, held, released in reverse; same verify contract as `key` |
 | `wait` | `ms` | sleeps, cancellably |
 | `wait_for` | `kind` (`window_appear`/`window_disappear`/`pixel`/`stable`/`element`), `selector`, `x`,`y`,`color`,`tolerance`, `region`, `timeout_ms`, `poll_ms`, `window`, `element`, `state` | polls; cancellable |
-| `focus_window` | `title`, `hwnd` | the only verb here that may focus; needs `allow_foreground` |
+| `focus_window` | `title`, `hwnd` | always refused with `no_foreground_policy` |
 | `invoke` | `element` (`name:`/`auto_id:`/`path:`), `index`, `expect_fp`, `state` (`expand`/`collapse`) | UIA Invoke/SelectionItem/Toggle, or Win32 `BM_CLICK` |
-| `set_value` | `element`, `text`, `expect_fp` | UIA `ValuePattern.SetValue`, RangeValue fallback for sliders |
-| `clipboard_set` | `text` | `CF_UNICODETEXT`; needs `allow_clipboard` |
+| `set_value` | `element`, `text`, `expect_fp` | always refused with `background_unavailable` naming the element |
+| `clipboard_set` | `text` | always refused with `no_clipboard_policy` |
 | `clipboard_get` | — | reads back `{ok,text}`; free |
 
 Notes that keep the actions honest:
@@ -370,32 +407,44 @@ Notes that keep the actions honest:
 - `invoke` `state:"expand"|"collapse"` drives **only** UIA ExpandCollapse (a typed error
   without it — never Invoke, so a SplitButton cannot open a menu instead of collapsing) and
   reports `expand_state` (`Collapsed|Expanded|PartiallyExpanded|LeafNode`).
-- `set_value` never echoes the text (it may be a password); it reports `value_len`. Without
-  `ValuePattern`, a numeric RangeValue control accepts numeric text, parsed as f64,
-  range-checked, read-only honored, and reports the live value in `value`.
-- `type` with `chunk_chars` splits into one flush per chunk with `chunk_ms` between flushes
-  (skipped under `dry_run`); absent `chunk_chars` keeps the single-coalesced behaviour
-  exactly.
-- `key` holds Shift when the layout (`VkKeyScanW` high byte) requires it, else a Unicode
-  fallback like `type`. Per repeat: down, flush, hold, up, flush, cancellably.
+- `set_value` and `type`-on-an-element are refused with
+  `background_unavailable` naming the control, before any provider call. The
+  UIA provider behind them may take the foreground, and no flag buys that.
+- `type` posts `WM_CHAR` per UTF-16 unit to the locked target's writable
+  text control (a read-only control is skipped: typing there would be a
+  silent no-op). Delivery is reported (`delivered:"posted"`,
+  `effect:"unverified"`), never implied.
+- Posted `key`/`hotkey` are verified by default: the target is captured
+  before and after (native pixels, lossless) and diffed per channel at
+  threshold 0. `effect:"changed"` carries the exact `changed` count and the
+  union `bbox:[x,y,w,h]`; `effect:"unchanged"` carries `changed:0` and
+  `bbox:null` — a result, not an error. Pass `verify:false` for
+  `effect:"unverified"`. An 80 ms hold sits between down and up by default.
+  A target that cannot be captured (e.g. a message-only window) makes
+  `verify:true` fail honestly with `delivered:"none"`.
+- `key` holds Shift when the layout (`VkKeyScanW` high byte) requires it, and
+  sends `WM_SYSKEYDOWN`/`WM_SYSKEYUP` when Alt is held, with a correct
+  lParam (repeat 1, `MapVirtualKeyW` scan code, extended bit, context code,
+  previous-state + transition bits on key-up).
 - `wait_for` `kind:"element"` polls the element model: `window` optional (default
   foreground), `element` a required `name:`/`auto_id:`/`path:` selector, `state` `appear`
   (default)/`disappear`/`enabled`/`disabled` (UIA IsEnabled, or the Win32 enabled flag).
   A control need not be invokable to be waited on. If the window disappears mid-wait,
   `disappear` is satisfied and the other states keep polling to timeout; a malformed
   selector, an ambiguous match or an unresolvable window is a per-action error.
-- `clipboard_set` overwrites the owner's global clipboard — a side effect outside the
-  target window — so it is deny-by-default. `clipboard_get` results may hold secrets: treat
-  them as sensitive and never log them beyond the caller.
+- `clipboard_set` is refused with `no_clipboard_policy` before any clipboard
+  API — a refused call touches nothing. `clipboard_get` results may hold
+  secrets: treat them as sensitive and never log them beyond the caller.
 
 ### Ordering guarantees
 
 1. **Array order is execution order.** Actions run sequentially; nothing is reordered or
    deduplicated.
-2. **Coalescing.** Consecutive pure-input actions are coalesced into a **single**
-   `SendInput` call (`sendinput_calls` reports how many were actually issued).
-3. **Flush before a barrier.** `wait`, `focus_window` and `wait_for` flush pending input
-   first, so a barrier never overtakes input queued behind it.
+2. **Posted, never coalesced through input.** Keyboard and pointer verbs post
+   one message group per action (`posted` counts them); there is no input
+   queue and no `SendInput` call (`sendinput_calls` is always 0).
+3. **No barriers to flush.** `wait`, `focus_window` (refused) and `wait_for`
+   poll or refuse on their own; nothing queues input behind them.
 4. **Continue-always.** A per-action failure never aborts the burst: that action reports
    `ok:false` and the remaining actions still run. `ok:false` at the action level means a
    malformed action or a typed refusal — not a reason to skip the rest.
@@ -408,10 +457,10 @@ Notes that keep the actions honest:
    `satisfied:false` (the flag, never an error), so the batch continues. `ok:false` is
    reserved for a malformed action or an unresolvable selector.
 6. **Revalidation.** The target lock is revalidated before every action, not once per call.
-7. **`dry_run` is inert.** It builds the exact `INPUT` array but calls `SendInput` **zero**
-   times; `invoke` still resolves the element and reports
-   `found`/`not-found`/`ambiguous` plus the path it would use, and `set_value` reports
-   `value_len` without firing. Metadata is still reported.
+7. **`dry_run` is inert.** It validates and reports exactly what the live
+   call would do — including the policy refusals — but posts nothing.
+   `invoke` still resolves the element and reports
+   `found`/`not-found`/`ambiguous` plus the path it would use.
 8. **Elevation is refused, not switched.** Input aimed at a higher-integrity target is
    refused before injecting with `uipi_blocked`, naming the elevated exe/pid/hwnd and
    setting `blocked_by_uipi:true` on the action — under `dry_run` too. The mode is never
@@ -427,10 +476,10 @@ Notes that keep the actions honest:
 | `target_gone` | The locked window vanished, or the pid was recycled (creation time differs). | Re-list with `list_windows` and re-select. |
 | `bad_target` | Malformed selector. | Check the grammar in [the target lock](#the-target-lock). |
 | `target_required` | The verb needs a lock. | Pass `target`. |
-| `foreground_required` | The verb needs real input. | Pass `allow_foreground:true`, or use a UIA-pattern verb. |
-| `cursor_move_required` | A pointer act passed `allow_foreground` but not `allow_cursor`. | Pass both — `SendInput` pointer movement is foreground input too. |
-| `clipboard_write_required` | `clipboard_set` without permission. | Pass `allow_clipboard:true`. |
-| `background_unavailable` | No background path exists for this action, or a posted click proved no effect. | Re-target by element, or accept the foreground path explicitly. |
+| `no_foreground_policy` | The verb would take the foreground (`delivery:"sendinput"`, `allow_foreground:true`, `focus_window`, `window` `focus`/`maximize`). | Nothing buys the foreground: use a locked target with a posted verb. |
+| `no_cursor_policy` | The verb would move the system pointer (`move`, cursor-less click/drag/scroll). | Pass a locked target for an exact posted message. |
+| `no_clipboard_policy` | `clipboard_set` would overwrite the owner's shared clipboard. | Nothing buys a write; `clipboard_get` stays. |
+| `background_unavailable` | No background path exists for this action (e.g. `type`/ `set_value` on an element, whose provider may focus), or a posted click proved no effect. | Re-target, or use a posted verb. |
 | `bad_coordinates` | Posted coordinates outside the signed 16-bit range. | Stay within `-32768..32767`. |
 | `window_minimized` | Target is minimized. | `window` `restore` first; it is never restored implicitly. |
 | `capture_unavailable` | `PrintWindow` refused or returned a blank/black frame. | Try `allow_crop_fallback:true` on the foreground window, or `screenshot` without a target. |
@@ -463,21 +512,24 @@ queued.
   the window, not a composited screen; some windows paint flat or refuse. Windows.Graphics.
   Capture (WGC) is **deferred**: it needs a WinRT frame pool plus D3D11 in this stack and is
   untestable on a single-monitor box here, so `PrintWindow` covers the verifiable cases.
-- **Keyboard through posted messages.** `WM_CHAR`/`WM_KEYDOWN` bypass the input queue,
-  desync the target and are ignored by many controls, so plain `type`, `key` and `hotkey`
-  are **never** posted — they escalate to `SendInput` behind `allow_foreground:true`. The
-  one exception is a desktop the server itself created and owns (`desktop:"hidden"`), and
-  only when the target window really lives on it: the permission is earned by desktop-name
-  comparison, never granted by the argument alone.
+- **Posted keyboard is the route.** `WM_CHAR`/`WM_KEYDOWN`/`WM_SYSKEYDOWN`
+  go straight to the locked target (never the foreground): plain `type` to
+  its writable text control, `key`/`hotkey` with a correct lParam and an 80 ms
+  default hold, verified by default with a before/after pixel diff. `delivery:"sendinput"`
+  is refused outright. The private desktop the server itself created and owns
+  (`desktop:"hidden"`) keeps the same posted delivery for the program living
+  on it: the permission is earned by desktop-name comparison, never granted
+  by the argument alone.
 
 ### Posted input is best-effort
 
 Background mode is **not** equivalent to real input. `PostMessage` input is not honoured by
 every app, and a per-action posted count reports messages queued, not effects produced —
-`text_readback` or a verified control state is the proof they landed. `move` has no
-window-message equivalent and fails with `background_unavailable` instead of silently doing
-nothing. When a background path does not exist, the answer is a typed error, never a silent
-foreground switch.
+verification (a before/after pixel diff on keys, `text_readback` or a verified control
+state) is the proof they landed. `move` needs a real cursor and fails with
+`no_cursor_policy`. When no background path exists, the answer is a typed error, never a
+silent foreground switch. A `size_mismatch` diff names both sizes rather than scaling
+silently.
 
 ### Known shape quirks
 

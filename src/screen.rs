@@ -31,6 +31,11 @@ pub struct ShotArgs {
     pub grid: bool,
     pub allow_crop_fallback: bool,
     pub elements: bool,
+    /// Optional absolute path: the exact encoded bytes are also written to
+    /// this path (parent dirs created) and the payload gains
+    /// `out:{path,bytes,fmt}`. PNG when `out` is set and `fmt` is omitted
+    /// (a diff needs lossless pixels). The inline image still returns.
+    pub out: Option<String>,
     /// Structured target lock (object or selector string); wins over
     /// `window` when present. Captured without activation or restore.
     pub target: Option<Value>,
@@ -296,6 +301,16 @@ pub fn screenshot_window(a: &ShotArgs) -> String {
         Ok(v) => v,
         Err(e) => return shot_err_list(vec![e]),
     };
+    // `out`: the exact returned bytes also land on disk (parents created);
+    // a write failure refuses the call instead of returning pixels without
+    // the file half. The inline image still returns below.
+    let out_obj: Option<Map<String, Value>> = match a.out.as_deref() {
+        None => None,
+        Some(path) => match crate::cap::write_bytes_out(path, &data) {
+            Ok(()) => Some(crate::cap::out_object(path, data.len(), &f)),
+            Err(e) => return shot_err_list(vec![e]),
+        },
+    };
     let (curx, cury) = cursor_xy((dl, dt));
     let (mons, n_mon, vrt) = monitors_block();
     let mut cmap = Map::new();
@@ -381,6 +396,9 @@ pub fn screenshot_window(a: &ShotArgs) -> String {
     }
     cmap.insert("capture".to_string(), Value::from(capt));
     cmap.insert("formula".to_string(), Value::from(FORMULA));
+    if let Some(o) = out_obj {
+        cmap.insert("out".to_string(), Value::from(o));
+    }
     // Invariant telemetry: a window capture resolves + PrintWindows the
     // target and never activates or restores it.
     let mut cur1 = POINT { x: 0, y: 0 };
@@ -712,6 +730,16 @@ pub fn screenshot_desktop(a: &ShotArgs) -> String {
         Ok(v) => v,
         Err(e) => return shot_err_list(vec![e]),
     };
+    // `out`: the exact returned bytes also land on disk (parents created);
+    // a write failure refuses the call instead of returning pixels without
+    // the file half. The inline image still returns below.
+    let out_obj: Option<Map<String, Value>> = match a.out.as_deref() {
+        None => None,
+        Some(path) => match crate::cap::write_bytes_out(path, &data) {
+            Ok(()) => Some(crate::cap::out_object(path, data.len(), &f)),
+            Err(e) => return shot_err_list(vec![e]),
+        },
+    };
     if (scale - ih as f64 / sh as f64).abs() * (sw.max(sh) as f64) > 1.0 {
         return shot_err_list(vec![
             "error: capture_failed: non-uniform scale after resize".to_string(),
@@ -774,6 +802,9 @@ pub fn screenshot_desktop(a: &ShotArgs) -> String {
         Value::from(cur_after == cur_before),
     );
     cmap.insert("formula".to_string(), Value::from(FORMULA));
+    if let Some(o) = out_obj {
+        cmap.insert("out".to_string(), Value::from(o));
+    }
     // The element block describes `fg_at_entry`, not the image: with
     // display/region the image is the desktop but the elements are that
     // window's. Naming it from the same handle the walk receives is the whole
@@ -896,6 +927,7 @@ mod tests {
             allow_crop_fallback: false,
             elements: false,
             target: None,
+            out: None,
         });
         assert!(
             out.contains("target_gone"),
@@ -926,6 +958,7 @@ mod tests {
             allow_crop_fallback: false,
             elements: false,
             target: Some(serde_json::json!({"hwnd": hwnd})),
+            out: None,
         });
         assert!(
             out.contains("target_gone"),
@@ -1003,6 +1036,7 @@ mod tests {
             allow_crop_fallback: false,
             elements: true,
             target: None,
+            out: None,
         });
         let outer: Value = serde_json::from_str(&out).expect("outer frame");
         let sc = outer
@@ -1054,6 +1088,7 @@ mod tests {
             allow_crop_fallback: false,
             elements: true,
             target: None,
+            out: None,
         });
         let outer: Value = serde_json::from_str(&out).expect("outer frame");
         let sc = outer

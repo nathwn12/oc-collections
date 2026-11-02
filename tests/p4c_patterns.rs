@@ -454,9 +454,9 @@ fn set_value_range_trackbar() {
     std::thread::sleep(Duration::from_millis(500));
     let mut s = Session::spawn();
     let bg = format!("title:{title}");
-    // Gate proof first: the SAME write without the flag must refuse typed and
-    // write nothing, so the explicit permission below is the contract and not
-    // a way around it.
+    // Policy proof: the SAME write without the flag refuses typed with
+    // background_unavailable naming the control, and the flagged write
+    // refuses identically — no flag buys a UIA text write.
     let refused = do_one(
         &mut s,
         19,
@@ -470,70 +470,39 @@ fn set_value_range_trackbar() {
     );
     assert_eq!(
         refused.get("code").and_then(|c| c.as_str()),
-        Some("foreground_required"),
-        "unflagged set_value must be typed foreground_required, got: {refused}"
-    );
-    // Numeric write through the RangeValue fallback, with read-back.
-    // set_value is a UIA write (the provider may focus the control), so the
-    // call carries the explicit allow_foreground:true the 5.0.0 gate demands.
-    let first = do_one_fg(
-        &mut s,
-        20,
-        serde_json::json!({"type": "set_value", "element": "auto_id:3001", "text": "42"}),
-        &bg,
-    );
-    assert_eq!(
-        first.get("ok"),
-        Some(&Value::from(true)),
-        "range set must run, got: {first}"
-    );
-    assert_eq!(
-        first.get("value").and_then(|v| v.as_f64()),
-        Some(42.0),
-        "range write must read back the live value, got: {first}"
-    );
-    // Out-of-range is a typed error, not a silent clamp.
-    let first = do_one_fg(
-        &mut s,
-        21,
-        serde_json::json!({"type": "set_value", "element": "auto_id:3001", "text": "200"}),
-        &bg,
-    );
-    assert_eq!(
-        first.get("ok"),
-        Some(&Value::from(false)),
-        "out-of-range must fail, got: {first}"
+        Some("background_unavailable"),
+        "unflagged set_value must be typed background_unavailable, got: {refused}"
     );
     assert!(
-        first
+        refused
             .get("error")
             .and_then(|e| e.as_str())
             .unwrap_or("")
-            .contains("out of range"),
-        "out-of-range must name the bound, got: {first}"
+            .contains("auto_id:3001"),
+        "refusal must name the control, got: {refused}"
     );
-    // Non-numeric text is a typed error, never a silent 0.
-    let first = do_one_fg(
-        &mut s,
-        22,
-        serde_json::json!({"type": "set_value", "element": "auto_id:3001", "text": "loud"}),
-        &bg,
-    );
-    assert_eq!(
-        first.get("ok"),
-        Some(&Value::from(false)),
-        "non-numeric must fail, got: {first}"
-    );
-    assert!(
-        first
-            .get("error")
-            .and_then(|e| e.as_str())
-            .unwrap_or("")
-            .contains("not a number"),
-        "non-numeric must name the problem, got: {first}"
-    );
+    // A flagged write refuses the same way: the policy has no opt-in.
+    // set_value is a UIA write (the provider may focus the control).
+    for (id, text) in [(20, "42"), (21, "200"), (22, "loud")] {
+        let first = do_one_fg(
+            &mut s,
+            id,
+            serde_json::json!({"type": "set_value", "element": "auto_id:3001", "text": text}),
+            &bg,
+        );
+        assert_eq!(
+            first.get("ok"),
+            Some(&Value::from(false)),
+            "flagged set_value must refuse, got: {first}"
+        );
+        assert_eq!(
+            first.get("code").and_then(|c| c.as_str()),
+            Some("background_unavailable"),
+            "flagged set_value must be typed, got: {first}"
+        );
+    }
     drop(fx);
-    println!("RANGE_OK set+readback+range-errors green");
+    println!("RANGE_OK set_value refused, nothing written");
 }
 
 fn detail_text(s: &mut Session, id: i64, title: &str) -> (Vec<Value>, Value) {
@@ -582,8 +551,8 @@ fn elements_detail_text_and_fp_stability() {
         "multiline text must be extracted, got: {text:?}"
     );
     let fp_before = edit.get("fp").cloned().expect("entry carries fp");
-    // Rewrite the content: fp must not move (text is not identity). A UIA
-    // write, so the explicit allow_foreground:true is part of the contract.
+    // Rewrite refused: fp must not move and the text must not change.
+    // A UIA write, so it is refused with background_unavailable.
     let first = do_one_fg(
         &mut s,
         31,
@@ -592,20 +561,25 @@ fn elements_detail_text_and_fp_stability() {
     );
     assert_eq!(
         first.get("ok"),
-        Some(&Value::from(true)),
-        "edit rewrite must run, got: {first}"
+        Some(&Value::from(false)),
+        "edit rewrite must refuse, got: {first}"
+    );
+    assert_eq!(
+        first.get("code").and_then(|c| c.as_str()),
+        Some("background_unavailable"),
+        "edit rewrite must be typed, got: {first}"
     );
     let (els, _) = detail_text(&mut s, 32, &title);
     let edit = find_auto(&els, "3002");
     assert_eq!(
         edit.get("fp"),
         Some(&fp_before),
-        "text edit must not change fp, got: {edit}"
+        "a refused write must not change fp, got: {edit}"
     );
     let text = edit.get("text").and_then(|v| v.as_str()).unwrap_or("");
     assert!(
-        text.contains("changed"),
-        "rewritten text must read back, got: {text:?}"
+        !text.contains("changed"),
+        "refused text must not read back, got: {text:?}"
     );
     drop(fx);
     println!("TEXT_OK extract+truncation-flag+fp-stability green");

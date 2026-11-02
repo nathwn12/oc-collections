@@ -1,18 +1,18 @@
 //! No-steal invariants, proven at three levels:
 //!
 //! 1. STATIC: the forbidden APIs (`SendInput`, `SetCursorPos`,
-//!    `SetForegroundWindow`, `BringWindowToTop`, `mouse_event`) appear in
-//!    exactly one source file (`src/gate.rs`), behind permit tokens that only
-//!    the explicit flags (and the explicit focus verb) can mint. A new call
-//!    site anywhere else turns this test red.
+//!    `SetForegroundWindow`, `BringWindowToTop`, `mouse_event`) have ZERO
+//!    call sites anywhere — including `src/gate.rs`, which holds no
+//!    injection API at all. A new call site anywhere turns this test red.
 //! 2. WIRE: `tools/list` declares `target` on every acting/capturing tool and
-//!    `allow_foreground`/`allow_cursor`/`allow_clipboard` on the verbs they
-//!    gate.
+//!    keeps the (now inert) `allow_foreground`/`allow_cursor`/
+//!    `allow_clipboard` flags so old callers get a typed refusal instead of
+//!    an "unexpected keyword" error.
 //! 3. SERVER: a typed target failure comes back as an MCP tool error with a
 //!    machine-readable `code` (`target_gone` / `bad_target`), never a
-//!    foreground fallback; a gated burst refuses with `foreground_required` /
-//!    `cursor_move_required` / `clipboard_write_required` and reports zero
-//!    events.
+//!    foreground fallback; a gated burst refuses with `no_foreground_policy` /
+//!    `no_cursor_policy` / `no_clipboard_policy` and reports zero
+//!    events and zero `sendinput_calls`.
 //!
 //! The live read-only check (an existing real window captured without
 //! changing the foreground) is gated by `PUPPET_LIVE_DESKTOP=1`.
@@ -70,7 +70,7 @@ fn call_sites(text: &str, symbol: &str) -> Vec<String> {
 }
 
 #[test]
-fn forbidden_apis_live_only_in_the_gate() {
+fn forbidden_apis_live_nowhere() {
     let mut files = Vec::new();
     rs_files(&src_dir(), &mut files);
     assert!(
@@ -81,9 +81,6 @@ fn forbidden_apis_live_only_in_the_gate() {
         let mut offenders: Vec<String> = Vec::new();
         for f in &files {
             let name = f.file_name().and_then(|x| x.to_str()).unwrap_or("");
-            if name == "gate.rs" {
-                continue;
-            }
             let text = std::fs::read_to_string(f).expect("source file readable");
             for site in call_sites(&text, sym) {
                 offenders.push(format!("{name}: {site}"));
@@ -91,87 +88,54 @@ fn forbidden_apis_live_only_in_the_gate() {
         }
         assert!(
             offenders.is_empty(),
-            "{sym} must be reachable only through src/gate.rs permits, found: {offenders:#?}"
+            "{sym} must have no call site anywhere — the escalation path is deleted, found: {offenders:#?}"
         );
     }
-    // And the gate itself does contain the ones the server actually uses
-    // (the scan is not vacuous). `mouse_event` is a never-used ban: it must
-    // appear NOWHERE, gate included.
-    let gate = std::fs::read_to_string(src_dir().join("gate.rs")).expect("gate.rs readable");
-    for sym in FORBIDDEN.iter().filter(|s| **s != "mouse_event") {
-        assert!(
-            !call_sites(&gate, sym).is_empty(),
-            "{sym} must be in the gate; the invariant moved somewhere else"
-        );
-    }
-    assert!(
-        call_sites(&gate, "mouse_event").is_empty(),
-        "mouse_event is a never-used API: no call site anywhere"
-    );
-    println!("NO_STEAL_STATIC_OK symbols={FORBIDDEN:?} confined to src/gate.rs");
+    // `mouse_event` was always banned outright; now the other four join it.
+    println!("NO_STEAL_STATIC_OK symbols={FORBIDDEN:?} banished from src/");
 }
 
 #[test]
-fn gate_permits_are_the_only_way_in() {
+fn gate_holds_no_permits_and_no_injection_apis() {
     let gate = std::fs::read_to_string(src_dir().join("gate.rs")).expect("gate.rs readable");
-    // Both mints are flag-only and auditable. There is deliberately NO
-    // unflagged constructor (the old `grant_explicit_focus` is gone): the
-    // explicit focus verb is double-explicit, verb AND allow_foreground.
-    for mint in [
-        "pub fn grant(allow_foreground: bool)",
-        "pub fn grant(allow_cursor: bool)",
-        "pub fn grant(allow_clipboard: bool)",
-    ] {
-        assert!(gate.contains(mint), "gate must keep the mint `{mint}`");
-    }
-    assert!(
-        !gate.contains("grant_explicit_focus"),
-        "no permit constructor may bypass the flags"
-    );
-    // Production half only: test literals sit below `#[cfg(test)]`.
+    // No permit may exist: the ONLY mints were the three flag-only
+    // constructors, and the background-only policy deleted all of them.
+    // (No unflagged constructor may ever bypass the flags — there is
+    // nothing left to mint.)
+    // Production half only: this test's own string literals sit below
+    // `#[cfg(test)]`, and a naive whole-file contains would match them.
     let prod = gate.split("#[cfg(test)]").next().unwrap_or("");
-    assert_eq!(
-        prod.matches("Some(ForegroundPermit(())").count(),
-        1,
-        "ForegroundPermit has exactly one, flag-only constructor"
-    );
-    assert_eq!(
-        prod.matches("Some(CursorPermit(())").count(),
-        1,
-        "CursorPermit has exactly one, flag-only constructor"
-    );
-    assert_eq!(
-        prod.matches("Some(ClipboardPermit(())").count(),
-        1,
-        "ClipboardPermit has exactly one, flag-only constructor"
-    );
-    // Every constructor call site outside gate.rs would be a bypass: the
-    // permits are only mintable there (the tokens are private to the module).
-    let mut files = Vec::new();
-    rs_files(&src_dir(), &mut files);
-    for f in &files {
-        let name = f.file_name().and_then(|x| x.to_str()).unwrap_or("");
-        if name == "gate.rs" {
-            continue;
-        }
-        let text = std::fs::read_to_string(f).expect("source file readable");
+    for mint in [
+        "ForegroundPermit",
+        "CursorPermit",
+        "ClipboardPermit",
+        "pub fn grant(",
+        "grant_explicit_focus",
+    ] {
         assert!(
-            !text.contains("ForegroundPermit(())")
-                && !text.contains("CursorPermit(())")
-                && !text.contains("ClipboardPermit(())"),
-            "{name} must not construct a permit; only gate.rs may"
+            !prod.contains(mint),
+            "gate production half must not contain {mint}: the escalation path is deleted"
         );
     }
-    // The clipboard write APIs live in burst.rs, so the scan above cannot
-    // confine them; the permit is what binds them to the flag instead:
-    // `clipboard_set` must demand the token, so an unflagged caller does not
-    // compile rather than merely refusing at runtime.
-    let burst = std::fs::read_to_string(src_dir().join("burst.rs")).expect("burst.rs readable");
-    assert!(
-        burst.contains("fn clipboard_set(_permit: &crate::gate::ClipboardPermit"),
-        "clipboard_set must demand a ClipboardPermit (the allow_clipboard flag)"
-    );
-    println!("NO_STEAL_MINT_OK permits=1-foreground,1-cursor,1-clipboard,flag-only");
+    // Production half only: this test's own banned-name literals sit below
+    // `#[cfg(test)]` (spelled via concat! so the source scan never sees a
+    // live `Name(` call site here).
+    let prod = gate.split("#[cfg(test)]").next().unwrap_or("");
+    for banned in [
+        concat!("fn send", "_input"),
+        concat!("fn set", "_cursor_pos"),
+        concat!("fn set", "_foreground"),
+        concat!("Send", "Input("),
+        concat!("Set", "CursorPos("),
+        concat!("Set", "ForegroundWindow("),
+        concat!("Bring", "WindowToTop("),
+    ] {
+        assert!(
+            !prod.contains(banned),
+            "gate.rs production half must not contain {banned}"
+        );
+    }
+    println!("NO_STEAL_MINT_OK permits=0 injection-apis=0");
 }
 
 // ---------------------------------------------------------------- server
@@ -401,11 +365,7 @@ fn gated_burst_refuses_with_typed_codes_and_zero_events() {
         .collect();
     assert_eq!(
         codes,
-        vec![
-            "cursor_move_required",
-            "foreground_required",
-            "foreground_required"
-        ],
+        vec!["no_cursor_policy", "target_required", "target_required"],
         "gate matrix over the wire, got: {results:?}"
     );
     assert_eq!(sc["events"], Value::from(0), "nothing may be injected");
@@ -433,7 +393,7 @@ fn clipboard_write_is_refused_over_the_wire() {
     let results = sc["results"].as_array().expect("results");
     assert_eq!(
         results[0]["code"].as_str(),
-        Some("clipboard_write_required"),
+        Some("no_clipboard_policy"),
         "unflagged clipboard_set must be typed, got: {sc}"
     );
     assert_eq!(results[0]["ok"].as_bool(), Some(false));
@@ -441,15 +401,15 @@ fn clipboard_write_is_refused_over_the_wire() {
         results[0]["error"]
             .as_str()
             .unwrap_or("")
-            .contains("allow_clipboard:true"),
-        "refusal must name the flag, got: {sc}"
+            .contains("background-only policy"),
+        "refusal must name the rule, got: {sc}"
     );
     assert_eq!(
         results[1]["ok"].as_bool(),
         Some(true),
         "continue-always: the next action must still run, got: {sc}"
     );
-    println!("NO_STEAL_CLIPBOARD_OK code=clipboard_write_required burst_continued");
+    println!("NO_STEAL_CLIPBOARD_OK code=no_clipboard_policy burst_continued");
 }
 
 #[test]
@@ -471,12 +431,12 @@ fn window_focus_is_the_only_explicit_focus_and_reports_telemetry() {
     println!("NO_STEAL_WINDOW_OK {text}");
 }
 
-/// Double-explicit focus, over the wire: `action:"focus"` WITHOUT
-/// `allow_foreground:true` must refuse with foreground_required and leave
-/// the foreground window alone. The refusal happens before any activation,
-/// so this is safe on a live desktop (and skips when no window is visible).
+/// Double-explicit focus is gone: `action:"focus"` is refused with
+/// no_foreground_policy whether or not `allow_foreground:true` is passed —
+/// no flag buys the foreground. The refusal happens before any activation,
+/// so this is safe on a live desktop.
 #[test]
-fn focus_without_the_flag_is_refused_before_activating() {
+fn focus_is_refused_with_or_without_the_flag() {
     let mut s = Session::spawn();
     let resp = s.call(20, "list_windows", serde_json::json!({}));
     let windows = resp["result"]["structuredContent"]["windows"]
@@ -494,26 +454,28 @@ fn focus_without_the_flag_is_refused_before_activating() {
     };
     let hwnd = w["hwnd"].as_i64().expect("hwnd");
     let fg_before = foregound_now();
-    let resp = s.call(
-        21,
-        "window",
-        serde_json::json!({"action": "focus", "target": {"hwnd": hwnd}}),
-    );
-    let sc = resp["result"]["structuredContent"].clone();
-    assert_eq!(
-        sc["ok"].as_bool(),
-        Some(false),
-        "unflagged focus must fail: {sc}"
-    );
-    assert_eq!(
-        sc["code"].as_str(),
-        Some("foreground_required"),
-        "unflagged focus must be typed: {sc}"
-    );
+    for (id, flag) in [(21, false), (22, true)] {
+        let resp = s.call(
+            id,
+            "window",
+            serde_json::json!({"action": "focus", "target": {"hwnd": hwnd}, "allow_foreground": flag}),
+        );
+        let sc = resp["result"]["structuredContent"].clone();
+        assert_eq!(
+            sc["ok"].as_bool(),
+            Some(false),
+            "focus (flag={flag}) must fail: {sc}"
+        );
+        assert_eq!(
+            sc["code"].as_str(),
+            Some("no_foreground_policy"),
+            "focus (flag={flag}) must be typed: {sc}"
+        );
+    }
     assert_eq!(
         foregound_now(),
         fg_before,
-        "an unflagged focus must not activate anything"
+        "a refused focus must not activate anything"
     );
     println!("NO_STEAL_FOCUS_FLAG_OK hwnd={hwnd} fg={fg_before}");
 }
@@ -672,10 +634,10 @@ fn assert_foreground_held(before: i64, what: &str) {
     );
 }
 
-/// The pointer is TELEMETRY ONLY. The tool cannot move it here: no
-/// `SetCursorPos`/`SendInput`/`mouse_event` exists outside `src/gate.rs`
-/// (pinned by `forbidden_apis_live_only_in_the_gate`), and this path passes no
-/// cursor permit. The owner using the machine moves the pointer constantly, so
+/// The pointer is TELEMETRY ONLY. The tool cannot move it: no
+/// `SetCursorPos`/`SendInput`/`mouse_event` exists anywhere in `src/`
+/// (pinned by `forbidden_apis_live_nowhere`), and this path passes no
+/// cursor flag. The owner using the machine moves the pointer constantly, so
 /// a positional assertion would be a flaky gate dressed up as evidence.
 /// Report the delta and continue.
 fn report_pointer(before: (i32, i32), what: &str) {

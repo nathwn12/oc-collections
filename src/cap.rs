@@ -426,6 +426,11 @@ fn gray(r: u8, g: u8, b: u8) -> u8 {
     ((r as u32 * 299 + g as u32 * 587 + b as u32 * 114 + 500) / 1000) as u8
 }
 
+/// The detector grey for external visualizers (same weights).
+pub(crate) fn gray_of(r: u8, g: u8, b: u8) -> u8 {
+    gray(r, g, b)
+}
+
 pub fn detector_verdict(img: &Img) -> Verdict {
     let w = img.w as usize;
     let h = img.h as usize;
@@ -877,6 +882,241 @@ pub fn encode_jpeg(img: &Img, q: u8) -> Result<Vec<u8>, String> {
     Ok(buf)
 }
 
+// ---------------------------------------------------------------- PNG decode + pixel diff
+//
+// Ported from `Q:\PROJECTS\PERSONAL\gladius\src\visual.rs`
+// (`png_diff`/`DiffOpts`): per-channel absolute delta above `threshold`
+// counts, union bbox, ratio. Gladius runs that rule inside a headless
+// engine over canvas ImageData; puppet runs the same rule natively on
+// `Img` pixels so a `diff` needs no browser, no window and no input.
+// There is no anti-aliasing rule here: the per-channel threshold is the
+// only tolerance, 0 by default (a diff needs lossless PNG pixels).
+
+/// Decode PNG bytes to RGB pixels. RGB and RGBA (alpha dropped) plus
+/// 8-bit grayscale decode; anything else is a typed refusal, never a
+/// guess (a palette/misdepth frame must not diff against raw RGB).
+pub fn decode_png(bytes: &[u8]) -> Result<Img, String> {
+    use std::io::Cursor;
+    let dec = png::Decoder::new(Cursor::new(bytes));
+    let mut reader = dec.read_info().map_err(|e| format!("{e}"))?;
+    let buf_len = reader
+        .output_buffer_size()
+        .ok_or_else(|| "error: bad_png: cannot size the decode buffer".to_string())?;
+    let mut buf = vec![0u8; buf_len];
+    let info = reader.next_frame(&mut buf).map_err(|e| format!("{e}"))?;
+    if info.bit_depth != png::BitDepth::Eight {
+        return Err(format!(
+            "error: bad_png: only 8-bit PNGs diff (got {:?})",
+            info.bit_depth
+        ));
+    }
+    let (w, h) = (info.width as i32, info.height as i32);
+    let n = (w as usize) * (h as usize);
+    let px: Vec<u8> = match info.color_type {
+        png::ColorType::Rgb => {
+            if buf.len() < n * 3 {
+                return Err(format!(
+                    "error: bad_png: short RGB frame ({} bytes for a {w}x{h} image)",
+                    buf.len()
+                ));
+            }
+            buf[..n * 3].to_vec()
+        }
+        png::ColorType::Rgba => {
+            if buf.len() < n * 4 {
+                return Err(format!(
+                    "error: bad_png: short RGBA frame ({} bytes for a {w}x{h} image)",
+                    buf.len()
+                ));
+            }
+            let mut px = vec![0u8; n * 3];
+            for i in 0..n {
+                px[3 * i] = buf[4 * i];
+                px[3 * i + 1] = buf[4 * i + 1];
+                px[3 * i + 2] = buf[4 * i + 2];
+            }
+            px
+        }
+        png::ColorType::Grayscale => {
+            if buf.len() < n {
+                return Err(format!(
+                    "error: bad_png: short grayscale frame ({} bytes for a {w}x{h} image)",
+                    buf.len()
+                ));
+            }
+            let mut px = vec![0u8; n * 3];
+            for i in 0..n {
+                px[3 * i] = buf[i];
+                px[3 * i + 1] = buf[i];
+                px[3 * i + 2] = buf[i];
+            }
+            px
+        }
+        png::ColorType::GrayscaleAlpha => {
+            if buf.len() < n * 2 {
+                return Err(format!(
+                    "error: bad_png: short grayscale+alpha frame ({} bytes for a {w}x{h} image)",
+                    buf.len()
+                ));
+            }
+            let mut px = vec![0u8; n * 3];
+            for i in 0..n {
+                px[3 * i] = buf[2 * i];
+                px[3 * i + 1] = buf[2 * i];
+                px[3 * i + 2] = buf[2 * i];
+            }
+            px
+        }
+        t => {
+            return Err(format!(
+                "error: bad_png: unsupported PNG color type ({t:?}); save an RGB/RGBA PNG"
+            ));
+        }
+    };
+    Ok(Img { w, h, px })
+}
+
+/// Pixel-diff outcome over two same-dimension images.
+#[derive(Debug)]
+pub struct PixelDiff {
+    pub changed: i64,
+    pub total: i64,
+    pub ratio: f64,
+    /// Union box of changed pixels as [x,y,w,h], None when identical.
+    pub bbox: Option<[i64; 4]>,
+    pub identical: bool,
+}
+
+/// Per-pixel compare: a pixel counts when its largest per-channel
+/// absolute delta exceeds `threshold` (0-255, default 0). Dimensions must
+/// already match; a mismatch is a typed refusal that names both sizes —
+/// never a silent scale.
+pub fn pixel_diff(base: &Img, next: &Img, threshold: u8) -> Result<PixelDiff, String> {
+    if base.w != next.w || base.h != next.h {
+        return Err(format!(
+            "error: size_mismatch: base {}x{} vs next {}x{} (same pixel dimensions required; refusing to scale silently)",
+            base.w, base.h, next.w, next.h
+        ));
+    }
+    let n = (base.w as usize) * (base.h as usize);
+    let mut changed: i64 = 0;
+    let (mut x0, mut y0) = (base.w as i64, base.h as i64);
+    let (mut x1, mut y1) = (-1i64, -1i64);
+    let w = base.w as usize;
+    for p in 0..n {
+        let mut d: u8 = 0;
+        for c in 0..3 {
+            let a = base.px[3 * p + c];
+            let b = next.px[3 * p + c];
+            let dd = a.abs_diff(b);
+            if dd > d {
+                d = dd;
+            }
+        }
+        if d > threshold {
+            changed += 1;
+            let (x, y) = ((p % w) as i64, (p / w) as i64);
+            if x < x0 {
+                x0 = x;
+            }
+            if y < y0 {
+                y0 = y;
+            }
+            if x > x1 {
+                x1 = x;
+            }
+            if y > y1 {
+                y1 = y;
+            }
+        }
+    }
+    let total = n as i64;
+    let identical = changed == 0;
+    Ok(PixelDiff {
+        changed,
+        total,
+        ratio: if total > 0 {
+            changed as f64 / total as f64
+        } else {
+            0.0
+        },
+        bbox: if identical {
+            None
+        } else {
+            Some([x0, y0, x1 - x0 + 1, y1 - y0 + 1])
+        },
+        identical,
+    })
+}
+
+/// Diff visualization: changed pixels solid red over a dimmed greyscale
+/// copy of `base` (same 299/587/114 weights as `detector_verdict`'s gray,
+/// dimmed 3/5 so red reads against it). Same-dimension input only.
+pub fn diff_image(base: &Img, next: &Img, threshold: u8) -> Result<Img, String> {
+    if base.w != next.w || base.h != next.h {
+        return Err(format!(
+            "error: size_mismatch: base {}x{} vs next {}x{} (same pixel dimensions required; refusing to scale silently)",
+            base.w, base.h, next.w, next.h
+        ));
+    }
+    let n = (base.w as usize) * (base.h as usize);
+    let mut px = vec![0u8; n * 3];
+    for p in 0..n {
+        let (r, g, b) = (base.px[3 * p], base.px[3 * p + 1], base.px[3 * p + 2]);
+        let mut d: u8 = 0;
+        for c in 0..3 {
+            let dd = base.px[3 * p + c].abs_diff(next.px[3 * p + c]);
+            if dd > d {
+                d = dd;
+            }
+        }
+        if d > threshold {
+            px[3 * p] = 255;
+            px[3 * p + 1] = 0;
+            px[3 * p + 2] = 0;
+        } else {
+            let dim = (gray(r, g, b) as u32 * 3 / 5) as u8;
+            px[3 * p] = dim;
+            px[3 * p + 1] = dim;
+            px[3 * p + 2] = dim;
+        }
+    }
+    Ok(Img {
+        w: base.w,
+        h: base.h,
+        px,
+    })
+}
+
+/// Write already-encoded capture bytes to `path` (parent dirs created).
+/// `path` must be absolute; a write failure is a typed refusal, never a
+/// silent drop of the file half of the call.
+pub fn write_bytes_out(path: &str, bytes: &[u8]) -> Result<(), String> {
+    let p = std::path::Path::new(path);
+    if !p.is_absolute() {
+        return Err(format!(
+            "error: bad_out: out must be an absolute path (got {path})"
+        ));
+    }
+    if let Some(parent) = p.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("error: bad_out: cannot create {}: {e}", parent.display()))?;
+        }
+    }
+    std::fs::write(p, bytes)
+        .map_err(|e| format!("error: bad_out: cannot write {}: {e}", p.display()))?;
+    Ok(())
+}
+
+/// The `out:{path,bytes,fmt}` payload object for a written capture.
+pub fn out_object(path: &str, bytes_len: usize, fmt: &str) -> Map<String, Value> {
+    let mut o = Map::new();
+    o.insert("path".to_string(), Value::from(path.to_string()));
+    o.insert("bytes".to_string(), Value::from(bytes_len as i64));
+    o.insert("fmt".to_string(), Value::from(fmt.to_string()));
+    o
+}
 /// Finalize output: encoded bytes, image w/h, applied scale, resolved
 /// format, clamped quality.
 type Finalized = (Vec<u8>, i64, i64, f64, String, i64);
@@ -973,6 +1213,72 @@ mod tests {
         assert_eq!(f, "jpeg");
         assert_eq!(q, 80);
         assert!(!data.is_empty());
+    }
+
+    fn solid_rgb(w: i32, h: i32, r: u8, g: u8, b: u8) -> Img {
+        let mut px = vec![0u8; w as usize * h as usize * 3];
+        for i in 0..w as usize * h as usize {
+            px[3 * i] = r;
+            px[3 * i + 1] = g;
+            px[3 * i + 2] = b;
+        }
+        Img { w, h, px }
+    }
+
+    /// Two generated PNGs, round-tripped through encode/decode: identical
+    /// bytes diff to identical, and one 3x3 block change reports its exact
+    /// bbox and count.
+    #[test]
+    fn diff_identical_pngs_are_identical() {
+        let a = solid_rgb(10, 10, 60, 120, 200);
+        let b = solid_rgb(10, 10, 60, 120, 200);
+        let da = decode_png(&encode_png(&a).expect("encode a")).expect("decode a");
+        let db = decode_png(&encode_png(&b).expect("encode b")).expect("decode b");
+        let d = pixel_diff(&da, &db, 0).expect("same sizes diff");
+        assert!(d.identical, "identical PNGs must be identical");
+        assert_eq!(d.changed, 0);
+        assert_eq!(d.total, 100);
+        assert!(d.bbox.is_none(), "identical diff has no bbox");
+    }
+
+    #[test]
+    fn diff_three_by_three_block_reports_exact_bbox_and_count() {
+        let base = solid_rgb(10, 10, 60, 120, 200);
+        let mut altered = solid_rgb(10, 10, 60, 120, 200);
+        // Paint a 3x3 block at x=4..6, y=2..4 solid red.
+        for y in 2..5 {
+            for x in 4..7 {
+                let p = (y * 10 + x) as usize;
+                altered.px[3 * p] = 255;
+                altered.px[3 * p + 1] = 0;
+                altered.px[3 * p + 2] = 0;
+            }
+        }
+        let db = decode_png(&encode_png(&base).expect("encode base")).expect("decode base");
+        let dn = decode_png(&encode_png(&altered).expect("encode next")).expect("decode next");
+        let d = pixel_diff(&db, &dn, 0).expect("same sizes diff");
+        assert!(!d.identical);
+        assert_eq!(d.changed, 9);
+        assert_eq!(d.bbox, Some([4, 2, 3, 3]));
+    }
+
+    #[test]
+    fn diff_size_mismatch_names_both_sizes() {
+        let a = solid_rgb(4, 4, 1, 2, 3);
+        let b = solid_rgb(5, 4, 1, 2, 3);
+        let e = pixel_diff(&a, &b, 0).expect_err("different widths must refuse");
+        assert!(
+            e.contains("size_mismatch"),
+            "refusal must be typed size_mismatch, got: {e}"
+        );
+        assert!(
+            e.contains("4x4") && e.contains("5x4"),
+            "refusal must name both sizes, got: {e}"
+        );
+        let c = solid_rgb(4, 6, 1, 2, 3);
+        let e2 = pixel_diff(&a, &c, 0).expect_err("different heights must refuse");
+        assert!(e2.contains("size_mismatch"), "got: {e2}");
+        assert!(e2.contains("4x4") && e2.contains("4x6"), "got: {e2}");
     }
 
     /// The legacy `hwnd`/`title` arguments are the target lock, not a bare

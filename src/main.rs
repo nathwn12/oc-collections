@@ -1447,6 +1447,7 @@ pub mod burst;
 pub mod cancel;
 pub mod cap;
 pub mod deadline;
+pub mod diff;
 pub mod dxgi;
 #[cfg(test)]
 pub mod fixture;

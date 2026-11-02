@@ -7,44 +7,28 @@
 
 use crate::cap::{bitblt_grab, resolve_selector};
 use crate::shot::element_model;
-use crate::winop::focus_hwmd;
 use crate::{
-    enum_child_windows, py_repr_str, py_repr_value, py_round_half_even, py_round_n, virtual_rect,
-    wrapped_text,
+    enum_child_windows, py_repr_str, py_repr_value, py_round_n, virtual_rect, wrapped_text,
 };
 use base64::Engine as _;
 use serde_json::{Map, Value};
 use std::time::{Duration, Instant};
-use windows_sys::Win32::Foundation::{
-    GetLastError, GlobalFree, HGLOBAL, HWND, LPARAM, POINT, RECT,
-};
+use windows_sys::Win32::Foundation::{HWND, LPARAM, POINT, RECT};
 use windows_sys::Win32::Graphics::Gdi::ScreenToClient;
 use windows_sys::Win32::System::DataExchange::{
-    CloseClipboard, EmptyClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard,
-    SetClipboardData,
+    CloseClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard,
 };
-use windows_sys::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock};
+use windows_sys::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 // ---------------------------------------------------------------- constants (puppet.py:1512-1518, 1628-1656)
 
-const M_MOVE: u32 = 0x0001;
-const M_ABS: u32 = 0x8000;
-const M_VDESK: u32 = 0x4000;
-const M_LDOWN: u32 = 0x0002;
-const M_LUP: u32 = 0x0004;
-const M_RDOWN: u32 = 0x0008;
-const M_RUP: u32 = 0x0010;
-const M_MDOWN: u32 = 0x0020;
-const M_MUP: u32 = 0x0040;
 const M_WHEEL: u32 = 0x0800;
 const M_HWHEEL: u32 = 0x1000;
-const K_UP: u32 = 0x0002;
-const K_UNICODE: u32 = 0x0004;
 
-const BG_NOTE: &str = "background PostMessage delivery is best-effort: it is NOT honoured by every app and is NOT equivalent to real (SendInput) input.";
-const BG_SUFFIX: &str = "; omit background for real SendInput delivery";
+const BG_NOTE: &str = "background PostMessage delivery is best-effort: it is NOT honoured by every app and is never equivalent to foreground input.";
+const BG_SUFFIX: &str = ""; // Retained for message shape; there is no foreground delivery to omit to.
 const MAX_CLICK_COUNT: i64 = 100;
 const MAX_STABLE_EDGE: i64 = 4096;
 /// Hard ceiling on one burst. Every action runs under the global input lock,
@@ -325,35 +309,8 @@ fn sleep_cancellable(ms: u64) -> bool {
     crate::cancel::cancelled()
 }
 
-// ---------------------------------------------------------------- foreground input builders
+// ---------------------------------------------------------------- foreground input builders (deleted)
 
-fn mi_move(x: i64, y: i64) -> INPUT {
-    let (vx, vy, vr, vb) = virtual_rect();
-    let (vx, vy, vr, vb) = (vx as f64, vy as f64, vr as f64, vb as f64);
-    let vw = vr - vx;
-    let vh = vb - vy;
-    let ax = py_round_half_even((x as f64 - vx) * 65535.0 / vw.max(vw - 1.0).max(1.0)) as i64;
-    let ay = py_round_half_even((y as f64 - vy) * 65535.0 / vh.max(vh - 1.0).max(1.0)) as i64;
-    let ax = ax.clamp(0, 65535) as i32;
-    let ay = ay.clamp(0, 65535) as i32;
-    INPUT {
-        r#type: INPUT_MOUSE,
-        Anonymous: INPUT_0 {
-            mi: MOUSEINPUT {
-                dx: ax,
-                dy: ay,
-                mouseData: 0,
-                dwFlags: M_MOVE | M_ABS | M_VDESK,
-                time: 0,
-                dwExtraInfo: 0,
-            },
-        },
-    }
-}
-
-/// Pure wheel resolution: axis flag plus WHEEL_DELTA-scaled data.
-/// |amount| is bounded (no wrapping); vertical behavior is unchanged.
-/// The range test avoids `abs` so `i64::MIN` cannot overflow past it.
 fn scroll_wheel(axis: &str, amt: i64) -> Result<(u32, u32), String> {
     let flag = match axis {
         "v" => M_WHEEL,
@@ -368,197 +325,8 @@ fn scroll_wheel(axis: &str, amt: i64) -> Result<(u32, u32), String> {
     Ok((flag, (amt as i32).wrapping_mul(120) as u32))
 }
 
-/// Pure relative-move event: raw signed deltas, `M_MOVE` only (no
-/// absolute/virtual-desktop mapping). Unit-testable flags + payload.
-fn mi_move_rel(dx: i64, dy: i64) -> Result<INPUT, String> {
-    // Range test (not abs) so i64::MIN cannot overflow past it.
-    if !(-32767..=32767).contains(&dx) || !(-32767..=32767).contains(&dy) {
-        return Err(format!(
-            "move delta out of range -32767..32767 (got {dx},{dy})"
-        ));
-    }
-    Ok(INPUT {
-        r#type: INPUT_MOUSE,
-        Anonymous: INPUT_0 {
-            mi: MOUSEINPUT {
-                dx: dx as i32,
-                dy: dy as i32,
-                mouseData: 0,
-                dwFlags: M_MOVE,
-                time: 0,
-                dwExtraInfo: 0,
-            },
-        },
-    })
-}
-
-fn mi_btn(flag: u32, data: u32) -> INPUT {
-    INPUT {
-        r#type: INPUT_MOUSE,
-        Anonymous: INPUT_0 {
-            mi: MOUSEINPUT {
-                dx: 0,
-                dy: 0,
-                mouseData: data,
-                dwFlags: flag,
-                time: 0,
-                dwExtraInfo: 0,
-            },
-        },
-    }
-}
-
-fn ki(vk: u16, scan: u16, flags: u32) -> INPUT {
-    INPUT {
-        r#type: INPUT_KEYBOARD,
-        Anonymous: INPUT_0 {
-            ki: KEYBDINPUT {
-                wVk: vk,
-                wScan: scan,
-                dwFlags: flags,
-                time: 0,
-                dwExtraInfo: 0,
-            },
-        },
-    }
-}
-
-/// Pure key-event sequence for one resolved code: Shift down, key down/up,
-/// Shift up — or a Unicode down/up pair per UTF-16 unit. Unit-testable order;
-/// the dispatch only extends `pending` with the result.
-fn key_inputs(code: &KeyCode) -> Vec<INPUT> {
-    let mut out = key_down_inputs(code);
-    out.extend(key_up_inputs(code));
-    out
-}
-
-/// Key-down half of `key_inputs`: Shift down + key down (or Unicode downs).
-/// Split out so hold/repeat can sleep between down and up.
-fn key_down_inputs(code: &KeyCode) -> Vec<INPUT> {
-    let mut out = Vec::new();
-    match code {
-        KeyCode::Vk(vk, shift) => {
-            if *shift {
-                out.push(ki(VK_SHIFT, 0, 0));
-            }
-            out.push(ki(*vk, 0, 0));
-        }
-        KeyCode::Uni(ch) => {
-            for unit in utf16_units(&ch.to_string()) {
-                out.push(ki(0, unit, K_UNICODE));
-            }
-        }
-    }
-    out
-}
-
-/// Key-up half of `key_inputs`: key up + Shift up (or Unicode ups).
-fn key_up_inputs(code: &KeyCode) -> Vec<INPUT> {
-    let mut out = Vec::new();
-    match code {
-        KeyCode::Vk(vk, shift) => {
-            out.push(ki(*vk, 0, K_UP));
-            if *shift {
-                out.push(ki(VK_SHIFT, 0, K_UP));
-            }
-        }
-        KeyCode::Uni(ch) => {
-            for unit in utf16_units(&ch.to_string()) {
-                out.push(ki(0, unit, K_UNICODE | K_UP));
-            }
-        }
-    }
-    out
-}
-
-/// Pure hotkey-event sequence: presses in order (each Shift-wrapped),
-/// releases in reverse. Unit-testable order; no input performed.
-fn hotkey_inputs(codes: &[KeyCode]) -> Vec<INPUT> {
-    let mut out = Vec::new();
-    for c in codes {
-        match c {
-            KeyCode::Vk(vk, shift) => {
-                if *shift {
-                    out.push(ki(VK_SHIFT, 0, 0));
-                }
-                out.push(ki(*vk, 0, 0));
-            }
-            KeyCode::Uni(ch) => {
-                for unit in utf16_units(&ch.to_string()) {
-                    out.push(ki(0, unit, K_UNICODE));
-                }
-            }
-        }
-    }
-    for c in codes.iter().rev() {
-        match c {
-            KeyCode::Vk(vk, shift) => {
-                out.push(ki(*vk, 0, K_UP));
-                if *shift {
-                    out.push(ki(VK_SHIFT, 0, K_UP));
-                }
-            }
-            KeyCode::Uni(ch) => {
-                for unit in utf16_units(&ch.to_string()) {
-                    out.push(ki(0, unit, K_UNICODE | K_UP));
-                }
-            }
-        }
-    }
-    out
-}
-
-fn btn_pair(raw: Option<&Value>) -> Result<(u32, u32), String> {
-    let btn = match raw {
-        None | Some(Value::Null) => "left".to_string(),
-        Some(Value::String(s)) => s.to_lowercase(),
-        Some(v) => py_str(v).to_lowercase(),
-    };
-    match btn.as_str() {
-        "left" => Ok((M_LDOWN, M_LUP)),
-        "right" => Ok((M_RDOWN, M_RUP)),
-        "middle" => Ok((M_MDOWN, M_MUP)),
-        _ => {
-            let disp = match raw {
-                None => "None".to_string(),
-                Some(v) => py_str(v),
-            };
-            Err(format!(
-                "unknown button \"{disp}\" (want left|right|middle)"
-            ))
-        }
-    }
-}
-
-fn require_on_desktop(x: i64, y: i64) -> Result<(), String> {
-    let (vx, vy, vr, vb) = virtual_rect();
-    let (vx, vy, vr, vb) = (vx as i64, vy as i64, vr as i64, vb as i64);
-    if vx <= x && x < vr && vy <= y && y < vb {
-        Ok(())
-    } else {
-        Err(format!(
-            "coords ({x},{y}) outside virtual desktop [{vx},{vy},{vr},{vb}] (refused, not clamped)"
-        ))
-    }
-}
-
-fn key_err(key: &str) -> String {
-    format!("'{key}'")
-}
-
 fn utf16_units(s: &str) -> Vec<u16> {
     s.encode_utf16().collect()
-}
-
-/// UTF-16 units for one `type` chunk, without building a throwaway String per
-/// chunk (a 1 MiB text at `chunk_chars:1` is a million chunks).
-fn utf16_units_chars(chars: &[char]) -> Vec<u16> {
-    let mut out = Vec::with_capacity(chars.len());
-    let mut buf = [0u16; 2];
-    for c in chars {
-        out.extend_from_slice(c.encode_utf16(&mut buf));
-    }
-    out
 }
 
 // ---------------------------------------------------------------- _vk (puppet.py:1571-1623)
@@ -680,58 +448,6 @@ unsafe fn clip_read_u16(ptr: *const u16, max_units: usize) -> Result<String, Str
     Ok(String::from_utf16_lossy(slice))
 }
 
-/// `OpenClipboard`/`EmptyClipboard`/`SetClipboardData` behind a clipboard
-/// permit: the token is the `allow_clipboard:true` flag, so a call that never
-/// asked cannot overwrite the owner's clipboard even by mistake.
-fn clipboard_set(_permit: &crate::gate::ClipboardPermit, text: &str) -> Result<(), String> {
-    // Bound first: a rejection never touches the clipboard.
-    check_clip_len(text.chars().count())?;
-    unsafe {
-        let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
-        let bytes = wide.len() * 2;
-        let mut opened = false;
-        let mut hmem: HGLOBAL = std::ptr::null_mut();
-        let mut locked: *mut std::ffi::c_void = std::ptr::null_mut();
-        let mut owned = false;
-        let r = (|| -> Result<(), String> {
-            if OpenClipboard(std::ptr::null_mut()) == 0 {
-                return Err("OpenClipboard failed".to_string());
-            }
-            opened = true;
-            if EmptyClipboard() == 0 {
-                return Err("EmptyClipboard failed".to_string());
-            }
-            hmem = GlobalAlloc(2, bytes);
-            if hmem.is_null() {
-                return Err("GlobalAlloc failed".to_string());
-            }
-            locked = GlobalLock(hmem);
-            if locked.is_null() {
-                return Err("GlobalLock failed".to_string());
-            }
-            std::ptr::copy_nonoverlapping(wide.as_ptr(), locked as *mut u16, wide.len());
-            GlobalUnlock(hmem);
-            locked = std::ptr::null_mut();
-            if SetClipboardData(13, hmem).is_null() {
-                Err("SetClipboardData failed".to_string())
-            } else {
-                owned = true;
-                Ok(())
-            }
-        })();
-        if !locked.is_null() {
-            GlobalUnlock(hmem);
-        }
-        if !owned && !hmem.is_null() {
-            GlobalFree(hmem);
-        }
-        if opened {
-            CloseClipboard();
-        }
-        r
-    }
-}
-
 fn clipboard_get() -> Result<String, String> {
     unsafe {
         let mut opened = false;
@@ -845,6 +561,138 @@ fn bg_post(hwnd: i64, msg: u32, w: u64, l: LPARAM) -> bool {
     unsafe { PostMessageW(hwnd as HWND, msg, w as usize, l) != 0 }
 }
 
+/// Virtual keys whose key messages carry the extended bit (bit 24) in
+/// lParam: navigation/edit block, Win keys, Apps, Divide, NumLock and the
+/// right-hand Ctrl/Menu.
+fn is_extended_vk(vk: u16) -> bool {
+    matches!(
+        vk,
+        0x21..=0x28 | 0x2D | 0x2E | 0x5B..=0x5D | 0x6F | 0x90 | 0xA3 | 0xA5
+    )
+}
+
+/// lParam for one posted key message: repeat 1, scan code from
+/// `MapVirtualKeyW`, extended bit for the extended set, context code when
+/// Alt is held, previous-state + transition bits on key-up. Proven against
+/// a live PotPlayer: Space down is `1 | (0x39 << 16)` = `0x00390001`,
+/// Space up ORs bits 30/31 = `0xC0390001`.
+fn posted_key_lparam(vk: u16, keyup: bool, alt: bool) -> LPARAM {
+    let sc = unsafe { MapVirtualKeyW(vk as u32, MAPVK_VK_TO_VSC) } & 0xFF;
+    let mut lp: u32 = 1 | (sc << 16);
+    if is_extended_vk(vk) {
+        lp |= 1 << 24;
+    }
+    if alt {
+        lp |= 1 << 29;
+    }
+    if keyup {
+        lp |= (1 << 30) | (1 << 31);
+    }
+    lp as i32 as isize
+}
+
+/// Key-down half of one posted key: (msg, wparam, lparam) triples. Alt
+/// travels as WM_SYSKEYDOWN/UP; a layout Shift wraps the key.
+fn posted_key_downs(code: &KeyCode) -> Vec<(u32, u64, LPARAM)> {
+    match code {
+        KeyCode::Vk(vk, shift) => {
+            let alt = *vk == 0x12;
+            let dm = if alt { 0x0104 } else { 0x0100 };
+            let mut v = Vec::new();
+            if *shift {
+                v.push((dm, VK_SHIFT as u64, posted_key_lparam(VK_SHIFT, false, alt)));
+            }
+            v.push((dm, *vk as u64, posted_key_lparam(*vk, false, alt)));
+            v
+        }
+        KeyCode::Uni(ch) => utf16_units(&ch.to_string())
+            .into_iter()
+            .map(|u| (0x0102, u as u64, 1))
+            .collect(),
+    }
+}
+
+/// Key-up half of one posted key, in release order.
+fn posted_key_ups(code: &KeyCode) -> Vec<(u32, u64, LPARAM)> {
+    match code {
+        KeyCode::Vk(vk, shift) => {
+            let alt = *vk == 0x12;
+            let um = if alt { 0x0105 } else { 0x0101 };
+            let mut v = Vec::new();
+            v.push((um, *vk as u64, posted_key_lparam(*vk, true, alt)));
+            if *shift {
+                v.push((um, VK_SHIFT as u64, posted_key_lparam(VK_SHIFT, true, alt)));
+            }
+            v
+        }
+        KeyCode::Uni(ch) => utf16_units(&ch.to_string())
+            .into_iter()
+            .map(|u| (0x0102, u as u64, 1))
+            .collect(),
+    }
+}
+
+/// Capture the locked target at native pixels for posted-key verify:
+/// the same window lock, lossless PNG, no grid, no elements. A capture
+/// failure is an error, never a guessed effect. One bounded retry rides
+/// out a transient render race (a window that has not finished painting
+/// reads back blank once); a persistent failure stays an error.
+fn verify_capture(hwnd: i64) -> Result<crate::cap::Img, String> {
+    match verify_capture_once(hwnd) {
+        Ok(im) => Ok(im),
+        Err(first) => {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            verify_capture_once(hwnd).map_err(|second| format!("{second} (first attempt: {first})"))
+        }
+    }
+}
+
+/// One verify capture attempt.
+fn verify_capture_once(hwnd: i64) -> Result<crate::cap::Img, String> {
+    let args = crate::screen::ShotArgs {
+        display: -1,
+        region: None,
+        window: None,
+        max_px: None,
+        fmt: "png".to_string(),
+        quality: None,
+        grid: false,
+        allow_crop_fallback: false,
+        elements: false,
+        out: None,
+        target: Some(serde_json::json!({ "hwnd": hwnd })),
+    };
+    let reply: Value = serde_json::from_str(&crate::screen::dispatch_screenshot(&args))
+        .map_err(|e| format!("verify capture unparseable: {e}"))?;
+    if reply.get("isError") == Some(&Value::from(true)) {
+        let detail = reply
+            .get("content")
+            .and_then(|c| c.as_array())
+            .map(|blocks| {
+                blocks
+                    .iter()
+                    .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
+                    .collect::<Vec<_>>()
+                    .join(" | ")
+            })
+            .unwrap_or_else(|| "capture failed".to_string());
+        return Err(detail);
+    }
+    let b64 = reply
+        .get("content")
+        .and_then(|c| c.as_array())
+        .and_then(|blocks| {
+            blocks
+                .iter()
+                .find_map(|b| b.get("data").and_then(|d| d.as_str()))
+        })
+        .ok_or_else(|| "verify capture returned no image".to_string())?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .map_err(|e| format!("verify capture is not base64: {e}"))?;
+    crate::cap::decode_png(&bytes).map_err(|e| format!("verify capture: {e}"))
+}
+
 /// Class probe for text-input controls (classic EDIT plus RichEdit
 /// flavors such as RichEditD2DPT backing the Win11 Notepad document).
 fn bg_is_text_control(h: HWND) -> bool {
@@ -856,6 +704,24 @@ fn bg_is_text_control(h: HWND) -> bool {
         }
         let cls = String::from_utf16_lossy(&buf[..n as usize]).to_lowercase();
         cls.contains("edit") || cls.contains("rich")
+    }
+}
+
+/// Writable-text probe: a text-input control that is not read-only.
+/// Typing into a read-only control is a silent no-op, so the descendant
+/// walk prefers a control that can actually receive the text.
+fn bg_is_writable_text_control(h: HWND) -> bool {
+    if !bg_is_text_control(h) {
+        return false;
+    }
+    unsafe {
+        // GetWindowLongPtrW carries the style; ES_READONLY marks the
+        // control the walk must skip.
+        const GWL_STYLE: i32 = -16;
+        const ES_READONLY: u32 = 0x0800;
+        let style =
+            windows_sys::Win32::UI::WindowsAndMessaging::GetWindowLongPtrW(h, GWL_STYLE) as u32;
+        style & ES_READONLY == 0
     }
 }
 
@@ -873,14 +739,15 @@ fn bg_descend(h: HWND, out: &mut Vec<HWND>) {
 /// top-level frame are dispatched to the frame's own window proc, which for
 /// editors (Notepad) never reaches the child EDIT control — so the hidden
 /// readback comes back empty. Resolve the control that would actually
-/// receive typed text: the thread's focused control when it is itself text
-/// input (GetGUIThreadInfo, the caret owner), else the first visible +
-/// enabled text control in the descendant tree (the document), else the
-/// window itself. A bare focus window (tab strip, toolbar) would swallow
-/// WM_CHAR, so focus only counts when it is text input. The descendant
-/// walk is recursive because modern editors nest the document deeper than
-/// one level. Never activates or focuses; PostMessage-only, so the owner's
-/// desktop is untouched.
+/// receive typed text: the thread's focused control when it is itself
+/// writable text input (GetGUIThreadInfo, the caret owner), else the first
+/// visible + enabled + writable text control in the descendant tree (the
+/// document), else the window itself. A bare focus window (tab strip,
+/// toolbar) would swallow WM_CHAR, so focus only counts when it is text
+/// input; a read-only control would swallow it silently, so writable wins.
+/// The descendant walk is recursive because modern editors nest the document
+/// deeper than one level. Never activates or focuses; PostMessage-only, so
+/// the owner's desktop is untouched.
 fn bg_text_target(hwnd: i64) -> i64 {
     unsafe {
         let target = hwnd as HWND;
@@ -896,7 +763,7 @@ fn bg_text_target(hwnd: i64) -> i64 {
                 if !f.is_null()
                     && f as i64 != hwnd
                     && IsChild(target, f) != 0
-                    && bg_is_text_control(f)
+                    && bg_is_writable_text_control(f)
                 {
                     return f as i64;
                 }
@@ -908,7 +775,7 @@ fn bg_text_target(hwnd: i64) -> i64 {
             if IsWindowVisible(k) == 0 || IsWindowEnabled(k) == 0 {
                 continue;
             }
-            if bg_is_text_control(k) {
+            if bg_is_writable_text_control(k) {
                 return k as i64;
             }
         }
@@ -1839,13 +1706,6 @@ fn fg_now() -> i64 {
     }
 }
 
-/// Restore the entry foreground window after a burst. The SetForegroundWindow
-/// call lives behind `gate::set_foreground`, which demands the permit minted
-/// from `allow_foreground: true`: the guard never steals focus on its own.
-fn restore_foreground(permit: &crate::gate::ForegroundPermit, hwnd: i64) -> bool {
-    crate::gate::set_foreground(permit, hwnd)
-}
-
 /// Element-match outcome: the entry, a typed error, or disambiguation
 /// candidates when the selector matches several controls.
 type MatchOut = (
@@ -2212,23 +2072,6 @@ fn win32_activate(entry: &Map<String, Value>) -> (bool, String, Option<String>) 
     (true, "win32-click".to_string(), None)
 }
 
-/// Gated pointer click: set_cursor_pos + button pair, behind BOTH permits.
-/// Exact (snaps to the point, no interpolation, no hover journey); only
-/// reachable from an explicit `fallback:"click"` with `allow_foreground` and
-/// `allow_cursor` both true.
-fn pixel_click_at(
-    fg: &crate::gate::ForegroundPermit,
-    cursor: &crate::gate::CursorPermit,
-    x: i64,
-    y: i64,
-) -> bool {
-    if !crate::gate::set_cursor_pos(cursor, x as i32, y as i32) {
-        return false;
-    }
-    let seq = [mi_btn(M_LDOWN, 0), mi_btn(M_LUP, 0)];
-    crate::gate::send_input(fg, &seq) == seq.len() as u32
-}
-
 // ---------------------------------------------------------------- UIPI / elevation (gap 2)
 
 /// Pure refusal text (gap 2): the typed, actionable error naming the
@@ -2236,7 +2079,7 @@ fn pixel_click_at(
 /// essentials are pinned by `uipi_refusal_text_names_target_and_recovery`.
 fn format_uipi_refusal(exe: &str, pid: u32, hwnd: i64) -> String {
     format!(
-        "uipi_blocked: target \"{exe}\" (pid {pid}, hwnd {hwnd}) runs elevated; input from this unelevated process would be silently dropped by UIPI (SendInput neither sends nor names it). Relaunch this server elevated and retry; under dry_run this refusal is reported without injecting anything."
+        "uipi_blocked: target \"{exe}\" (pid {pid}, hwnd {hwnd}) runs elevated; input from this unelevated process would be silently dropped by UIPI. Relaunch this server elevated and retry; under dry_run this refusal is reported without injecting anything."
     )
 }
 
@@ -2336,210 +2179,30 @@ struct Burst {
     calls: i64,
     events: i64,
     sendinput_ms: f64,
-    dry_run: bool,
     /// Gap 2: set when the last flush short-sent against an elevated
     /// foreground (UIPI-suspected). Read by fail_since_flush at the call site.
     flush_uipi: bool,
-    /// Minted ONLY from `allow_foreground: true` (gate.rs). `flush` needs it
-    /// to reach `SendInput`, so a call that did not ask for foreground input
-    /// cannot inject even if a future branch tried to queue events.
-    permit: Option<crate::gate::ForegroundPermit>,
-    /// Minted ONLY from `allow_cursor: true`. Every branch that queues a
-    /// pointer-moving event checks it FIRST, so a cursor action can never be
-    /// queued (and then silently dropped by a flush without the foreground
-    /// permit) on a call that did not ask to move the owner's pointer.
-    cursor: Option<crate::gate::CursorPermit>,
 }
 
 impl Burst {
-    /// Held/repeated key delivery guard: down -> flush -> hold -> up ->
-    /// flush per repeat, with a cancellable gap between repeats. The
-    /// `cancelled` predicate is `crate::cancel::cancelled` live; tests
-    /// inject a scripted one. Returns `Some(result)` on early exit
-    /// (cancellation or flush error), `None` when every repeat completed.
-    /// A cancellation after a key-down always emits the matching key-up
-    /// (plus Shift when held) and flushes before returning: no exit path
-    /// leaves a key held down.
-    #[allow(clippy::too_many_arguments)]
-    fn run_hold_repeats(
-        &mut self,
-        i: usize,
-        typ_v: &Value,
-        code: &KeyCode,
-        repeat: i64,
-        hold_ms: u64,
-        gap_ms: u64,
-        dry_run: bool,
-        t0: Instant,
-        t_all: Instant,
-        budget: std::time::Duration,
-        cancelled: &dyn Fn() -> bool,
-    ) -> Option<Map<String, Value>> {
-        self.marked.push(i);
-        for r in 0..repeat {
-            self.pending.extend(key_down_inputs(code));
-            let (_, ferr) = self.flush();
-            if let Some(fe) = ferr {
-                // The down may have partially sent: release before failing.
-                self.pending.extend(key_up_inputs(code));
-                let _ = self.flush();
-                // No clear before fail_since_flush: the marks are what make
-                // the covered action report ok:false.
-                fail_since_flush(&mut self.results, &mut self.marked, &fe, self.flush_uipi);
-                let mut d = base_entry(i, typ_v, false, elapsed_ms(&t0));
-                d.insert("error".to_string(), Value::from(fe));
-                return Some(d);
-            }
-            self.marked.clear();
-            let hold_cancelled = if !dry_run && hold_ms > 0 {
-                // Held key: the sleep is clamped to the burst budget, and an
-                // exhausted budget releases the key instead of continuing.
-                match bounded_pause(&t_all, budget, hold_ms) {
-                    Some(h) => sleep_cancellable(h),
-                    None => {
-                        self.pending.extend(key_up_inputs(code));
-                        let _ = self.flush();
-                        return Some(budget_stop(i, typ_v, &t0, budget, "a held key"));
-                    }
-                }
-            } else {
-                false
-            };
-            if hold_cancelled || cancelled() {
-                // Release the held key (+Shift) before reporting: no exit
-                // path leaves a key down.
-                self.pending.extend(key_up_inputs(code));
-                let _ = self.flush();
-                self.marked.clear();
-                let mut d = base_entry(i, typ_v, false, elapsed_ms(&t0));
-                d.insert("error".to_string(), Value::from("cancelled"));
-                return Some(d);
-            }
-            self.pending.extend(key_up_inputs(code));
-            let (_, ferr) = self.flush();
-            if let Some(fe) = ferr {
-                fail_since_flush(&mut self.results, &mut self.marked, &fe, self.flush_uipi);
-                let mut d = base_entry(i, typ_v, false, elapsed_ms(&t0));
-                d.insert("error".to_string(), Value::from(fe));
-                return Some(d);
-            }
-            self.marked.clear();
-            if r + 1 < repeat && !dry_run && gap_ms > 0 {
-                // The inter-press gap is bounded the same way: `repeat` 1..100
-                // at `gap_ms` 60000 is 99 minutes of wall clock otherwise.
-                let gap = match bounded_pause(&t_all, budget, gap_ms) {
-                    Some(g) => g,
-                    None => return Some(budget_stop(i, typ_v, &t0, budget, "a key repeat gap")),
-                };
-                if sleep_cancellable(gap) || cancelled() {
-                    let mut d = base_entry(i, typ_v, false, elapsed_ms(&t0));
-                    d.insert("error".to_string(), Value::from("cancelled"));
-                    return Some(d);
-                }
-            }
-        }
-        None
-    }
-
-    /// Empty pending -> (0, None), no call counted. Live partial sends
-    /// retro-mark every covered action via fail_since_flush (caller).
+    /// No-op by policy: `SendInput` is never called, so nothing is ever
+    /// queued and every flush is empty. Kept as a method because the posted
+    /// branches below still sequence through it (harmless, always clean).
     fn flush(&mut self) -> (f64, Option<String>) {
         self.flush_uipi = false;
-        if self.pending.is_empty() {
-            return (0.0, None);
-        }
-        let n = self.pending.len();
-        if self.dry_run {
-            let t = Instant::now();
-            self.pending.clear();
-            let dt = elapsed_ms(&t);
-            self.calls += 1;
-            self.events += n as i64;
-            self.sendinput_ms += dt;
-            return (dt, None);
-        }
-        let t = Instant::now();
-        // Gated call site: `permit` exists only when the caller passed
-        // `allow_foreground: true`. Without it nothing is injected and the
-        // queued events are dropped with a typed refusal.
-        let Some(permit) = self.permit.as_ref() else {
-            self.pending.clear();
-            // Do NOT clear `marked`: the caller's fail_since_flush must be
-            // able to mark every covered action FAILED. Clearing the marks
-            // here was the silent-success bug: an action reported ok:true
-            // while nothing was sent.
-            return (
-                0.0,
-                Some(
-                    crate::gate::GateError {
-                        code: crate::gate::FOREGROUND_REQUIRED,
-                        message: "SendInput path reached without allow_foreground:true; \
-                                  nothing was injected"
-                            .to_string(),
-                    }
-                    .text(),
-                ),
-            );
-        };
-        let sent = crate::gate::send_input(permit, &self.pending);
-        let dt = elapsed_ms(&t);
-        self.calls += 1;
-        self.sendinput_ms += dt;
-        if sent != n as u32 {
-            let mut msg = format!("SendInput sent {sent}/{n} events");
-            if sent == 0 {
-                unsafe {
-                    let code = GetLastError();
-                    msg.push_str(&format!(": [WinError {code}]"));
-                }
-                // Gap 2 post-hoc: a zero-send against an elevated foreground
-                // is UIPI-suspected (SendInput never names UIPI itself).
-                // Pre-checks above refuse the known-elevated case before
-                // injecting; this names the race that slips between.
-                let fg = fg_now();
-                if crate::uipi_blocked(crate::window_elevated(fg as HWND), crate::self_elevated()) {
-                    let pid = crate::pid_of(fg as HWND);
-                    let exe = crate::exe_of_pid(pid);
-                    msg.push_str(&format!(
-                        "; UIPI-suspected: foreground \"{exe}\" (pid {pid}, hwnd {fg}) is elevated"
-                    ));
-                    self.flush_uipi = true;
-                }
-            }
-            self.events += sent as i64;
-            self.pending.clear();
-            return (dt, Some(msg));
-        }
-        self.events += n as i64;
         self.pending.clear();
-        (dt, None)
+        self.marked.clear();
+        (0.0, None)
     }
 }
 
-/// Pointer-event guard: a branch that queues a cursor-moving INPUT must ask
-/// for the cursor permit first. `allow_cursor` is the only mint, so a call
-/// without it fails HERE with a typed error instead of queueing an event the
-/// flush would later drop.
-fn require_cursor(st: &Burst, verb: &str) -> Result<(), String> {
-    if st.cursor.is_some() {
-        return Ok(());
-    }
-    Err(crate::gate::GateError {
-        code: crate::gate::CURSOR_REQUIRED,
-        message: format!(
-            "{verb} moves the system pointer; pass allow_cursor:true (SendInput delivery also \
-             needs allow_foreground:true). Nothing was sent."
-        ),
-    }
-    .text())
-}
-
-/// Typed code carried by a flush refusal, so the retro-marked action exposes
+/// Typed code carried by a refusal, so the retro-marked action exposes
 /// the same machine-readable code an in-branch refusal would.
 fn gate_code_of(msg: &str) -> Option<&'static str> {
     [
-        crate::gate::FOREGROUND_REQUIRED,
-        crate::gate::CURSOR_REQUIRED,
+        crate::gate::NO_FOREGROUND_POLICY,
+        crate::gate::NO_CURSOR_POLICY,
+        crate::gate::NO_CLIPBOARD_POLICY,
         crate::gate::BACKGROUND_UNAVAILABLE,
         crate::gate::TARGET_REQUIRED,
     ]
@@ -2703,8 +2366,9 @@ impl<'a> DoArgs<'a> {
         }
     }
 
-    /// Test-only foreground batch: asks for both permissions explicitly,
-    /// exactly as a caller that wants foreground input must.
+    /// Test-only foreground batch (dry_run). The flags are retained for
+    /// schema compatibility but buy nothing: every injecting verb is
+    /// refused under the background-only policy.
     pub fn foreground(actions: &'a [Value]) -> Self {
         DoArgs {
             dry_run: true,
@@ -2898,12 +2562,7 @@ pub fn do_burst(args: &DoArgs) -> String {
         calls: 0,
         events: 0,
         sendinput_ms: 0.0,
-        dry_run,
         flush_uipi: false,
-        // No flag -> None -> the SendInput call site is unreachable.
-        permit: crate::gate::ForegroundPermit::grant(args.allow_foreground),
-        // No flag -> None -> no pointer event can be queued.
-        cursor: crate::gate::CursorPermit::grant(args.allow_cursor),
     };
 
     for (i, a) in actions.iter().enumerate() {
@@ -2954,6 +2613,76 @@ pub fn do_burst(args: &DoArgs) -> String {
         // The lock is revalidated before EVERY action: a target that closed
         // or whose handle was recycled is a typed refusal, never a retarget
         // and never a foreground fallback.
+        // Background-only policy: escalation is refused per action BEFORE
+        // anything else (even the revalidation read below) — and under
+        // dry_run too, so a dry run that said ok while the live call would
+        // refuse is a lie. No flag buys foreground, cursor or clipboard.
+        if args.allow_foreground {
+            let e = crate::gate::no_foreground_policy(typ);
+            let mut m = base_entry(i, &typ_v, false, elapsed_ms(&t0));
+            m.insert("code".to_string(), Value::from(e.code));
+            m.insert("error".to_string(), Value::from(e.text()));
+            if bg_mode {
+                m.insert("mode".to_string(), Value::from("background"));
+                m.insert(
+                    "bg_hwnd".to_string(),
+                    bg_hwnd.map(Value::from).unwrap_or(Value::Null),
+                );
+            }
+            if dry_run {
+                m.insert("dry_run".to_string(), Value::from(true));
+            }
+            st.results.push(m);
+            continue;
+        }
+        // Per-action delivery: `auto` (posted when a target is locked),
+        // `posted` (requires a locked target), `sendinput` (deleted path:
+        // refused, never acted on).
+        let delivery = match ad.get("delivery") {
+            None | Some(Value::Null) => "auto".to_string(),
+            Some(Value::String(s)) => s.to_lowercase(),
+            Some(v) => {
+                let mut m = base_entry(i, &typ_v, false, elapsed_ms(&t0));
+                m.insert(
+                    "error".to_string(),
+                    Value::from(format!(
+                        "unknown delivery {} (want auto|posted|sendinput)",
+                        crate::py_repr_value(v)
+                    )),
+                );
+                st.results.push(m);
+                continue;
+            }
+        };
+        if !["auto", "posted", "sendinput"].contains(&delivery.as_str()) {
+            let mut m = base_entry(i, &typ_v, false, elapsed_ms(&t0));
+            m.insert(
+                "error".to_string(),
+                Value::from(format!(
+                    "unknown delivery \"{delivery}\" (want auto|posted|sendinput)"
+                )),
+            );
+            st.results.push(m);
+            continue;
+        }
+        if delivery == "sendinput" {
+            let e = crate::gate::no_foreground_policy(&format!("{typ} delivery:\"sendinput\""));
+            let mut m = base_entry(i, &typ_v, false, elapsed_ms(&t0));
+            m.insert("code".to_string(), Value::from(e.code));
+            m.insert("error".to_string(), Value::from(e.text()));
+            if bg_mode {
+                m.insert("mode".to_string(), Value::from("background"));
+                m.insert(
+                    "bg_hwnd".to_string(),
+                    bg_hwnd.map(Value::from).unwrap_or(Value::Null),
+                );
+            }
+            if dry_run {
+                m.insert("dry_run".to_string(), Value::from(true));
+            }
+            st.results.push(m);
+            continue;
+        }
         if let Some(l) = &target_lock {
             if let Err(e) = l.revalidate() {
                 let mut m = base_entry(i, &typ_v, false, elapsed_ms(&t0));
@@ -2976,6 +2705,29 @@ pub fn do_burst(args: &DoArgs) -> String {
             matches!(ad.get("element"), Some(v) if py_truthy(v) && !py_str(v).trim().is_empty());
         let has_scroll_element = typ == "scroll" && has_element;
         let has_coords = ad.contains_key("x") && ad.contains_key("y");
+        // UIA text entry may take the foreground (the provider can focus
+        // its control): refused under the background-only policy, naming
+        // the control — no flag can buy a focus change. This runs before
+        // the gate so the refusal names the element, under dry_run too.
+        if typ == "set_value" || (typ == "type" && has_element) {
+            let sel = ad.get("element").map(py_str).unwrap_or_default();
+            let e = crate::gate::uia_text_unavailable(sel.trim());
+            let mut m = base_entry(i, &typ_v, false, elapsed_ms(&t0));
+            m.insert("code".to_string(), Value::from(e.code));
+            m.insert("error".to_string(), Value::from(e.text()));
+            if bg_mode {
+                m.insert("mode".to_string(), Value::from("background"));
+                m.insert(
+                    "bg_hwnd".to_string(),
+                    bg_hwnd.map(Value::from).unwrap_or(Value::Null),
+                );
+            }
+            if dry_run {
+                m.insert("dry_run".to_string(), Value::from(true));
+            }
+            st.results.push(m);
+            continue;
+        }
         // The gate decides delivery BEFORE anything is queued or posted, and
         // refuses identically under dry_run: a dry run that says ok while the
         // live call would refuse is a lie.
@@ -3008,13 +2760,12 @@ pub fn do_burst(args: &DoArgs) -> String {
             continue;
         }
         // `type` on an explicit element is a UIA ValuePattern write, not a
-        // posted character stream: it takes its own branch below. `click` on
-        // an element is UIA-pattern-first too (Invoke/SelectionItem/Toggle),
-        // with a posted click at the element centre as the fallback.
-        // Posted keyboard is never used on the owner's desktop: WM_CHAR /
-        // WM_KEYDOWN bypass the input queue, desync the target and are
-        // ignored by many controls. The private (hidden) desktop is the sole
-        // exception, where the server owns the session it is driving.
+        // posted character stream: it takes its own branch below (refused
+        // under the background-only policy). `click` on an element is
+        // UIA-pattern-first too (Invoke/SelectionItem/Toggle), with a posted
+        // click at the element centre as the fallback. Posted keyboard to a
+        // locked target is the keyboard path; the private (hidden) desktop
+        // keeps the same posted path for the program it launched.
         let keyboard_postable = private_desktop && matches!(typ, "type" | "key" | "hotkey");
         let is_bg_postable = bg_mode
             && ((matches!(typ, "click" | "down" | "up" | "move" | "drag")
@@ -3132,79 +2883,40 @@ pub fn do_burst(args: &DoArgs) -> String {
                             .to_string(),
                     );
                 }
-                require_cursor(&st, "move")?;
-                if has_rel {
-                    let dx = match ad.get("dx") {
-                        None | Some(Value::Null) => {
-                            return Err("relative move needs dx and dy (got only one)".to_string())
-                        }
-                        Some(v) => py_int(v).map_err(|_| key_err("dx"))?,
-                    };
-                    let dy = match ad.get("dy") {
-                        None | Some(Value::Null) => {
-                            return Err("relative move needs dx and dy (got only one)".to_string())
-                        }
-                        Some(v) => py_int(v).map_err(|_| key_err("dy"))?,
-                    };
-                    // No desktop gate: a relative nudge is legal from
-                    // anywhere, including outside the virtual desktop.
-                    st.pending.push(mi_move_rel(dx, dy)?);
-                    st.marked.push(i);
-                    return Ok(Some(base_entry(i, &typ_v, true, elapsed_ms(&t0))));
-                }
-                let mx = py_int(ad.get("x").unwrap_or(&Value::Null)).map_err(|_| key_err("x"))?;
-                let my = py_int(ad.get("y").unwrap_or(&Value::Null)).map_err(|_| key_err("y"))?;
-                require_on_desktop(mx, my)?;
-                st.pending.push(mi_move(mx, my));
-                st.marked.push(i);
-                return Ok(Some(base_entry(i, &typ_v, true, elapsed_ms(&t0))));
+                // Deleted path: the pointer is never moved. The gate refused
+                // the targetless case; this is defense in depth.
+                let e = crate::gate::no_cursor_policy("move");
+                let mut m = base_entry(i, &typ_v, false, elapsed_ms(&t0));
+                m.insert("code".to_string(), Value::from(e.code));
+                m.insert("error".to_string(), Value::from(e.text()));
+                return Ok(Some(m));
             }
             if typ == "click" && !has_element {
-                let (dn, up) = btn_pair(ad.get("button"))?;
-                if ad.contains_key("x") && ad.contains_key("y") {
-                    require_cursor(&st, "click x/y")?;
-                    let cx = py_int(&ad["x"])?;
-                    let cy = py_int(&ad["y"])?;
-                    require_on_desktop(cx, cy)?;
-                    st.pending.push(mi_move(cx, cy));
-                }
-                let count = match ad.get("count") {
-                    None => 1,
-                    Some(v) => py_int(v)?,
-                }
-                .max(1);
-                if count > MAX_CLICK_COUNT {
-                    return Err(format!("click count absurd (>{MAX_CLICK_COUNT}): {count}"));
-                }
-                for _ in 0..count {
-                    st.pending.push(mi_btn(dn, 0));
-                    st.pending.push(mi_btn(up, 0));
-                }
-                st.marked.push(i);
-                return Ok(Some(base_entry(i, &typ_v, true, elapsed_ms(&t0))));
+                // Deleted path: a targetless click needs the real cursor.
+                // The gate refused it; this is defense in depth.
+                let e = crate::gate::no_cursor_policy("click x/y");
+                let mut m = base_entry(i, &typ_v, false, elapsed_ms(&t0));
+                m.insert("code".to_string(), Value::from(e.code));
+                m.insert("error".to_string(), Value::from(e.text()));
+                return Ok(Some(m));
             }
             if typ == "down" || typ == "up" {
-                let (dn, up) = btn_pair(ad.get("button"))?;
-                st.pending
-                    .push(mi_btn(if typ == "down" { dn } else { up }, 0));
-                st.marked.push(i);
-                return Ok(Some(base_entry(i, &typ_v, true, elapsed_ms(&t0))));
+                // Deleted path: a targetless button message needs the real
+                // cursor. The gate refused it; this is defense in depth.
+                let e = crate::gate::no_cursor_policy(typ);
+                let mut m = base_entry(i, &typ_v, false, elapsed_ms(&t0));
+                m.insert("code".to_string(), Value::from(e.code));
+                m.insert("error".to_string(), Value::from(e.text()));
+                return Ok(Some(m));
             }
             if typ == "drag" {
-                require_cursor(&st, "drag")?;
-                let (dn, up) = btn_pair(ad.get("button"))?;
-                let fv = ad.get("from").ok_or_else(|| key_err("from"))?;
-                let tv = ad.get("to").ok_or_else(|| key_err("to"))?;
-                let (fx, fy) = unpack2(fv)?;
-                let (tx, ty) = unpack2(tv)?;
-                require_on_desktop(fx, fy)?;
-                require_on_desktop(tx, ty)?;
-                st.pending.push(mi_move(fx, fy));
-                st.pending.push(mi_btn(dn, 0));
-                st.pending.push(mi_move(tx, ty));
-                st.pending.push(mi_btn(up, 0));
-                st.marked.push(i);
-                return Ok(Some(base_entry(i, &typ_v, true, elapsed_ms(&t0))));
+                // Deleted path: a drag without a locked target needs the
+                // real pointer. The gate refused it; this is defense in depth.
+                let e = crate::gate::no_cursor_policy("drag");
+                let mut m = base_entry(i, &typ_v, false, elapsed_ms(&t0));
+                m.insert("code".to_string(), Value::from(e.code));
+                m.insert("error".to_string(), Value::from(e.text()));
+                return Ok(Some(m));
             }
             if typ == "scroll" {
                 // Element scroll is UIA-only: x/y alongside element is a
@@ -3223,11 +2935,13 @@ pub fn do_burst(args: &DoArgs) -> String {
                     );
                 }
                 if elem_sel.is_none() && ad.contains_key("x") && ad.contains_key("y") {
-                    require_cursor(&st, "scroll x/y")?;
-                    let sx = py_int(&ad["x"])?;
-                    let sy = py_int(&ad["y"])?;
-                    require_on_desktop(sx, sy)?;
-                    st.pending.push(mi_move(sx, sy));
+                    // Deleted path: a targetless wheel needs the real
+                    // cursor. The gate refused it; this is defense in depth.
+                    let e = crate::gate::no_cursor_policy("scroll x/y");
+                    let mut m = base_entry(i, &typ_v, false, elapsed_ms(&t0));
+                    m.insert("code".to_string(), Value::from(e.code));
+                    m.insert("error".to_string(), Value::from(e.text()));
+                    return Ok(Some(m));
                 }
                 let amt = opt_py_int(ad, "amount", 1)?;
                 let axis = match ad.get("axis") {
@@ -3377,10 +3091,14 @@ pub fn do_burst(args: &DoArgs) -> String {
                     d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
                     return Ok(Some(d));
                 }
-                let (flag, data) = scroll_wheel(&axis, amt)?;
-                st.pending.push(mi_btn(flag, data));
-                st.marked.push(i);
-                return Ok(Some(base_entry(i, &typ_v, true, elapsed_ms(&t0))));
+                // Deleted path: a wheel without a locked point needs the
+                // real cursor; without an element there is no UIA pattern.
+                // The gate refused both cases; this is defense in depth.
+                let e = crate::gate::no_cursor_policy("scroll");
+                let mut m = base_entry(i, &typ_v, false, elapsed_ms(&t0));
+                m.insert("code".to_string(), Value::from(e.code));
+                m.insert("error".to_string(), Value::from(e.text()));
+                return Ok(Some(m));
             }
             // `click` on an explicit element, target-locked: UIA pattern
             // first (Invoke/SelectionItem/Toggle), else ONE posted
@@ -3627,250 +3345,215 @@ pub fn do_burst(args: &DoArgs) -> String {
             // Without an element plain typing is refused (posted WM_CHAR is
             // unreliable) and needs allow_foreground for SendInput.
             if typ == "type" && has_element {
-                // Defense in depth: the gate already refuses UIA text entry
-                // without the explicit opt-in; no provider call happens here
-                // unless the foreground permit exists.
-                if st.permit.is_none() {
-                    let mut d = base_entry(i, &typ_v, false, elapsed_ms(&t0));
-                    d.insert(
-                        "code".to_string(),
-                        Value::from(crate::gate::FOREGROUND_REQUIRED),
-                    );
-                    d.insert(
-                        "error".to_string(),
-                        Value::from(
-                            "foreground_required: ValuePattern.SetValue may focus the target \
-                             control; pass allow_foreground:true. Nothing was written.",
-                        ),
-                    );
-                    return Ok(Some(d));
+                // Unreachable: the background-only pre-empt above refuses
+                // every set_value/type-on-element naming the control. Kept
+                // as defense in depth (never a provider call without it).
+                {
+                    let sel = ad.get("element").map(py_str).unwrap_or_default();
+                    let e = crate::gate::uia_text_unavailable(sel.trim());
+                    let mut dd = base_entry(i, &typ_v, false, elapsed_ms(&t0));
+                    dd.insert("code".to_string(), Value::from(e.code));
+                    dd.insert("error".to_string(), Value::from(e.text()));
+                    return Ok(Some(dd));
                 }
-                let (_, ferr) = st.flush();
-                if let Some(fe) = ferr {
-                    fail_since_flush(&mut st.results, &mut st.marked, &fe, st.flush_uipi);
-                } else {
-                    st.marked.clear();
-                }
-                let mut d = base_entry(i, &typ_v, false, 0.0);
-                let Some(tgt) = bg_hwnd else {
-                    d.insert(
-                        "error".to_string(),
-                        Value::from(
-                            "target_required: type on an element needs a target window; this \
+                // Deleted path (policy): the UIA write below is unreachable —
+                // set_value/type-on-element are refused above, naming the
+                // control. Wrapped (not run) so the deletion stays visible.
+                #[allow(unreachable_code)]
+                {
+                    let (_, ferr) = st.flush();
+                    if let Some(fe) = ferr {
+                        fail_since_flush(&mut st.results, &mut st.marked, &fe, st.flush_uipi);
+                    } else {
+                        st.marked.clear();
+                    }
+                    let mut d = base_entry(i, &typ_v, false, 0.0);
+                    let Some(tgt) = bg_hwnd else {
+                        d.insert(
+                            "error".to_string(),
+                            Value::from(
+                                "target_required: type on an element needs a target window; this \
                              server never falls back to the foreground window",
-                        ),
-                    );
-                    d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
-                    return Ok(Some(d));
-                };
-                if let Some(msg) = uipi_refusal(tgt) {
-                    d.insert("error".to_string(), Value::from(msg));
-                    d.insert("blocked_by_uipi".to_string(), Value::from(true));
-                    d.insert("resolution".to_string(), Value::from("uipi_blocked"));
-                    d.insert("via".to_string(), Value::from("none"));
-                    d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
-                    return Ok(Some(d));
-                }
-                let text = ad.get("text").map(py_str).unwrap_or_default();
-                let model = element_model(tgt as HWND, crate::UIA_DEPTH_LIMIT, 0);
-                if dry_run {
-                    d.insert("dry_run".to_string(), Value::from(true));
-                }
-                d.insert("target_hwnd".to_string(), Value::from(tgt));
-                d.insert("backend".to_string(), Value::from(model.backend.clone()));
-                let (entry, merr, mcands) =
-                    match_element(&model.entries, ad.get("element"), ad.get("index"));
-                if let Some(me) = merr {
-                    d.insert("error".to_string(), Value::from(me));
+                            ),
+                        );
+                        d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
+                        return Ok(Some(d));
+                    };
+                    if let Some(msg) = uipi_refusal(tgt) {
+                        d.insert("error".to_string(), Value::from(msg));
+                        d.insert("blocked_by_uipi".to_string(), Value::from(true));
+                        d.insert("resolution".to_string(), Value::from("uipi_blocked"));
+                        d.insert("via".to_string(), Value::from("none"));
+                        d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
+                        return Ok(Some(d));
+                    }
+                    let text = ad.get("text").map(py_str).unwrap_or_default();
+                    let model = element_model(tgt as HWND, crate::UIA_DEPTH_LIMIT, 0);
+                    if dry_run {
+                        d.insert("dry_run".to_string(), Value::from(true));
+                    }
+                    d.insert("target_hwnd".to_string(), Value::from(tgt));
+                    d.insert("backend".to_string(), Value::from(model.backend.clone()));
+                    let (entry, merr, mcands) =
+                        match_element(&model.entries, ad.get("element"), ad.get("index"));
+                    if let Some(me) = merr {
+                        d.insert("error".to_string(), Value::from(me));
+                        d.insert(
+                            "resolution".to_string(),
+                            Value::from(if mcands.is_some() {
+                                "ambiguous"
+                            } else {
+                                "not-found"
+                            }),
+                        );
+                        if let Some(c) = mcands {
+                            d.insert(
+                                "candidates".to_string(),
+                                Value::from(c.into_iter().map(Value::Object).collect::<Vec<_>>()),
+                            );
+                        }
+                        d.insert("via".to_string(), Value::from("none"));
+                        d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
+                        return Ok(Some(d));
+                    }
+                    let entry = entry.unwrap();
+                    if let Some(se) = check_expect_fp(
+                        ad,
+                        &entry,
+                        &py_str(ad.get("element").unwrap_or(&Value::Null)),
+                    ) {
+                        d.insert("error".to_string(), Value::from(se));
+                        d.insert("resolution".to_string(), Value::from("stale"));
+                        d.insert("via".to_string(), Value::from("none"));
+                        d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
+                        return Ok(Some(d));
+                    }
+                    d.insert("element".to_string(), Value::from(element_pub_full(&entry)));
+                    d.insert("resolution".to_string(), Value::from("found"));
                     d.insert(
-                        "resolution".to_string(),
-                        Value::from(if mcands.is_some() {
-                            "ambiguous"
+                        "value_len".to_string(),
+                        Value::from(text.chars().count() as i64),
+                    );
+                    if dry_run {
+                        d.insert("ok".to_string(), Value::from(true));
+                        d.insert("via".to_string(), Value::from("none"));
+                        d.insert("delivered".to_string(), Value::from("uia"));
+                        d.insert("effect".to_string(), Value::from("unverified"));
+                        d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
+                        return Ok(Some(d));
+                    }
+                    let (ok_v, via, verr) =
+                        crate::uia::uia_set_value(tgt, &entry_str(&entry, "path"), &text);
+                    d.insert("ok".to_string(), Value::from(ok_v));
+                    d.insert(
+                        "via".to_string(),
+                        Value::from(if via.is_empty() {
+                            "uia-set-value".to_string()
                         } else {
-                            "not-found"
+                            via
                         }),
                     );
-                    if let Some(c) = mcands {
-                        d.insert(
-                            "candidates".to_string(),
-                            Value::from(c.into_iter().map(Value::Object).collect::<Vec<_>>()),
-                        );
-                    }
-                    d.insert("via".to_string(), Value::from("none"));
-                    d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
-                    return Ok(Some(d));
-                }
-                let entry = entry.unwrap();
-                if let Some(se) = check_expect_fp(
-                    ad,
-                    &entry,
-                    &py_str(ad.get("element").unwrap_or(&Value::Null)),
-                ) {
-                    d.insert("error".to_string(), Value::from(se));
-                    d.insert("resolution".to_string(), Value::from("stale"));
-                    d.insert("via".to_string(), Value::from("none"));
-                    d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
-                    return Ok(Some(d));
-                }
-                d.insert("element".to_string(), Value::from(element_pub_full(&entry)));
-                d.insert("resolution".to_string(), Value::from("found"));
-                d.insert(
-                    "value_len".to_string(),
-                    Value::from(text.chars().count() as i64),
-                );
-                if dry_run {
-                    d.insert("ok".to_string(), Value::from(true));
-                    d.insert("via".to_string(), Value::from("none"));
+                    // A UIA pattern write is the app's own acknowledgement (it
+                    // returns S_OK from its provider), so it is not "posted".
                     d.insert("delivered".to_string(), Value::from("uia"));
-                    d.insert("effect".to_string(), Value::from("unverified"));
+                    d.insert(
+                        "effect".to_string(),
+                        Value::from(if ok_v { "verified" } else { "unverified" }),
+                    );
+                    if let Some(e) = verr {
+                        d.insert("error".to_string(), Value::from(e));
+                    }
                     d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
                     return Ok(Some(d));
                 }
-                let (ok_v, via, verr) =
-                    crate::uia::uia_set_value(tgt, &entry_str(&entry, "path"), &text);
-                d.insert("ok".to_string(), Value::from(ok_v));
-                d.insert(
-                    "via".to_string(),
-                    Value::from(if via.is_empty() {
-                        "uia-set-value".to_string()
-                    } else {
-                        via
-                    }),
-                );
-                // A UIA pattern write is the app's own acknowledgement (it
-                // returns S_OK from its provider), so it is not "posted".
-                d.insert("delivered".to_string(), Value::from("uia"));
-                d.insert(
-                    "effect".to_string(),
-                    Value::from(if ok_v { "verified" } else { "unverified" }),
-                );
-                if let Some(e) = verr {
-                    d.insert("error".to_string(), Value::from(e));
-                }
-                d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
-                return Ok(Some(d));
             }
+            // Plain `type`: posted WM_CHAR to the locked target (the
+            // text-input child when the target owns one, else the target
+            // itself) — never activated, focused or raised. Delivery is
+            // reported, never implied: `delivered:"posted"`,
+            // `effect:"unverified"`.
             if typ == "type" {
                 let text = match ad.get("text") {
                     None => String::new(),
                     Some(v) => py_str(v),
                 };
-                let cc_raw = ad.get("chunk_chars");
-                let cm_raw = ad.get("chunk_ms").cloned().unwrap_or(Value::from(0));
-                let cc_probe: Option<i64> = match cc_raw {
-                    None => None,
-                    Some(v) => Some(py_int(v).map_err(|_| {
-                        format!("chunk_chars must be an int (got {})", py_repr_value(v))
-                    })?),
+                if let Err(e) = check_clip_len(text.chars().count()) {
+                    let mut m = base_entry(i, &typ_v, false, elapsed_ms(&t0));
+                    m.insert("error".to_string(), Value::from(e));
+                    return Ok(Some(m));
+                }
+                let Some(lock) = target_lock.as_ref() else {
+                    let e = crate::gate::GateError {
+                        code: crate::gate::TARGET_REQUIRED,
+                        message: "type needs an explicit target window; this server never \
+                                  falls back to the foreground window. Nothing was sent."
+                            .to_string(),
+                    };
+                    let mut d = base_entry(i, &typ_v, false, elapsed_ms(&t0));
+                    d.insert("code".to_string(), Value::from(e.code));
+                    d.insert("error".to_string(), Value::from(e.text()));
+                    return Ok(Some(d));
                 };
-                if cc_probe.is_none_or(|c| c == 0)
-                    || (cc_probe.is_some_and(|c| c > 0)
-                        && text.chars().count() <= cc_probe.unwrap() as usize)
-                {
-                    if cc_probe.is_some_and(|c| c < 0) {
-                        return Err(format!(
-                            "chunk_chars must be positive (got {})",
-                            cc_probe.unwrap()
-                        ));
-                    }
-                    for unit in utf16_units(&text) {
-                        st.pending.push(ki(0, unit, K_UNICODE));
-                        st.pending.push(ki(0, unit, K_UNICODE | K_UP));
-                    }
-                    st.marked.push(i);
-                    return Ok(Some(base_entry(i, &typ_v, true, elapsed_ms(&t0))));
+                let tgt = lock.hwnd;
+                if let Some(msg) = uipi_refusal(tgt) {
+                    let mut d = base_entry(i, &typ_v, false, elapsed_ms(&t0));
+                    d.insert("error".to_string(), Value::from(msg));
+                    d.insert("blocked_by_uipi".to_string(), Value::from(true));
+                    return Ok(Some(d));
                 }
-                let cc = py_int(cc_raw.unwrap()).map_err(|_| {
-                    format!(
-                        "chunk_chars must be an int (got {})",
-                        py_repr_value(cc_raw.unwrap())
-                    )
-                })?;
-                let cm = py_int(&cm_raw).map_err(|_| {
-                    format!("chunk_ms must be an int (got {})", py_repr_value(&cm_raw))
-                })?;
-                if cc <= 0 {
-                    return Err(format!("chunk_chars must be positive (got {cc})"));
+                if dry_run {
+                    let mut d = base_entry(i, &typ_v, true, elapsed_ms(&t0));
+                    d.insert("dry_run".to_string(), Value::from(true));
+                    d.insert("delivered".to_string(), Value::from("posted"));
+                    d.insert("effect".to_string(), Value::from("unverified"));
+                    d.insert("posted".to_string(), Value::from(0));
+                    return Ok(Some(d));
                 }
-                if !(0..=60000).contains(&cm) {
-                    return Err(format!("chunk_ms out of range 0..60000 (got {cm})"));
-                }
-                let mut d = base_entry(i, &typ_v, true, 0.0);
-                st.marked.push(i);
-                // Chunked pacing: every chunk is checked against the burst
-                // budget BEFORE it is sent and between chunks only the
-                // clamped remainder is slept, so `chunk_chars:1` over a 1 MiB
-                // text at `chunk_ms:60000` ends typed instead of holding the
-                // global input lock for days.
-                let chars: Vec<char> = text.chars().collect();
-                let total = chars.len().div_ceil(cc as usize);
-                for (ci, ch) in chars.chunks(cc as usize).enumerate() {
-                    if budget_left_ms(&t_all, budget) <= 0 {
-                        st.marked.retain(|&m| m != i);
-                        d.insert("ok".to_string(), Value::from(false));
-                        let stop = budget_stop(i, &typ_v, &t0, budget, "chunked typing");
-                        d.insert("code".to_string(), stop["code"].clone());
-                        d.insert(
-                            "error".to_string(),
-                            Value::from(format!(
-                                "{} (chunk {} of {total})",
-                                stop["error"].as_str().unwrap_or("burst_budget_exceeded"),
-                                ci + 1
-                            )),
-                        );
-                        d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
+                // Keyboard input lands in the text control, not the frame.
+                let dest = bg_text_target(tgt);
+                let mut posted = 0i64;
+                let mut failed = false;
+                for unit in utf16_units(&text) {
+                    if crate::cancel::cancelled() {
+                        let mut d = base_entry(i, &typ_v, false, elapsed_ms(&t0));
+                        d.insert("delivered".to_string(), Value::from("posted"));
+                        d.insert("effect".to_string(), Value::from("unverified"));
+                        d.insert("error".to_string(), Value::from("cancelled"));
+                        d.insert("posted".to_string(), Value::from(posted));
                         return Ok(Some(d));
                     }
-                    for unit in utf16_units_chars(ch) {
-                        st.pending.push(ki(0, unit, K_UNICODE));
-                        st.pending.push(ki(0, unit, K_UNICODE | K_UP));
-                    }
-                    let (_, ferr) = st.flush();
-                    if let Some(fe) = ferr {
-                        st.marked.retain(|&m| m != i);
-                        fail_since_flush(&mut st.results, &mut st.marked, &fe, st.flush_uipi);
-                        d.insert("ok".to_string(), Value::from(false));
-                        d.insert("error".to_string(), Value::from(fe));
+                    if !bg_post(dest, 0x0102, unit as u64, 1) {
+                        failed = true;
                         break;
                     }
-                    st.marked.clear();
-                    if ci + 1 < total {
-                        st.marked.push(i);
-                        if cm != 0 && !dry_run {
-                            let pause = match bounded_pause(&t_all, budget, cm as u64) {
-                                Some(p) => p,
-                                None => {
-                                    st.marked.retain(|&m| m != i);
-                                    let stop =
-                                        budget_stop(i, &typ_v, &t0, budget, "chunked typing");
-                                    return Ok(Some(stop));
-                                }
-                            };
-                            if sleep_cancellable(pause) {
-                                d.insert("ok".to_string(), Value::from(false));
-                                d.insert("error".to_string(), Value::from("cancelled"));
-                                d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
-                                return Ok(Some(d));
-                            }
-                        }
-                        if crate::cancel::cancelled() {
-                            d.insert("ok".to_string(), Value::from(false));
-                            d.insert("error".to_string(), Value::from("cancelled"));
-                            d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
-                            return Ok(Some(d));
-                        }
-                    }
+                    posted += 1;
+                }
+                let mut d = base_entry(i, &typ_v, !failed, elapsed_ms(&t0));
+                d.insert("delivered".to_string(), Value::from("posted"));
+                d.insert("effect".to_string(), Value::from("unverified"));
+                d.insert("posted".to_string(), Value::from(posted));
+                if failed {
+                    d.insert(
+                        "error".to_string(),
+                        Value::from("PostMessage failed: the target did not accept the text"),
+                    );
                 }
                 d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
                 return Ok(Some(d));
             }
+            // Posted-only keyboard: WM_KEYDOWN/UP (SYS variants when Alt
+            // is held) straight to the locked target hwnd — never
+            // activated, focused or raised. Verified by default: the
+            // target is captured before and after and diffed with the
+            // pixel engine (`changed`/`bbox`); `unchanged` is a result,
+            // not an error — silence is never success.
             if typ == "key" {
                 let name = match ad.get("name") {
                     None => String::new(),
                     Some(v) => py_str(v),
                 };
                 let code = vk_of(&name)?;
-                let hold_ms = opt_py_int(ad, "hold_ms", 0)?;
+                let hold_ms = opt_py_int(ad, "hold_ms", 80)?;
                 let repeat = opt_py_int(ad, "repeat", 1)?;
                 let gap_ms = opt_py_int(ad, "gap_ms", 0)?;
                 if !(0..=60000).contains(&hold_ms) {
@@ -3882,38 +3565,194 @@ pub fn do_burst(args: &DoArgs) -> String {
                 if !(0..=60000).contains(&gap_ms) {
                     return Err(format!("gap_ms out of range 0..60000 (got {gap_ms})"));
                 }
-                if repeat == 1 && hold_ms == 0 {
-                    // Legacy fast path: one coalesced down/up pair.
-                    st.pending.extend(key_inputs(&code));
-                    st.marked.push(i);
-                    return Ok(Some(base_entry(i, &typ_v, true, elapsed_ms(&t0))));
-                }
-                // Held/repeated path: flush first so the hold sequence
-                // stands alone, then run the guarded repeat loop below.
-                // Dry-run assembles every event without sleeping.
-                let (_, ferr) = st.flush();
-                if let Some(fe) = ferr {
-                    fail_since_flush(&mut st.results, &mut st.marked, &fe, st.flush_uipi);
-                } else {
-                    st.marked.clear();
-                }
-                let t0h = Instant::now();
-                if let Some(d) = st.run_hold_repeats(
-                    i,
-                    &typ_v,
-                    &code,
-                    repeat,
-                    hold_ms as u64,
-                    gap_ms as u64,
-                    dry_run,
-                    t0h,
-                    t_all,
-                    budget,
-                    &crate::cancel::cancelled,
-                ) {
+                let verify = match ad.get("verify") {
+                    None | Some(Value::Null) => true,
+                    Some(Value::Bool(b)) => *b,
+                    Some(v) => {
+                        return Err(format!(
+                            "verify must be a boolean (got {})",
+                            crate::py_repr_value(v)
+                        ));
+                    }
+                };
+                // Posted requires a locked target; the gate already refused
+                // the targetless case, so this is defense in depth.
+                let Some(lock) = target_lock.as_ref() else {
+                    let e = crate::gate::GateError {
+                        code: crate::gate::TARGET_REQUIRED,
+                        message: "key needs an explicit target window; this server never \
+                                  falls back to the foreground window. Nothing was sent."
+                            .to_string(),
+                    };
+                    let mut d = base_entry(i, &typ_v, false, elapsed_ms(&t0));
+                    d.insert("code".to_string(), Value::from(e.code));
+                    d.insert("error".to_string(), Value::from(e.text()));
+                    return Ok(Some(d));
+                };
+                let tgt = lock.hwnd;
+                // UIPI: a PostMessage to a higher-integrity window is
+                // dropped silently — refuse with a typed error instead.
+                if let Some(msg) = uipi_refusal(tgt) {
+                    let mut d = base_entry(i, &typ_v, false, elapsed_ms(&t0));
+                    d.insert("error".to_string(), Value::from(msg));
+                    d.insert("blocked_by_uipi".to_string(), Value::from(true));
                     return Ok(Some(d));
                 }
-                return Ok(Some(base_entry(i, &typ_v, true, elapsed_ms(&t0))));
+                if dry_run {
+                    let mut d = base_entry(i, &typ_v, true, elapsed_ms(&t0));
+                    d.insert("dry_run".to_string(), Value::from(true));
+                    d.insert("delivered".to_string(), Value::from("posted"));
+                    d.insert("effect".to_string(), Value::from("unverified"));
+                    d.insert("posted".to_string(), Value::from(0));
+                    return Ok(Some(d));
+                }
+                let before = match (verify, verify_capture(tgt)) {
+                    (true, Ok(im)) => Some(im),
+                    (true, Err(e)) => {
+                        let mut d = base_entry(i, &typ_v, false, elapsed_ms(&t0));
+                        d.insert("delivered".to_string(), Value::from("none"));
+                        d.insert("effect".to_string(), Value::from("unverified"));
+                        d.insert("error".to_string(), Value::from(e));
+                        return Ok(Some(d));
+                    }
+                    (false, _) => None,
+                };
+                let downs = posted_key_downs(&code);
+                let ups = posted_key_ups(&code);
+                let mut posted = 0i64;
+                let mut failed = false;
+                for r in 0..repeat {
+                    for (msg, w, l) in &downs {
+                        if !bg_post(tgt, *msg, *w, *l) {
+                            failed = true;
+                            break;
+                        }
+                        posted += 1;
+                    }
+                    if failed {
+                        break;
+                    }
+                    // The hold between down and up (default 80 ms): bounded
+                    // by the burst budget, cancellable — and a cancelled or
+                    // expired hold still posts the ups below, so no exit
+                    // path leaves a key held down.
+                    if hold_ms > 0 {
+                        match bounded_pause(&t_all, budget, hold_ms as u64) {
+                            Some(h) => {
+                                if sleep_cancellable(h) || crate::cancel::cancelled() {
+                                    for (msg, w, l) in &ups {
+                                        if bg_post(tgt, *msg, *w, *l) {
+                                            posted += 1;
+                                        }
+                                    }
+                                    let mut d = base_entry(i, &typ_v, false, elapsed_ms(&t0));
+                                    d.insert("delivered".to_string(), Value::from("posted"));
+                                    d.insert("effect".to_string(), Value::from("unverified"));
+                                    d.insert("error".to_string(), Value::from("cancelled"));
+                                    d.insert("posted".to_string(), Value::from(posted));
+                                    return Ok(Some(d));
+                                }
+                            }
+                            None => {
+                                for (msg, w, l) in &ups {
+                                    if bg_post(tgt, *msg, *w, *l) {
+                                        posted += 1;
+                                    }
+                                }
+                                return Ok(Some(budget_stop(i, &typ_v, &t0, budget, "a held key")));
+                            }
+                        }
+                    }
+                    for (msg, w, l) in &ups {
+                        if !bg_post(tgt, *msg, *w, *l) {
+                            failed = true;
+                            break;
+                        }
+                        posted += 1;
+                    }
+                    if failed {
+                        break;
+                    }
+                    if r + 1 < repeat && gap_ms > 0 && !dry_run {
+                        match bounded_pause(&t_all, budget, gap_ms as u64) {
+                            Some(g) => {
+                                if sleep_cancellable(g) || crate::cancel::cancelled() {
+                                    let mut d = base_entry(i, &typ_v, false, elapsed_ms(&t0));
+                                    d.insert("delivered".to_string(), Value::from("posted"));
+                                    d.insert("effect".to_string(), Value::from("unverified"));
+                                    d.insert("error".to_string(), Value::from("cancelled"));
+                                    d.insert("posted".to_string(), Value::from(posted));
+                                    return Ok(Some(d));
+                                }
+                            }
+                            None => {
+                                return Ok(Some(budget_stop(
+                                    i,
+                                    &typ_v,
+                                    &t0,
+                                    budget,
+                                    "a key repeat gap",
+                                )));
+                            }
+                        }
+                    }
+                }
+                let mut d = base_entry(i, &typ_v, !failed, elapsed_ms(&t0));
+                d.insert("delivered".to_string(), Value::from("posted"));
+                d.insert("posted".to_string(), Value::from(posted));
+                if failed {
+                    d.insert("effect".to_string(), Value::from("unverified"));
+                    d.insert(
+                        "error".to_string(),
+                        Value::from("PostMessage failed: the target did not accept the key"),
+                    );
+                    return Ok(Some(d));
+                }
+                if !verify {
+                    d.insert("effect".to_string(), Value::from("unverified"));
+                    return Ok(Some(d));
+                }
+                let after = match verify_capture(tgt) {
+                    Ok(im) => im,
+                    Err(e) => {
+                        d.insert("ok".to_string(), Value::from(false));
+                        d.insert("effect".to_string(), Value::from("unverified"));
+                        d.insert("error".to_string(), Value::from(e));
+                        return Ok(Some(d));
+                    }
+                };
+                let before = before.expect("verify:true captured before");
+                match crate::cap::pixel_diff(&before, &after, 0) {
+                    Ok(diff) => {
+                        d.insert(
+                            "effect".to_string(),
+                            Value::from(if diff.identical {
+                                "unchanged"
+                            } else {
+                                "changed"
+                            }),
+                        );
+                        d.insert("changed".to_string(), Value::from(diff.changed));
+                        d.insert(
+                            "bbox".to_string(),
+                            match diff.bbox {
+                                Some(b) => Value::from(vec![
+                                    Value::from(b[0]),
+                                    Value::from(b[1]),
+                                    Value::from(b[2]),
+                                    Value::from(b[3]),
+                                ]),
+                                None => Value::Null,
+                            },
+                        );
+                    }
+                    Err(e) => {
+                        d.insert("ok".to_string(), Value::from(false));
+                        d.insert("effect".to_string(), Value::from("unverified"));
+                        d.insert("error".to_string(), Value::from(e));
+                    }
+                }
+                return Ok(Some(d));
             }
             if typ == "hotkey" {
                 let keys: Vec<String> = match ad.get("keys") {
@@ -3931,58 +3770,178 @@ pub fn do_burst(args: &DoArgs) -> String {
                 for k in &keys {
                     codes.push(vk_of(k)?);
                 }
-                st.pending.extend(hotkey_inputs(&codes));
-                st.marked.push(i);
-                return Ok(Some(base_entry(i, &typ_v, true, elapsed_ms(&t0))));
-            }
-            if typ == "clipboard_set" {
-                let (_, ferr) = st.flush();
-                if let Some(fe) = ferr {
-                    fail_since_flush(&mut st.results, &mut st.marked, &fe, st.flush_uipi);
-                } else {
-                    st.marked.clear();
+                let hold_ms = opt_py_int(ad, "hold_ms", 80)?;
+                if !(0..=60000).contains(&hold_ms) {
+                    return Err(format!("hold_ms out of range 0..60000 (got {hold_ms})"));
                 }
-                // The owner's clipboard is shared state outside the target
-                // window: mint the permit FIRST, so a call that did not pass
-                // allow_clipboard:true is a typed per-action refusal and no
-                // clipboard API (not even OpenClipboard) is reached.
-                let permit = match crate::gate::ClipboardPermit::grant(args.allow_clipboard) {
-                    Some(p) => p,
-                    None => {
-                        let e = crate::gate::clipboard_refusal("clipboard_set");
-                        let mut m = base_entry(i, &typ_v, false, elapsed_ms(&t0));
-                        m.insert("code".to_string(), Value::from(e.code));
-                        m.insert("error".to_string(), Value::from(e.text()));
-                        if dry_run {
-                            m.insert("dry_run".to_string(), Value::from(true));
-                        }
-                        return Ok(Some(m));
+                let verify = match ad.get("verify") {
+                    None | Some(Value::Null) => true,
+                    Some(Value::Bool(b)) => *b,
+                    Some(v) => {
+                        return Err(format!(
+                            "verify must be a boolean (got {})",
+                            crate::py_repr_value(v)
+                        ));
                     }
                 };
-                let text = match ad.get("text") {
-                    None => String::new(),
-                    Some(v) => py_str(v),
+                let Some(lock) = target_lock.as_ref() else {
+                    let e = crate::gate::GateError {
+                        code: crate::gate::TARGET_REQUIRED,
+                        message: "hotkey needs an explicit target window; this server never \
+                                  falls back to the foreground window. Nothing was sent."
+                            .to_string(),
+                    };
+                    let mut d = base_entry(i, &typ_v, false, elapsed_ms(&t0));
+                    d.insert("code".to_string(), Value::from(e.code));
+                    d.insert("error".to_string(), Value::from(e.text()));
+                    return Ok(Some(d));
                 };
-                // Bound before anything else (including the dry_run
-                // early-return): over-cap input never touches the clipboard.
-                if let Err(e) = check_clip_len(text.chars().count()) {
-                    let mut m = base_entry(i, &typ_v, false, elapsed_ms(&t0));
-                    m.insert("error".to_string(), Value::from(e));
-                    return Ok(Some(m));
+                let tgt = lock.hwnd;
+                if let Some(msg) = uipi_refusal(tgt) {
+                    let mut d = base_entry(i, &typ_v, false, elapsed_ms(&t0));
+                    d.insert("error".to_string(), Value::from(msg));
+                    d.insert("blocked_by_uipi".to_string(), Value::from(true));
+                    return Ok(Some(d));
                 }
                 if dry_run {
-                    let mut m = base_entry(i, &typ_v, true, elapsed_ms(&t0));
-                    m.insert("dry_run".to_string(), Value::from(true));
-                    return Ok(Some(m));
+                    let mut d = base_entry(i, &typ_v, true, elapsed_ms(&t0));
+                    d.insert("dry_run".to_string(), Value::from(true));
+                    d.insert("delivered".to_string(), Value::from("posted"));
+                    d.insert("effect".to_string(), Value::from("unverified"));
+                    d.insert("posted".to_string(), Value::from(0));
+                    return Ok(Some(d));
                 }
-                match clipboard_set(&permit, &text) {
-                    Ok(_) => return Ok(Some(base_entry(i, &typ_v, true, elapsed_ms(&t0)))),
-                    Err(e) => {
-                        let mut m = base_entry(i, &typ_v, false, elapsed_ms(&t0));
-                        m.insert("error".to_string(), Value::from(e));
-                        return Ok(Some(m));
+                let before = match (verify, verify_capture(tgt)) {
+                    (true, Ok(im)) => Some(im),
+                    (true, Err(e)) => {
+                        let mut d = base_entry(i, &typ_v, false, elapsed_ms(&t0));
+                        d.insert("delivered".to_string(), Value::from("none"));
+                        d.insert("effect".to_string(), Value::from("unverified"));
+                        d.insert("error".to_string(), Value::from(e));
+                        return Ok(Some(d));
+                    }
+                    (false, _) => None,
+                };
+                // Press in order, hold, release in reverse.
+                let downs: Vec<(u32, u64, LPARAM)> =
+                    codes.iter().flat_map(posted_key_downs).collect();
+                let ups: Vec<(u32, u64, LPARAM)> =
+                    codes.iter().rev().flat_map(posted_key_ups).collect();
+                let mut posted = 0i64;
+                let mut failed = false;
+                // Real sequence: downs, hold, ups.
+                for (msg, w, l) in &downs {
+                    if !bg_post(tgt, *msg, *w, *l) {
+                        failed = true;
+                        break;
+                    }
+                    posted += 1;
+                }
+                if !failed && hold_ms > 0 {
+                    match bounded_pause(&t_all, budget, hold_ms as u64) {
+                        Some(h) => {
+                            if sleep_cancellable(h) || crate::cancel::cancelled() {
+                                for (msg, w, l) in &ups {
+                                    if bg_post(tgt, *msg, *w, *l) {
+                                        posted += 1;
+                                    }
+                                }
+                                let mut d = base_entry(i, &typ_v, false, elapsed_ms(&t0));
+                                d.insert("delivered".to_string(), Value::from("posted"));
+                                d.insert("effect".to_string(), Value::from("unverified"));
+                                d.insert("error".to_string(), Value::from("cancelled"));
+                                d.insert("posted".to_string(), Value::from(posted));
+                                return Ok(Some(d));
+                            }
+                        }
+                        None => {
+                            for (msg, w, l) in &ups {
+                                if bg_post(tgt, *msg, *w, *l) {
+                                    posted += 1;
+                                }
+                            }
+                            return Ok(Some(budget_stop(i, &typ_v, &t0, budget, "a held hotkey")));
+                        }
                     }
                 }
+                if !failed {
+                    for (msg, w, l) in &ups {
+                        if !bg_post(tgt, *msg, *w, *l) {
+                            failed = true;
+                            break;
+                        }
+                        posted += 1;
+                    }
+                }
+                let mut d = base_entry(i, &typ_v, !failed, elapsed_ms(&t0));
+                d.insert("delivered".to_string(), Value::from("posted"));
+                d.insert("posted".to_string(), Value::from(posted));
+                if failed {
+                    d.insert("effect".to_string(), Value::from("unverified"));
+                    d.insert(
+                        "error".to_string(),
+                        Value::from("PostMessage failed: the target did not accept the hotkey"),
+                    );
+                    return Ok(Some(d));
+                }
+                if !verify {
+                    d.insert("effect".to_string(), Value::from("unverified"));
+                    return Ok(Some(d));
+                }
+                let after = match verify_capture(tgt) {
+                    Ok(im) => im,
+                    Err(e) => {
+                        d.insert("ok".to_string(), Value::from(false));
+                        d.insert("effect".to_string(), Value::from("unverified"));
+                        d.insert("error".to_string(), Value::from(e));
+                        return Ok(Some(d));
+                    }
+                };
+                let before = before.expect("verify:true captured before");
+                match crate::cap::pixel_diff(&before, &after, 0) {
+                    Ok(diff) => {
+                        d.insert(
+                            "effect".to_string(),
+                            Value::from(if diff.identical {
+                                "unchanged"
+                            } else {
+                                "changed"
+                            }),
+                        );
+                        d.insert("changed".to_string(), Value::from(diff.changed));
+                        d.insert(
+                            "bbox".to_string(),
+                            match diff.bbox {
+                                Some(b) => Value::from(vec![
+                                    Value::from(b[0]),
+                                    Value::from(b[1]),
+                                    Value::from(b[2]),
+                                    Value::from(b[3]),
+                                ]),
+                                None => Value::Null,
+                            },
+                        );
+                    }
+                    Err(e) => {
+                        d.insert("ok".to_string(), Value::from(false));
+                        d.insert("effect".to_string(), Value::from("unverified"));
+                        d.insert("error".to_string(), Value::from(e));
+                    }
+                }
+                return Ok(Some(d));
+            }
+            if typ == "clipboard_set" {
+                // Refused under the background-only policy — no flag buys a
+                // clipboard write. Before anything (no clipboard API is
+                // reached, not even a read), under dry_run too.
+                let e = crate::gate::no_clipboard_policy("clipboard_set");
+                let mut m = base_entry(i, &typ_v, false, elapsed_ms(&t0));
+                m.insert("code".to_string(), Value::from(e.code));
+                m.insert("error".to_string(), Value::from(e.text()));
+                if dry_run {
+                    m.insert("dry_run".to_string(), Value::from(true));
+                }
+                return Ok(Some(m));
             }
             if typ == "clipboard_get" {
                 let (_, ferr) = st.flush();
@@ -4149,7 +4108,7 @@ pub fn do_burst(args: &DoArgs) -> String {
                 // puppet.py:3253-3258: UIA backend fires pattern activation,
                 // Win32 backend BM_CLICKs. Pattern calls are implemented but
                 // marked `unconfirmed: activation needs owner permission`.
-                let (ok_v, mut via, mut verr) = if let Some(want) = expand_req {
+                let (ok_v, via, verr) = if let Some(want) = expand_req {
                     if model.backend != "uia" {
                         (
                             false,
@@ -4177,64 +4136,19 @@ pub fn do_burst(args: &DoArgs) -> String {
                 // ExpandCollapse never falls through to a pixel click (the
                 // click would act while reporting the pattern's error away).
                 if !ok_v && fallback == "click" && expand_req.is_none() {
-                    // Gated call site: the pixel click moves the system
-                    // pointer and injects a button pair, so it needs BOTH
-                    // explicit permissions. Without them the action reports
-                    // cursor_move_required and never escalates on its own.
-                    let (fg_p, cur_p) = match (
-                        crate::gate::ForegroundPermit::grant(args.allow_foreground),
-                        crate::gate::CursorPermit::grant(args.allow_cursor),
-                    ) {
-                        (Some(f), Some(c)) => (f, c),
-                        _ => {
-                            let refusal = crate::gate::GateError {
-                                code: crate::gate::CURSOR_REQUIRED,
-                                message: "fallback:\"click\" aims the real pointer and injects \
-                                          a click; pass allow_cursor:true and \
-                                          allow_foreground:true, or use a posted click. Nothing \
-                                          was sent."
-                                    .to_string(),
-                            };
-                            d.insert("ok".to_string(), Value::from(false));
-                            d.insert(
-                                "code".to_string(),
-                                Value::from(crate::gate::CURSOR_REQUIRED),
-                            );
-                            d.insert("error".to_string(), Value::from(refusal.text()));
-                            d.insert("via".to_string(), Value::from("none"));
-                            d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
-                            return Ok(Some(d));
-                        }
-                    };
-                    // Same geometry gate as `click`: SCREEN-space centre, or a
-                    // typed refusal instead of aiming at the client origin.
-                    if let Ok((sx, sy)) = element_rect_centre(&entry) {
-                        if pixel_click_at(&fg_p, &cur_p, sx, sy) {
-                            via = "pixel-click".to_string();
-                            verr = None;
-                            d.insert("ok".to_string(), Value::from(true));
-                        } else {
-                            let suffix = "pixel-click SendInput failed";
-                            verr = Some(match verr {
-                                Some(v) => format!("{v}; {suffix}"),
-                                None => suffix.to_string(),
-                            });
-                            if via.is_empty() {
-                                via = "pixel-click".to_string();
-                            }
-                            d.insert("ok".to_string(), Value::from(false));
-                        }
-                    } else {
-                        let suffix = format!(
-                            "pixel-click refused: {}",
-                            rect_refusal_message(&entry, RectRefusal::Offscreen)
-                        );
-                        verr = Some(match verr {
-                            Some(v) => format!("{v}; {suffix}"),
-                            None => suffix,
-                        });
-                        d.insert("ok".to_string(), Value::from(false));
-                    }
+                    // Deleted path: the pixel click moves the system pointer
+                    // and injects a button pair, so the background-only policy
+                    // refuses it outright — no flag buys it, never escalates.
+                    let refusal = crate::gate::no_cursor_policy("fallback:\"click\"");
+                    d.insert("ok".to_string(), Value::from(false));
+                    d.insert(
+                        "code".to_string(),
+                        Value::from(crate::gate::NO_CURSOR_POLICY),
+                    );
+                    d.insert("error".to_string(), Value::from(refusal.text()));
+                    d.insert("via".to_string(), Value::from("none"));
+                    d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
+                    return Ok(Some(d));
                 } else {
                     d.insert("ok".to_string(), Value::from(ok_v));
                 }
@@ -4267,221 +4181,222 @@ pub fn do_burst(args: &DoArgs) -> String {
                 return Ok(Some(d));
             }
             if typ == "set_value" {
-                // Defense in depth: UIA text entry needs the explicit opt-in
-                // before any provider call.
-                if st.permit.is_none() {
-                    let mut d = base_entry(i, &typ_v, false, elapsed_ms(&t0));
-                    d.insert(
-                        "code".to_string(),
-                        Value::from(crate::gate::FOREGROUND_REQUIRED),
-                    );
-                    d.insert(
-                        "error".to_string(),
-                        Value::from(
-                            "foreground_required: ValuePattern.SetValue may focus the target \
-                             control; pass allow_foreground:true. Nothing was written.",
-                        ),
-                    );
-                    return Ok(Some(d));
+                // Unreachable: the background-only pre-empt above refuses
+                // every set_value naming the element. Kept as defense in
+                // depth (never a provider call without it).
+                {
+                    let sel = ad.get("element").map(py_str).unwrap_or_default();
+                    let e = crate::gate::uia_text_unavailable(sel.trim());
+                    let mut dd = base_entry(i, &typ_v, false, elapsed_ms(&t0));
+                    dd.insert("code".to_string(), Value::from(e.code));
+                    dd.insert("error".to_string(), Value::from(e.text()));
+                    return Ok(Some(dd));
                 }
-                let (_, ferr) = st.flush();
-                if let Some(fe) = ferr {
-                    fail_since_flush(&mut st.results, &mut st.marked, &fe, st.flush_uipi);
-                } else {
-                    st.marked.clear();
-                }
-                let mut d = base_entry(i, &typ_v, false, 0.0);
-                if bg_mode && (bg_error.is_some() || bg_hwnd.is_none()) {
-                    d.insert(
-                        "error".to_string(),
-                        Value::from(
-                            bg_error
-                                .clone()
-                                .unwrap_or("bad_window: no background target".to_string()),
-                        ),
-                    );
-                    d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
-                    return Ok(Some(d));
-                }
-                let tgt = match (bg_mode, bg_hwnd) {
-                    (true, Some(h)) => h,
-                    _ => {
-                        // No target: refuse with the typed code. The
-                        // foreground window is never a fallback.
-                        d.insert(
-                            "error".to_string(),
-                            Value::from(format!(
-                                "target_required: {typ} needs an explicit target window \
-                                 (target:{{\"hwnd\":..}} or another field); this server never \
-                                 falls back to the foreground window"
-                            )),
-                        );
-                        d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
-                        return Ok(Some(d));
+                // Deleted path (policy): the UIA write below is unreachable —
+                // set_value/type-on-element are refused above, naming the
+                // control. Wrapped (not run) so the deletion stays visible.
+                #[allow(unreachable_code)]
+                {
+                    let (_, ferr) = st.flush();
+                    if let Some(fe) = ferr {
+                        fail_since_flush(&mut st.results, &mut st.marked, &fe, st.flush_uipi);
+                    } else {
+                        st.marked.clear();
                     }
-                };
-                d.insert("target_hwnd".to_string(), Value::from(tgt));
-                if tgt == 0 {
-                    d.insert(
-                        "error".to_string(),
-                        Value::from(
-                            "bad_window: set_value needs a background target or a foreground window",
-                        ),
-                    );
-                    d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
-                    return Ok(Some(d));
-                }
-                // Gap-2 UIPI pre-check on the set_value target, mirroring
-                // invoke: refuse with a typed error before resolving or
-                // writing, under dry_run too.
-                if let Some(msg) = uipi_refusal(tgt) {
-                    d.insert("ok".to_string(), Value::from(false));
-                    d.insert("error".to_string(), Value::from(msg));
-                    d.insert("blocked_by_uipi".to_string(), Value::from(true));
-                    d.insert("resolution".to_string(), Value::from("uipi_blocked"));
-                    d.insert("via".to_string(), Value::from("none"));
-                    if dry_run {
-                        d.insert("dry_run".to_string(), Value::from(true));
-                    }
-                    d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
-                    return Ok(Some(d));
-                }
-                let model = element_model(tgt as HWND, crate::UIA_DEPTH_LIMIT, 0);
-                if dry_run {
-                    d.insert("dry_run".to_string(), Value::from(true));
-                }
-                d.insert("backend".to_string(), Value::from(model.backend.clone()));
-                // Argument validation: element must be present (same
-                // name:|auto_id:|path: forms as invoke; ref: stays rejected
-                // by match_element's unknown-kind path). Empty here gets the
-                // set_value-typed message instead of invoke's.
-                let elem_ok = matches!(ad.get("element"), Some(v) if py_truthy(v) && !py_str(v).trim().is_empty());
-                if !elem_ok {
-                    d.insert(
-                        "error".to_string(),
-                        Value::from("set_value needs \"element\" (e.g. \"name:OK\")"),
-                    );
-                    d.insert("resolution".to_string(), Value::from("not-found"));
-                    if dry_run {
-                        d.insert("via".to_string(), Value::from("none"));
-                    }
-                    d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
-                    return Ok(Some(d));
-                }
-                let (entry, merr, mcands) =
-                    match_element(&model.entries, ad.get("element"), ad.get("index"));
-                if let Some(me) = merr {
-                    d.insert("error".to_string(), Value::from(me));
-                    d.insert(
-                        "resolution".to_string(),
-                        Value::from(if mcands.is_some() {
-                            "ambiguous"
-                        } else {
-                            "not-found"
-                        }),
-                    );
-                    if let Some(c) = mcands {
-                        d.insert(
-                            "candidates".to_string(),
-                            Value::from(c.into_iter().map(Value::Object).collect::<Vec<_>>()),
-                        );
-                    }
-                    if dry_run {
-                        d.insert("via".to_string(), Value::from("none"));
-                    }
-                    d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
-                    return Ok(Some(d));
-                }
-                let entry = entry.unwrap();
-                // Gap-1 freshness gate (before text validation and the dry_run
-                // early-return: identity outranks arguments, and a stale ref
-                // refuses under dry_run too).
-                if let Some(se) = check_expect_fp(
-                    ad,
-                    &entry,
-                    &py_str(ad.get("element").unwrap_or(&Value::Null)),
-                ) {
-                    d.insert("ok".to_string(), Value::from(false));
-                    d.insert("error".to_string(), Value::from(se));
-                    d.insert("resolution".to_string(), Value::from("stale"));
-                    d.insert("via".to_string(), Value::from("none"));
-                    d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
-                    return Ok(Some(d));
-                }
-                // Text is required; present values coerce via py_str like the
-                // `type` action (numbers become their string form). Missing or
-                // null is an argument failure, never a silent clear.
-                let text: Option<String> = match ad.get("text") {
-                    None | Some(Value::Null) => None,
-                    Some(v) => Some(py_str(v)),
-                };
-                let text = match text {
-                    Some(t) => t,
-                    None => {
-                        d.insert("element".to_string(), Value::from(element_pub_full(&entry)));
-                        d.insert("resolution".to_string(), Value::from("found"));
-                        d.insert("via".to_string(), Value::from("none"));
+                    let mut d = base_entry(i, &typ_v, false, 0.0);
+                    if bg_mode && (bg_error.is_some() || bg_hwnd.is_none()) {
                         d.insert(
                             "error".to_string(),
                             Value::from(
-                                "set_value needs \"text\" (e.g. {\"type\":\"set_value\",\"element\":\"name:OK\",\"text\":\"hello\"})",
+                                bg_error
+                                    .clone()
+                                    .unwrap_or("bad_window: no background target".to_string()),
                             ),
                         );
                         d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
                         return Ok(Some(d));
                     }
-                };
-                let value_len = text.chars().count() as i64;
-                if dry_run {
-                    d.insert("ok".to_string(), Value::from(true));
-                    d.insert("resolution".to_string(), Value::from("found"));
+                    let tgt = match (bg_mode, bg_hwnd) {
+                        (true, Some(h)) => h,
+                        _ => {
+                            // No target: refuse with the typed code. The
+                            // foreground window is never a fallback.
+                            d.insert(
+                                "error".to_string(),
+                                Value::from(format!(
+                                    "target_required: {typ} needs an explicit target window \
+                                 (target:{{\"hwnd\":..}} or another field); this server never \
+                                 falls back to the foreground window"
+                                )),
+                            );
+                            d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
+                            return Ok(Some(d));
+                        }
+                    };
+                    d.insert("target_hwnd".to_string(), Value::from(tgt));
+                    if tgt == 0 {
+                        d.insert(
+                        "error".to_string(),
+                        Value::from(
+                            "bad_window: set_value needs a background target or a foreground window",
+                        ),
+                    );
+                        d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
+                        return Ok(Some(d));
+                    }
+                    // Gap-2 UIPI pre-check on the set_value target, mirroring
+                    // invoke: refuse with a typed error before resolving or
+                    // writing, under dry_run too.
+                    if let Some(msg) = uipi_refusal(tgt) {
+                        d.insert("ok".to_string(), Value::from(false));
+                        d.insert("error".to_string(), Value::from(msg));
+                        d.insert("blocked_by_uipi".to_string(), Value::from(true));
+                        d.insert("resolution".to_string(), Value::from("uipi_blocked"));
+                        d.insert("via".to_string(), Value::from("none"));
+                        if dry_run {
+                            d.insert("dry_run".to_string(), Value::from(true));
+                        }
+                        d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
+                        return Ok(Some(d));
+                    }
+                    let model = element_model(tgt as HWND, crate::UIA_DEPTH_LIMIT, 0);
+                    if dry_run {
+                        d.insert("dry_run".to_string(), Value::from(true));
+                    }
+                    d.insert("backend".to_string(), Value::from(model.backend.clone()));
+                    // Argument validation: element must be present (same
+                    // name:|auto_id:|path: forms as invoke; ref: stays rejected
+                    // by match_element's unknown-kind path). Empty here gets the
+                    // set_value-typed message instead of invoke's.
+                    let elem_ok = matches!(ad.get("element"), Some(v) if py_truthy(v) && !py_str(v).trim().is_empty());
+                    if !elem_ok {
+                        d.insert(
+                            "error".to_string(),
+                            Value::from("set_value needs \"element\" (e.g. \"name:OK\")"),
+                        );
+                        d.insert("resolution".to_string(), Value::from("not-found"));
+                        if dry_run {
+                            d.insert("via".to_string(), Value::from("none"));
+                        }
+                        d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
+                        return Ok(Some(d));
+                    }
+                    let (entry, merr, mcands) =
+                        match_element(&model.entries, ad.get("element"), ad.get("index"));
+                    if let Some(me) = merr {
+                        d.insert("error".to_string(), Value::from(me));
+                        d.insert(
+                            "resolution".to_string(),
+                            Value::from(if mcands.is_some() {
+                                "ambiguous"
+                            } else {
+                                "not-found"
+                            }),
+                        );
+                        if let Some(c) = mcands {
+                            d.insert(
+                                "candidates".to_string(),
+                                Value::from(c.into_iter().map(Value::Object).collect::<Vec<_>>()),
+                            );
+                        }
+                        if dry_run {
+                            d.insert("via".to_string(), Value::from("none"));
+                        }
+                        d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
+                        return Ok(Some(d));
+                    }
+                    let entry = entry.unwrap();
+                    // Gap-1 freshness gate (before text validation and the dry_run
+                    // early-return: identity outranks arguments, and a stale ref
+                    // refuses under dry_run too).
+                    if let Some(se) = check_expect_fp(
+                        ad,
+                        &entry,
+                        &py_str(ad.get("element").unwrap_or(&Value::Null)),
+                    ) {
+                        d.insert("ok".to_string(), Value::from(false));
+                        d.insert("error".to_string(), Value::from(se));
+                        d.insert("resolution".to_string(), Value::from("stale"));
+                        d.insert("via".to_string(), Value::from("none"));
+                        d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
+                        return Ok(Some(d));
+                    }
+                    // Text is required; present values coerce via py_str like the
+                    // `type` action (numbers become their string form). Missing or
+                    // null is an argument failure, never a silent clear.
+                    let text: Option<String> = match ad.get("text") {
+                        None | Some(Value::Null) => None,
+                        Some(v) => Some(py_str(v)),
+                    };
+                    let text = match text {
+                        Some(t) => t,
+                        None => {
+                            d.insert("element".to_string(), Value::from(element_pub_full(&entry)));
+                            d.insert("resolution".to_string(), Value::from("found"));
+                            d.insert("via".to_string(), Value::from("none"));
+                            d.insert(
+                            "error".to_string(),
+                            Value::from(
+                                "set_value needs \"text\" (e.g. {\"type\":\"set_value\",\"element\":\"name:OK\",\"text\":\"hello\"})",
+                            ),
+                        );
+                            d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
+                            return Ok(Some(d));
+                        }
+                    };
+                    let value_len = text.chars().count() as i64;
+                    if dry_run {
+                        d.insert("ok".to_string(), Value::from(true));
+                        d.insert("resolution".to_string(), Value::from("found"));
+                        d.insert("element".to_string(), Value::from(element_pub_full(&entry)));
+                        d.insert("via".to_string(), Value::from("none"));
+                        d.insert("value_len".to_string(), Value::from(value_len));
+                        d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
+                        return Ok(Some(d));
+                    }
                     d.insert("element".to_string(), Value::from(element_pub_full(&entry)));
-                    d.insert("via".to_string(), Value::from("none"));
-                    d.insert("value_len".to_string(), Value::from(value_len));
-                    d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
-                    return Ok(Some(d));
-                }
-                d.insert("element".to_string(), Value::from(element_pub_full(&entry)));
-                d.insert("resolution".to_string(), Value::from("found"));
-                if model.backend != "uia" {
-                    d.insert("via".to_string(), Value::from("none"));
-                    d.insert(
+                    d.insert("resolution".to_string(), Value::from("found"));
+                    if model.backend != "uia" {
+                        d.insert("via".to_string(), Value::from("none"));
+                        d.insert(
                         "error".to_string(),
                         Value::from(
                             "element has no ValuePattern under the Win32 backend (set_value needs the UIA backend)",
                         ),
                     );
+                        d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
+                        return Ok(Some(d));
+                    }
+                    let (ok_v, via, verr) =
+                        crate::uia::uia_set_value(tgt, &entry_str(&entry, "path"), &text);
+                    d.insert(
+                        "via".to_string(),
+                        Value::from(if via.is_empty() {
+                            "none".to_string()
+                        } else {
+                            via
+                        }),
+                    );
+                    d.insert("ok".to_string(), Value::from(ok_v));
+                    if ok_v {
+                        d.insert("value_len".to_string(), Value::from(value_len));
+                        // RangeValue read-back: on numeric controls the write
+                        // went through RangeValue.SetValue, so report the value
+                        // UIA now holds. Absent on the ValuePattern path (no
+                        // pattern to read) and on read failure — never an error.
+                        if let Ok(v) = crate::uia::uia_range_value(tgt, &entry_str(&entry, "path"))
+                        {
+                            d.insert("value".to_string(), Value::from(v));
+                        }
+                    }
+                    if let Some(e) = verr {
+                        if !ok_v {
+                            d.insert("error".to_string(), Value::from(e));
+                        }
+                    }
                     d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
                     return Ok(Some(d));
                 }
-                let (ok_v, via, verr) =
-                    crate::uia::uia_set_value(tgt, &entry_str(&entry, "path"), &text);
-                d.insert(
-                    "via".to_string(),
-                    Value::from(if via.is_empty() {
-                        "none".to_string()
-                    } else {
-                        via
-                    }),
-                );
-                d.insert("ok".to_string(), Value::from(ok_v));
-                if ok_v {
-                    d.insert("value_len".to_string(), Value::from(value_len));
-                    // RangeValue read-back: on numeric controls the write
-                    // went through RangeValue.SetValue, so report the value
-                    // UIA now holds. Absent on the ValuePattern path (no
-                    // pattern to read) and on read failure — never an error.
-                    if let Ok(v) = crate::uia::uia_range_value(tgt, &entry_str(&entry, "path")) {
-                        d.insert("value".to_string(), Value::from(v));
-                    }
-                }
-                if let Some(e) = verr {
-                    if !ok_v {
-                        d.insert("error".to_string(), Value::from(e));
-                    }
-                }
-                d.insert("ms".to_string(), Value::from(elapsed_ms(&t0)));
-                return Ok(Some(d));
             }
             if typ == "wait" {
                 let (_, ferr) = st.flush();
@@ -4564,45 +4479,22 @@ pub fn do_burst(args: &DoArgs) -> String {
                 return Ok(Some(d));
             }
             if typ == "focus_window" {
-                let (_, ferr) = st.flush();
-                if let Some(fe) = ferr {
-                    fail_since_flush(&mut st.results, &mut st.marked, &fe, st.flush_uipi);
-                } else {
-                    st.marked.clear();
-                }
+                // Focusing IS taking the foreground: refused under the
+                // background-only policy, always. The lock still resolves
+                // first so a dead handle reports its typed target error
+                // instead of the policy one.
                 let lock = match focus_lock(ad.get("title"), ad.get("hwnd")) {
                     Ok(l) => l,
                     Err(e) => return Ok(Some(target_failure(i, &typ_v, &t0, &e))),
                 };
-                // Revalidate immediately before focusing: a handle that was
-                // recycled (or a window that closed) since the lock resolved
-                // is the typed target_gone, never a focus on whatever now
-                // owns that handle.
                 if let Err(e) = lock.revalidate() {
                     return Ok(Some(target_failure(i, &typ_v, &t0, &e)));
                 }
-                // Gate already refused this verb without allow_foreground;
-                // the permit below is therefore always present here.
-                let Some(fg_permit) = st.permit.as_ref() else {
-                    let mut d = base_entry(i, &typ_v, false, elapsed_ms(&t0));
-                    d.insert(
-                        "error".to_string(),
-                        Value::from(
-                            "foreground_required: focus_window needs allow_foreground:true",
-                        ),
-                    );
-                    return Ok(Some(d));
-                };
-                let r = focus_hwmd(fg_permit, lock.hwnd as HWND);
-                let mut d = base_entry(
-                    i,
-                    &typ_v,
-                    r.get("ok").and_then(|v| v.as_bool()).unwrap_or(false),
-                    elapsed_ms(&t0),
-                );
-                if let Some(Value::String(e)) = r.get("error") {
-                    d.insert("error".to_string(), Value::from(e.clone()));
-                }
+                let e = crate::gate::no_foreground_policy("focus_window");
+                let mut d = base_entry(i, &typ_v, false, elapsed_ms(&t0));
+                d.insert("code".to_string(), Value::from(e.code));
+                d.insert("error".to_string(), Value::from(e.text()));
+                d.insert("via".to_string(), Value::from("none"));
                 return Ok(Some(d));
             }
             let mut m = base_entry(i, &typ_v, false, elapsed_ms(&t0));
@@ -4641,7 +4533,7 @@ pub fn do_burst(args: &DoArgs) -> String {
         }
     }
     let total_ms = t_all.elapsed().as_secs_f64() * 1000.0;
-    let mut focus_after = fg_now();
+    let focus_after = fg_now();
     for r in st.results.iter_mut() {
         if !r.contains_key("mode") {
             r.insert(
@@ -4659,28 +4551,13 @@ pub fn do_burst(args: &DoArgs) -> String {
     let mut focus_restored = true;
     let mut focus_guard_refusal: Option<String> = None;
     if focus_guard && focus_after != focus_before && focus_before != 0 {
-        match st.permit.as_ref() {
-            // Gated call site: focus_guard restores via SetForegroundWindow,
-            // so it needs the allow_foreground permit. Without it the guard
-            // reports the refusal instead of touching focus.
-            Some(p) => {
-                focus_restored = restore_foreground(p, focus_before);
-                focus_after = fg_now();
-            }
-            None => {
-                focus_restored = false;
-                focus_guard_refusal = Some(
-                    crate::gate::GateError {
-                        code: crate::gate::FOREGROUND_REQUIRED,
-                        message: "focus_guard would call SetForegroundWindow; pass \
-                                  allow_foreground:true (the guard never steals focus on its \
-                                  own). The foreground window was left untouched."
-                            .to_string(),
-                    }
-                    .text(),
-                );
-            }
-        }
+        // The guard cannot restore: restoring IS taking the foreground
+        // (SetForegroundWindow), refused under the background-only policy.
+        // Nothing here changes focus (every verb is posted or refused), so
+        // this arm only ever fires on an OS-side surprise — reported, never
+        // acted on.
+        focus_restored = false;
+        focus_guard_refusal = Some(crate::gate::no_foreground_policy("focus_guard restore").text());
     }
     // Hidden-desktop finalization: capture + readback run on the hidden-desktop
     // thread, then the desktop is torn down and the proof recorded.
@@ -5130,33 +5007,30 @@ mod tests {
         println!("OFFSCREEN_CLICK_DRY_RUN_REFUSED_OK code=offscreen_element");
     }
 
-    /// P1 focus_window lock: a `hwnd` that names no window is refused with the
-    /// TARGET vocabulary (`target_gone`, the same code every other verb
-    /// reports) because the verb now resolves through `cap::lock_legacy` and
-    /// revalidates, instead of a bare `IsWindow` poke whose refusal carried no
-    /// code at all.
+    /// P1 focus_window lock: a `hwnd` that names a window is refused with
+    /// the POLICY code (`no_foreground_policy`) — focusing IS taking the
+    /// foreground, and the gate fires before anything else. No window is
+    /// touched, recycled handle or not.
     #[test]
-    fn focus_window_refuses_an_unresolvable_handle_with_the_target_code() {
+    fn focus_window_refuses_with_the_policy_code() {
         let _g = crate::fixture::desktop();
-        let actions = vec![serde_json::json!({"type": "focus_window", "hwnd": 0})];
-        let out = do_burst(&DoArgs {
-            allow_foreground: true,
-            ..DoArgs::new(&actions)
-        });
-        let payload = sc(&out);
-        let r = payload["results"][0].clone();
-        assert_eq!(r["ok"], Value::from(false), "nothing may be focused: {r}");
+        let fx = crate::fixture::Fixture::new();
+        let hwnd = fx.hwnd_i64();
+        let actions = vec![serde_json::json!({"type": "focus_window", "hwnd": hwnd})];
+        let out = do_burst(&DoArgs::new(&actions));
+        let outer: Value = serde_json::from_str(&out).expect("outer frame");
+        let payload = outer["structuredContent"].clone();
+        let first = payload["results"][0].clone();
         assert_eq!(
-            r["code"],
-            Value::from("target_gone"),
-            "the refusal must carry the target lock's code: {r}"
+            first.get("ok"),
+            Some(&Value::from(false)),
+            "nothing may be focused: {first}"
         );
-        let err = r["error"].as_str().unwrap_or("");
-        assert!(
-            err.starts_with("target_gone:") && err.contains("hwnd 0"),
-            "the refusal must name the lock's finding: {err}"
+        assert_eq!(
+            first.get("code"),
+            Some(&Value::from("no_foreground_policy")),
+            "the refusal must carry the policy code: {first}"
         );
-        assert_eq!(r["via"], Value::from("none"), "{r}");
         assert_eq!(
             payload["focus_before"], payload["focus_after"],
             "a refused focus must not change the foreground window"
@@ -5164,7 +5038,7 @@ mod tests {
     }
 
     fn burst_first(actions: &[Value]) -> Map<String, Value> {
-        let out = do_burst(&DoArgs::foreground(actions));
+        let out = do_burst(&DoArgs::dry(actions));
         let outer: Value = serde_json::from_str(&out).expect("outer frame");
         let payload = outer
             .get("structuredContent")
@@ -5182,26 +5056,45 @@ mod tests {
     }
 
     #[test]
-    fn click_count_bound_rejected_in_dry_run() {
-        let actions = vec![serde_json::json!({"type": "click", "count": 101})];
-        let first = burst_first(&actions);
+    fn click_count_bound_rejected_before_posting() {
+        // The bound is checked in the posted path before any message: a
+        // live count of 101 to a locked target fails typed and posts zero.
+        let _g = crate::fixture::desktop();
+        let fx = crate::fixture::Fixture::new();
+        let hwnd = fx.hwnd_i64();
+        crate::fixture::reset_msg_counts();
+        let out = do_burst(&DoArgs {
+            target: Some(serde_json::json!({ "hwnd": hwnd })),
+            ..DoArgs::new(&[serde_json::json!({"type": "click", "count": 101, "x": 5, "y": 5})])
+        });
+        let payload = sc(&out);
+        let first = &payload["results"][0];
         assert_eq!(first.get("ok"), Some(&Value::from(false)));
         let err = first.get("error").and_then(|e| e.as_str()).unwrap_or("");
         assert!(
             err.contains("absurd"),
             "count error should name the bound, got: {err}"
         );
+        let (down, up, ..) = crate::fixture::msg_counts();
+        assert_eq!((down, up), (0, 0), "no button message may be delivered");
     }
 
     #[test]
     fn click_count_sane_passes_dry_run() {
-        let actions = vec![serde_json::json!({"type": "click", "count": 2})];
-        let first = burst_first(&actions);
-        assert_eq!(first.get("ok"), Some(&Value::from(true)));
+        let _g = crate::fixture::desktop();
+        let fx = crate::fixture::Fixture::new();
+        let hwnd = fx.hwnd_i64();
+        let out = do_burst(&DoArgs {
+            dry_run: true,
+            target: Some(serde_json::json!({ "hwnd": hwnd })),
+            ..DoArgs::new(&[serde_json::json!({"type": "click", "count": 2, "x": 5, "y": 5})])
+        });
+        let payload = sc(&out);
+        assert_eq!(payload["results"][0].get("ok"), Some(&Value::from(true)));
     }
 
     fn burst_payload(actions: &[Value]) -> Map<String, Value> {
-        let out = do_burst(&DoArgs::foreground(actions));
+        let out = do_burst(&DoArgs::dry(actions));
         let outer: Value = serde_json::from_str(&out).expect("outer frame");
         outer
             .get("structuredContent")
@@ -5224,18 +5117,76 @@ mod tests {
         assert!(vk_of("not_a_key_xyz").is_err());
     }
 
+    /// Posted-key lParam assembly: Space is the proven pair
+    /// (down `0x00390001`, up `0xC0390001`); F5 carries scan `0x3F` with no
+    /// extended bit; Right-arrow sets the extended bit; Alt selects the
+    /// SYSKEY variants.
     #[test]
-    fn key_shift_wraps_in_dry_run_events() {
-        // `A` must coalesce to Shift-down, key down/up, Shift-up (4
-        // events); `a` stays a bare key pair (2 events).
-        let p = burst_payload(&[serde_json::json!({"type": "key", "name": "A"})]);
-        assert_eq!(p.get("events"), Some(&Value::from(4)));
-        let p = burst_payload(&[serde_json::json!({"type": "key", "name": "a"})]);
-        assert_eq!(p.get("events"), Some(&Value::from(2)));
-        // Shifted hotkey member wraps too: ctrl down, A-shift down, A up,
-        // shift up, ctrl up.
-        let p = burst_payload(&[serde_json::json!({"type": "hotkey", "keys": ["ctrl", "A"]})]);
-        assert_eq!(p.get("events"), Some(&Value::from(6)));
+    fn posted_key_lparam_assembly() {
+        assert_eq!(posted_key_lparam(0x20, false, false) as u32, 0x00390001);
+        assert_eq!(posted_key_lparam(0x20, true, false) as u32, 0xC0390001);
+        // F5: scan 0x3F, not an extended key.
+        assert!(!is_extended_vk(0x74));
+        assert_eq!(posted_key_lparam(0x74, false, false) as u32, 0x003F0001);
+        assert_eq!(posted_key_lparam(0x74, true, false) as u32, 0xC03F0001);
+        // Right arrow: extended bit set.
+        assert!(is_extended_vk(0x27));
+        let down = posted_key_lparam(0x27, false, false) as u32;
+        assert_ne!(down & (1 << 24), 0, "extended bit must be set: {down:#x}");
+        let up = posted_key_lparam(0x27, true, false) as u32;
+        assert_ne!(up & (1 << 24), 0, "extended bit survives key-up: {up:#x}");
+        assert_ne!(up & (1 << 30), 0);
+        assert_ne!(up & (1 << 31), 0);
+        // Plain keys never set the context bit; Alt does, with SYSKEY msgs.
+        let down = posted_key_lparam(0x41, false, false) as u32;
+        assert_eq!(down & (1 << 29), 0);
+        let down = posted_key_lparam(0x41, false, true) as u32;
+        assert_ne!(down & (1 << 29), 0, "Alt sets the context code: {down:#x}");
+        assert_eq!(posted_key_downs(&KeyCode::Vk(0x12, false))[0].0, 0x0104);
+        assert_eq!(posted_key_ups(&KeyCode::Vk(0x12, false))[0].0, 0x0105);
+        assert_eq!(posted_key_downs(&KeyCode::Vk(0x41, false))[0].0, 0x0100);
+        assert_eq!(posted_key_ups(&KeyCode::Vk(0x41, false))[0].0, 0x0101);
+        println!("POSTED_KEY_LPARAM_OK space+f5+extended+alt-syskey");
+    }
+
+    #[test]
+    fn key_shift_wraps_in_posted_order() {
+        // `A` needs Shift: down order is Shift, key; up order is key, Shift.
+        let downs = posted_key_downs(&KeyCode::Vk(0x41, true));
+        assert_eq!(
+            downs.iter().map(|(m, w, _)| (*m, *w)).collect::<Vec<_>>(),
+            vec![(0x0100, VK_SHIFT as u64), (0x0100, 0x41)],
+            "shift must wrap the key down"
+        );
+        let ups = posted_key_ups(&KeyCode::Vk(0x41, true));
+        assert_eq!(
+            ups.iter().map(|(m, w, _)| (*m, *w)).collect::<Vec<_>>(),
+            vec![(0x0101, 0x41), (0x0101, VK_SHIFT as u64)],
+            "shift must unwrap the key up"
+        );
+        // Hotkey order: presses in order, releases reversed.
+        let codes = [KeyCode::Vk(0x11, false), KeyCode::Vk(0x41, true)];
+        let downs: Vec<(u32, u64)> = codes
+            .iter()
+            .flat_map(posted_key_downs)
+            .map(|(m, w, _)| (m, w))
+            .collect();
+        assert_eq!(
+            downs,
+            vec![(0x0100, 0x11), (0x0100, VK_SHIFT as u64), (0x0100, 0x41)],
+            "hotkey must press in order, got: {downs:?}"
+        );
+        let ups: Vec<(u32, u64)> = codes
+            .iter()
+            .rev()
+            .flat_map(posted_key_ups)
+            .map(|(m, w, _)| (m, w))
+            .collect();
+        assert_eq!(
+            ups,
+            vec![(0x0101, 0x41), (0x0101, VK_SHIFT as u64), (0x0101, 0x11)],
+            "hotkey must release in reverse, got: {ups:?}"
+        );
     }
 
     #[test]
@@ -5305,42 +5256,6 @@ mod tests {
         );
     }
 
-    fn ki_pair(ev: &INPUT) -> (u16, u32) {
-        unsafe { (ev.Anonymous.ki.wVk, ev.Anonymous.ki.dwFlags) }
-    }
-
-    #[test]
-    fn key_inputs_shift_order_and_hotkey_reverse_release() {
-        // Shift must bracket the key: down, key down/up, up.
-        let seq = key_inputs(&KeyCode::Vk(0x41, true));
-        let got: Vec<(u16, u32)> = seq.iter().map(ki_pair).collect();
-        assert_eq!(
-            got,
-            vec![(VK_SHIFT, 0), (0x41, 0), (0x41, K_UP), (VK_SHIFT, K_UP)],
-            "shift must wrap the key, got: {got:?}"
-        );
-        let seq = key_inputs(&KeyCode::Vk(0x41, false));
-        let got: Vec<(u16, u32)> = seq.iter().map(ki_pair).collect();
-        assert_eq!(got, vec![(0x41, 0), (0x41, K_UP)]);
-        // Hotkey releases in reverse: ctrl down, shift down, A down, A up,
-        // shift up, ctrl up.
-        let codes = vec![KeyCode::Vk(0x11, false), KeyCode::Vk(0x41, true)];
-        let seq = hotkey_inputs(&codes);
-        let got: Vec<(u16, u32)> = seq.iter().map(ki_pair).collect();
-        assert_eq!(
-            got,
-            vec![
-                (0x11, 0),
-                (VK_SHIFT, 0),
-                (0x41, 0),
-                (0x41, K_UP),
-                (VK_SHIFT, K_UP),
-                (0x11, K_UP)
-            ],
-            "hotkey must press in order and release reversed, got: {got:?}"
-        );
-    }
-
     #[test]
     fn scroll_wheel_flag_data_and_bounds() {
         assert_eq!(scroll_wheel("v", 1), Ok((M_WHEEL, 120)));
@@ -5359,90 +5274,88 @@ mod tests {
     }
 
     #[test]
-    fn scroll_axis_h_selects_horizontal_wheel_dry_run() {
-        // Dry run assembles the INPUT; ok:true proves the axis parsed.
-        // Flag identity is pinned by the scroll_wheel unit above.
-        let p = burst_payload(&[serde_json::json!({"type": "scroll", "amount": 2, "axis": "h"})]);
-        let results = p
-            .get("results")
-            .and_then(|r| r.as_array())
-            .expect("results");
+    fn scroll_axis_h_selects_horizontal_wheel_with_target() {
+        // A locked target receives the horizontal wheel; the axis still
+        // parses first, so a bogus axis fails typed with zero posts.
+        let _g = crate::fixture::desktop();
+        let fx = crate::fixture::Fixture::new();
+        let hwnd = fx.hwnd_i64();
+        crate::fixture::reset_msg_counts();
+        let out = do_burst(&DoArgs {
+            target: Some(serde_json::json!({ "hwnd": hwnd })),
+            ..DoArgs::new(&[
+                serde_json::json!({"type": "scroll", "x": 5, "y": 5, "amount": 2, "axis": "h"}),
+            ])
+        });
+        let payload = sc(&out);
+        let results = payload["results"].as_array().expect("results");
         assert_eq!(results[0].get("ok"), Some(&Value::from(true)));
-        assert_eq!(p.get("events"), Some(&Value::from(1)));
-        let p =
-            burst_payload(&[serde_json::json!({"type": "scroll", "amount": 2, "axis": "bogus"})]);
-        let results = p
-            .get("results")
-            .and_then(|r| r.as_array())
-            .expect("results");
-        assert_eq!(results[0].get("ok"), Some(&Value::from(false)));
+        let out = do_burst(&DoArgs {
+            target: Some(serde_json::json!({ "hwnd": hwnd })),
+            ..DoArgs::new(&[
+                serde_json::json!({"type": "scroll", "x": 5, "y": 5, "amount": 2, "axis": "bogus"}),
+            ])
+        });
+        let payload = sc(&out);
+        assert_eq!(payload["results"][0].get("ok"), Some(&Value::from(false)));
     }
 
-    fn mi_trip(ev: &INPUT) -> (i32, i32, u32) {
-        unsafe {
-            (
-                ev.Anonymous.mi.dx,
-                ev.Anonymous.mi.dy,
-                ev.Anonymous.mi.dwFlags,
-            )
+    /// The pointer is never moved: every move refuses with the policy
+    /// code, whatever the coordinates, and sends nothing.
+    #[test]
+    fn move_always_refuses_with_no_cursor_policy() {
+        for action in [
+            serde_json::json!({"type": "move", "dx": 30000, "dy": -30000}),
+            serde_json::json!({"type": "move", "x": 10, "y": 10}),
+            serde_json::json!({"type": "move", "x": 10, "y": 10, "dx": 1, "dy": 1}),
+            serde_json::json!({"type": "move", "dx": 5}),
+        ] {
+            let first = burst_first(&[action]);
+            assert_eq!(first.get("ok"), Some(&Value::from(false)));
+            let code = first.get("code").and_then(|c| c.as_str());
+            // Shape errors (mixed/incomplete) surface before the policy one.
+            assert!(
+                code == Some("no_cursor_policy") || first.get("error").is_some(),
+                "move must refuse, got: {first:?}"
+            );
         }
+        let p = burst_payload(&[serde_json::json!({"type": "move", "x": 10, "y": 10})]);
+        assert_eq!(
+            p["results"][0]["code"],
+            Value::from("no_cursor_policy"),
+            "move must name the rule"
+        );
+        assert_eq!(p.get("sendinput_calls"), Some(&Value::from(0)));
+        assert_eq!(p.get("events"), Some(&Value::from(0)));
     }
 
     #[test]
-    fn move_relative_builder_flags_and_payload() {
-        // Relative moves are raw signed deltas with M_MOVE only — never the
-        // absolute/virtual-desktop mapping.
-        let ev = mi_move_rel(120, -30).expect("in-range deltas");
-        assert_eq!(mi_trip(&ev), (120, -30, M_MOVE));
-        let ev = mi_move_rel(-32767, 32767).expect("bound extremes");
-        assert_eq!(mi_trip(&ev), (-32767, 32767, M_MOVE));
-        assert!(mi_move_rel(32768, 0).is_err(), "above bound must fail");
-        assert!(mi_move_rel(0, -32769).is_err(), "below bound must fail");
-        assert!(mi_move_rel(i64::MIN, 0).is_err(), "i64::MIN must fail");
-        assert!(mi_move_rel(0, i64::MAX).is_err(), "i64::MAX must fail");
-    }
-
-    #[test]
-    fn move_relative_dry_run_skips_desktop_gate() {
-        // In-range deltas far outside any desktop still dispatch (1 event).
-        let p = burst_payload(&[serde_json::json!({"type": "move", "dx": 30000, "dy": -30000})]);
-        let results = p
-            .get("results")
-            .and_then(|r| r.as_array())
-            .expect("results");
+    fn key_repeat_and_hold_post_without_event_counts() {
+        // Posted keys report delivery, not event counts: repeat=3 with a
+        // locked target dry-runs ok with zero events and zero SendInput.
+        let _g = crate::fixture::desktop();
+        let fx = crate::fixture::Fixture::new();
+        let hwnd = fx.hwnd_i64();
+        let out = do_burst(&DoArgs {
+            dry_run: true,
+            target: Some(serde_json::json!({ "hwnd": hwnd })),
+            ..DoArgs::new(&[
+                serde_json::json!({"type": "key", "name": "a", "repeat": 3, "hold_ms": 10}),
+            ])
+        });
+        let payload = sc(&out);
+        let results = payload["results"].as_array().expect("results");
         assert_eq!(results[0].get("ok"), Some(&Value::from(true)));
-        assert_eq!(p.get("events"), Some(&Value::from(1)));
-        // Absolute moves still hit the desktop gate.
-        let bad = burst_first(&[serde_json::json!({"type": "move", "x": 99999999, "y": 0})]);
-        assert_eq!(bad.get("ok"), Some(&Value::from(false)));
-        // Absolute and relative together are refused, never guessed.
-        let mixed =
-            burst_first(&[serde_json::json!({"type": "move", "x": 10, "y": 10, "dx": 1, "dy": 1})]);
-        assert_eq!(mixed.get("ok"), Some(&Value::from(false)));
-        // Only one delta is incomplete.
-        let half = burst_first(&[serde_json::json!({"type": "move", "dx": 5})]);
-        assert_eq!(half.get("ok"), Some(&Value::from(false)));
-    }
-
-    #[test]
-    fn key_repeat_dry_run_counts_events() {
-        // repeat=3 assembles 3 down/up pairs (6 events) with no sleeps.
-        let p = burst_payload(&[
-            serde_json::json!({"type": "key", "name": "a", "repeat": 3, "hold_ms": 10}),
-        ]);
-        let results = p
-            .get("results")
-            .and_then(|r| r.as_array())
-            .expect("results");
-        assert_eq!(results[0].get("ok"), Some(&Value::from(true)));
-        assert_eq!(p.get("events"), Some(&Value::from(6)));
-        // Default repeat is a single pair.
-        let p = burst_payload(&[serde_json::json!({"type": "key", "name": "a"})]);
-        assert_eq!(p.get("events"), Some(&Value::from(2)));
+        assert_eq!(results[0].get("delivered"), Some(&Value::from("posted")));
+        assert_eq!(payload.get("events"), Some(&Value::from(0)));
+        assert_eq!(payload.get("sendinput_calls"), Some(&Value::from(0)));
     }
 
     #[test]
     fn key_hold_repeat_bounds_rejected() {
+        let _g = crate::fixture::desktop();
+        let fx = crate::fixture::Fixture::new();
+        let hwnd = fx.hwnd_i64();
         for bad in [
             serde_json::json!({"type": "key", "name": "a", "repeat": 0}),
             serde_json::json!({"type": "key", "name": "a", "repeat": 101}),
@@ -5450,7 +5363,13 @@ mod tests {
             serde_json::json!({"type": "key", "name": "a", "gap_ms": 60001}),
             serde_json::json!({"type": "key", "name": "a", "hold_ms": -1}),
         ] {
-            let first = burst_first(&[bad]);
+            let out = do_burst(&DoArgs {
+                dry_run: true,
+                target: Some(serde_json::json!({ "hwnd": hwnd })),
+                ..DoArgs::new(&[bad])
+            });
+            let payload = sc(&out);
+            let first = &payload["results"][0];
             assert_eq!(
                 first.get("ok"),
                 Some(&Value::from(false)),
@@ -5460,54 +5379,27 @@ mod tests {
     }
 
     #[test]
-    fn key_hold_cancel_releases_before_return() {
-        // Scripted cancellation on the 2nd hold-check: the 2nd down was
-        // already flushed, so the exit must emit its matching up —
-        // down+up per repeat, never a held key.
-        let calls = std::cell::Cell::new(0);
-        let pred = || {
-            let n = calls.get();
-            calls.set(n + 1);
-            n >= 1
-        };
-        let mut st = Burst {
-            pending: Vec::new(),
-            marked: Vec::new(),
-            results: Vec::new(),
-            calls: 0,
-            events: 0,
-            sendinput_ms: 0.0,
+    fn posted_key_dry_run_reports_posted_without_sending() {
+        // A dry-run posted key assembles nothing and sends nothing, but
+        // reports the path it WOULD take — never a silent ok.
+        let _g = crate::fixture::desktop();
+        let fx = crate::fixture::Fixture::new();
+        let hwnd = fx.hwnd_i64();
+        let out = do_burst(&DoArgs {
             dry_run: true,
-            flush_uipi: false,
-            permit: None,
-            cursor: None,
-        };
-        let typ_v = Value::from("key");
-        let code = vk_of("a").expect("a resolves");
-        let out = st.run_hold_repeats(
-            0,
-            &typ_v,
-            &code,
-            3,
-            50,
-            10,
-            true,
-            Instant::now(),
-            Instant::now(),
-            BURST_BUDGET,
-            &pred,
-        );
-        let d = out.expect("cancelled run must return early");
-        assert_eq!(d.get("ok"), Some(&Value::from(false)));
-        assert!(
-            d.get("error").and_then(|v| v.as_str()) == Some("cancelled"),
-            "exit must be typed cancelled, got: {d:?}"
-        );
-        assert_eq!(
-            st.events, 4,
-            "cancel after a flushed down must still emit its up, events={}",
-            st.events
-        );
+            target: Some(serde_json::json!({ "hwnd": hwnd })),
+            ..DoArgs::new(&[serde_json::json!({"type": "key", "name": "space"})])
+        });
+        let payload = sc(&out);
+        let r = &payload["results"][0];
+        assert_eq!(r["ok"], Value::from(true), "dry-run posted key: {r}");
+        assert_eq!(r["delivered"], Value::from("posted"), "{r}");
+        assert_eq!(r["effect"], Value::from("unverified"), "{r}");
+        assert_eq!(r["posted"], Value::from(0), "{r}");
+        assert_eq!(r["dry_run"], Value::from(true), "{r}");
+        assert_eq!(payload["sendinput_calls"], Value::from(0));
+        assert_eq!(payload["events"], Value::from(0));
+        println!("POSTED_KEY_DRY_RUN_OK delivered=posted effect=unverified");
     }
 
     #[test]
@@ -5768,15 +5660,11 @@ mod tests {
 
     #[test]
     fn clipboard_over_cap_set_rejected_before_touch() {
-        // Validation runs before OpenClipboard: the owner clipboard is
-        // never opened, and dry_run proves it without side effects.
+        // The policy refusal lands before any length check or clipboard
+        // API: the owner clipboard is never opened, even for over-cap text.
         let big = "x".repeat(1_048_576 + 1);
         let actions = vec![serde_json::json!({"type": "clipboard_set", "text": big})];
-        let args = DoArgs {
-            allow_clipboard: true,
-            ..DoArgs::foreground(&actions)
-        };
-        let out = do_burst(&args);
+        let out = do_burst(&DoArgs::new(&actions));
         let outer: Value = serde_json::from_str(&out).expect("outer frame");
         let first = outer
             .get("structuredContent")
@@ -5785,13 +5673,10 @@ mod tests {
             .and_then(|a| a.first())
             .expect("first result");
         assert_eq!(first.get("ok"), Some(&Value::from(false)));
-        assert!(
-            first
-                .get("error")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .contains("1048576"),
-            "over-cap set must name the bound, got: {first:?}"
+        assert_eq!(
+            first.get("code").and_then(|c| c.as_str()),
+            Some("no_clipboard_policy"),
+            "over-cap set must name the policy, got: {first:?}"
         );
     }
 
@@ -5866,16 +5751,16 @@ mod tests {
         assert_eq!(first.get("ok"), Some(&Value::from(false)));
         assert_eq!(
             first.get("code").and_then(|c| c.as_str()),
-            Some("clipboard_write_required"),
-            "missing flag must be typed, got: {first:?}"
+            Some("no_clipboard_policy"),
+            "clipboard_set is always refused, got: {first:?}"
         );
         assert!(
             first
                 .get("error")
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
-                .contains("allow_clipboard:true"),
-            "refusal must name the flag, got: {first:?}"
+                .contains("background-only policy"),
+            "refusal must name the rule, got: {first:?}"
         );
         assert_eq!(
             results.get(1).and_then(|r| r.get("ok")),
@@ -6102,11 +5987,10 @@ mod tests {
     // ---------------------------------------------------------------- set_value (4.3.0)
 
     fn burst_bg(actions: &[Value], bg: &str, dry_run: bool) -> (String, Map<String, Value>) {
-        // UIA text entry (set_value / type on an element) is an explicit
-        // opt-in: these tests exercise that path, so they ask for it.
+        // Background-scoped runs: no flags (no flag buys anything under the
+        // background-only policy).
         let out = do_burst(&DoArgs {
             dry_run,
-            allow_foreground: true,
             background: Some(bg.to_string()),
             ..DoArgs::new(actions)
         });
@@ -6131,6 +6015,43 @@ mod tests {
         (f, bg)
     }
 
+    /// Synchronously paint a fixture window (plus children) before a
+    /// verify capture: a fresh window may not have processed WM_PAINT yet,
+    /// and PrintWindow of an unpainted frame reads back all-black.
+    fn force_paint(hwnd: i64) {
+        unsafe {
+            windows_sys::Win32::Graphics::Gdi::RedrawWindow(
+                hwnd as windows_sys::Win32::Foundation::HWND,
+                std::ptr::null(),
+                std::ptr::null_mut(),
+                windows_sys::Win32::Graphics::Gdi::RDW_INVALIDATE
+                    | windows_sys::Win32::Graphics::Gdi::RDW_UPDATENOW
+                    | windows_sys::Win32::Graphics::Gdi::RDW_ALLCHILDREN,
+            );
+        }
+    }
+
+    /// Background-only policy: every set_value/type-on-element is refused
+    /// with background_unavailable naming the element, before any provider
+    /// call — dry_run included. The EDIT must be untouched.
+    fn assert_set_value_refused(first: &Map<String, Value>, element: &str) {
+        assert_eq!(first.get("ok"), Some(&Value::from(false)));
+        assert_eq!(
+            first.get("code").and_then(|c| c.as_str()),
+            Some("background_unavailable"),
+            "set_value must name the policy, got: {first:?}"
+        );
+        let e = first.get("error").and_then(|v| v.as_str()).unwrap_or("");
+        assert!(
+            e.contains(element),
+            "refusal must name the element {element:?}, got: {e}"
+        );
+        assert!(
+            e.contains("background-only policy"),
+            "refusal must name the rule, got: {e}"
+        );
+    }
+
     #[test]
     fn set_value_missing_element_rejected() {
         let _g = crate::fixture::desktop();
@@ -6138,51 +6059,32 @@ mod tests {
         let _ = fx.hwnd();
         let actions = vec![serde_json::json!({"type": "set_value", "text": "hi"})];
         let (_, first) = burst_bg(&actions, &bg, true);
-        assert_eq!(first.get("ok"), Some(&Value::from(false)));
-        let e = first.get("error").and_then(|v| v.as_str()).unwrap_or("");
-        assert!(
-            e.contains("set_value needs \"element\""),
-            "missing element must name set_value, got: {e}"
-        );
-        assert_eq!(first.get("resolution"), Some(&Value::from("not-found")));
+        assert_set_value_refused(&first, "");
+        assert_eq!(fx.edit_text(), "", "no provider call may have written");
     }
 
     #[test]
     fn set_value_missing_text_rejected() {
         let _g = crate::fixture::desktop();
+        // The policy refusal lands before any argument validation: naming
+        // the element is the whole diagnosis.
         let (fx, bg) = fixture_bg();
         let _ = fx.hwnd();
-        // Resolve an existing control first (OK button by name), but omit text.
         let actions = vec![serde_json::json!({"type": "set_value", "element": "name:OK"})];
         let (_, first) = burst_bg(&actions, &bg, true);
-        assert_eq!(first.get("ok"), Some(&Value::from(false)));
-        let e = first.get("error").and_then(|v| v.as_str()).unwrap_or("");
-        assert!(
-            e.contains("set_value needs \"text\""),
-            "missing text must be typed, got: {e}"
-        );
+        assert_set_value_refused(&first, "name:OK");
     }
 
     #[test]
     fn set_value_ref_rejected_like_invoke() {
         let _g = crate::fixture::desktop();
-        // set_value resolves through the same match_element, so ref: stays
-        // rejected with the unknown-kind shape naming the accepted forms.
+        // set_value refuses before match_element ever sees the selector.
         let (fx, bg) = fixture_bg();
         let _ = fx.hwnd();
         let actions =
             vec![serde_json::json!({"type": "set_value", "element": "ref:123.0", "text": "hi"})];
         let (_, first) = burst_bg(&actions, &bg, true);
-        assert_eq!(first.get("ok"), Some(&Value::from(false)));
-        let e = first.get("error").and_then(|v| v.as_str()).unwrap_or("");
-        assert!(
-            e.contains("unknown element selector kind"),
-            "ref: must be unknown-kind, got: {e}"
-        );
-        assert!(
-            e.contains("(want name:|auto_id:|path:)"),
-            "must name accepted forms, got: {e}"
-        );
+        assert_set_value_refused(&first, "ref:123.0");
     }
 
     #[test]
@@ -6194,35 +6096,21 @@ mod tests {
             serde_json::json!({"type": "set_value", "element": "name:NoSuchControlXYZ123", "text": "hi"}),
         ];
         let (_, first) = burst_bg(&actions, &bg, true);
-        assert_eq!(first.get("ok"), Some(&Value::from(false)));
-        let e = first.get("error").and_then(|v| v.as_str()).unwrap_or("");
-        assert!(
-            e.contains("no element matching"),
-            "not-found must be typed, got: {e}"
-        );
-        assert_eq!(first.get("resolution"), Some(&Value::from("not-found")));
+        assert_set_value_refused(&first, "name:NoSuchControlXYZ123");
     }
 
     #[test]
     fn set_value_button_has_no_valuepattern() {
         let _g = crate::fixture::desktop();
-        // Live (not dry_run): the OK button exposes Invoke, not ValuePattern.
+        // The policy refusal lands before any ValuePattern probe: the OK
+        // button is named, never written.
         let (fx, bg) = fixture_bg();
         let _ = fx.hwnd();
-        // Stabilize the UIA backend first (poll own fixture only): the first
-        // enumeration right after ShowWindow can race the provider and fall
-        // back to win32, which would give via:none instead of uia-set-value.
         wait_uia_stable(fx.hwnd());
         let actions =
             vec![serde_json::json!({"type": "set_value", "element": "name:OK", "text": "hi"})];
         let (_, first) = burst_bg(&actions, &bg, false);
-        assert_eq!(first.get("ok"), Some(&Value::from(false)));
-        let e = first.get("error").and_then(|v| v.as_str()).unwrap_or("");
-        assert!(
-            e.contains("has no ValuePattern"),
-            "button must fail with no-ValuePattern, got: {e}"
-        );
-        assert_eq!(first.get("via"), Some(&Value::from("uia-set-value")));
+        assert_set_value_refused(&first, "name:OK");
     }
 
     fn wait_uia_stable(hwnd: HWND) {
@@ -6289,12 +6177,8 @@ mod tests {
             serde_json::json!({"type": "set_value", "element": format!("path:{ro}"), "text": "hi"}),
         ];
         let (_, first) = burst_bg(&actions, &bg, false);
-        assert_eq!(first.get("ok"), Some(&Value::from(false)));
-        let e = first.get("error").and_then(|v| v.as_str()).unwrap_or("");
-        assert!(
-            e.contains("read-only"),
-            "readonly EDIT must fail typed, got: {e}"
-        );
+        assert_set_value_refused(&first, &format!("path:{ro}"));
+        assert_eq!(fx.edit_text(), "", "the EDIT must be untouched");
     }
 
     /// ROOT-CAUSE REGRESSION: the fixture EDIT refuses real typing.
@@ -6395,11 +6279,8 @@ mod tests {
         println!("SETVALUE_SEMANTICS_OK replace=xyz keystrokes=0");
     }
 
-    /// Gap-1 proof: the value lands in the EDIT and the result never echoes
-    /// it. Deterministic on a live machine because the fixture EDIT refuses
-    /// external typing (see `fixture_edit_refuses_external_typing`): the UIA
-    /// provider focuses the control to write it, and without the guard the
-    /// owner's keystrokes can prepend characters here.
+    /// Gap-1 proof: the value is never written and never echoed. The refusal
+    /// names the control, not the secret; the EDIT stays empty.
     #[test]
     fn set_value_success_writes_and_never_echoes() {
         let _g = crate::fixture::desktop();
@@ -6426,45 +6307,25 @@ mod tests {
             serde_json::json!({"type": "set_value", "element": format!("path:{wpath}"), "text": secret}),
         ];
         let (out, first) = burst_bg(&actions, &bg, false);
-        assert_eq!(
-            first.get("ok"),
-            Some(&Value::from(true)),
-            "set_value must succeed, got: {first:?}"
-        );
-        assert_eq!(first.get("via"), Some(&Value::from("uia-set-value")));
-        assert_eq!(
-            first.get("value_len"),
-            Some(&Value::from(secret.chars().count() as i64))
-        );
+        assert_set_value_refused(&first, &format!("path:{wpath}"));
         assert!(
             !out.contains(secret),
-            "result must never echo the text value"
+            "refusal must never echo the text value"
         );
-        // Read-back proves the value landed in the EDIT control.
-        assert_eq!(fx.edit_text(), secret);
-        println!("SET_VALUE_READBACK={}", fx.edit_text());
-        // Foreground observability note (informational only, never a verdict):
-        // the live `SetValue` below hands control to the UIA provider, which
-        // briefly focuses the EDIT itself (measured 25 ms to 5 s+, OS-timed,
-        // self-restoring) -- so no stable foreground assertion exists on the
-        // live success path. The "no activation" gate lives in
-        // `set_value_dry_run_leaves_foreground_clean`, which runs all of
-        // puppet's own set_value code without the provider call.
+        // Read-back proves nothing landed in the EDIT control.
+        assert_eq!(fx.edit_text(), "");
+        println!("SET_VALUE_READBACK= (refused, untouched)");
+        // Foreground contract: the policy refusal runs before any provider
+        // call, so the foreground is never touched.
         println!(
-            "FG_INFO: set_value: before={fg_before} after={} fixture={}",
+            "FG_INFO: set_value: before={fg_before} after={} fixture={} (refused)",
             fg_now(),
             fx.hwnd_i64()
         );
     }
 
-    /// Puppet-side "no activation" gate: a dry_run resolution runs all of
-    /// puppet's own set_value code (background-target resolution, element
-    /// match) without the UIA provider `SetValue` call that briefly focuses
-    /// the EDIT on live runs -- so, unlike the live success path (see
-    /// `set_value_success_writes_and_never_echoes`), the foreground contract
-    /// IS stable here: skip with FG_SKIP when the environment provides no
-    /// foreground session; owned-foreground after settle is reported
-    /// (FG_OWN_CHURN), never failed — a dry run performs no input.
+    /// Puppet-side "no activation" gate: the policy refusal runs before any
+    /// provider call, so the foreground contract IS stable here.
     #[test]
     fn set_value_dry_run_leaves_foreground_clean() {
         let _g = crate::fixture::desktop();
@@ -6475,16 +6336,7 @@ mod tests {
             serde_json::json!({"type": "set_value", "element": format!("path:{wpath}"), "text": "no-focus-probe"}),
         ];
         let (_, first) = burst_bg(&actions, &bg, true);
-        assert_eq!(
-            first.get("ok"),
-            Some(&Value::from(true)),
-            "dry_run set_value must resolve, got: {first:?}"
-        );
-        assert_eq!(
-            first.get("resolution"),
-            Some(&Value::from("found")),
-            "dry_run set_value must report found, got: {first:?}"
-        );
+        assert_set_value_refused(&first, &format!("path:{wpath}"));
         crate::fixture::check_foreground_left_clean(fx.hwnd_i64(), fg_before, "set_value:dry_run");
     }
 
@@ -6519,11 +6371,14 @@ mod tests {
         assert_eq!(first.get("resolution"), Some(&Value::from("stale")));
     }
 
+    /// Background-only policy: the UIA write never happens, so a stale
+    /// fingerprint refuses with background_unavailable (not stale_ref) —
+    /// the policy check runs before any resolution.
     #[test]
     fn set_value_stale_fp_refused_with_typed_error() {
         let _g = crate::fixture::desktop();
-        // Same mismatch path for set_value: wrong expect_fp refuses before
-        // any provider call, dry_run included.
+        // Same action shape, policy refusal first: wrong expect_fp never
+        // reaches the freshness gate, dry_run included.
         let (fx, bg, wpath, _ro) = edit_paths();
         let _ = fx.hwnd();
         let _ = wpath;
@@ -6531,17 +6386,7 @@ mod tests {
             serde_json::json!({"type": "set_value", "element": "name:OK", "text": "hi", "expect_fp": "definitely-wrong-fingerprint"}),
         ];
         let (_, first) = burst_bg(&actions, &bg, true);
-        assert_eq!(
-            first.get("ok"),
-            Some(&Value::from(false)),
-            "stale fp must refuse, got: {first:?}"
-        );
-        let e = first.get("error").and_then(|v| v.as_str()).unwrap_or("");
-        assert!(
-            e.contains("stale_ref"),
-            "refusal must be typed stale_ref, got: {e}"
-        );
-        assert_eq!(first.get("resolution"), Some(&Value::from("stale")));
+        assert_set_value_refused(&first, "name:OK");
     }
 
     #[test]
@@ -6665,7 +6510,8 @@ mod tests {
     #[test]
     fn set_value_burst_continues_after_failure() {
         let _g = crate::fixture::desktop();
-        // Per-action ok:false never aborts the rest of the burst.
+        // Per-action ok:false never aborts the rest of the burst; both
+        // refuse with the policy code and nothing is written.
         let (fx, bg, wpath, _ro) = edit_paths();
         let _ = fx.hwnd();
         let actions = vec![
@@ -6674,8 +6520,6 @@ mod tests {
         ];
         let out = do_burst(&DoArgs {
             background: Some(bg.to_string()),
-            // UIA text entry is an explicit opt-in (the provider may focus).
-            allow_foreground: true,
             ..DoArgs::new(&actions)
         });
         let outer: Value = serde_json::from_str(&out).expect("outer");
@@ -6683,8 +6527,12 @@ mod tests {
         let res = payload["results"].as_array().expect("results");
         assert_eq!(res.len(), 2);
         assert_eq!(res[0].get("ok"), Some(&Value::from(false)));
-        assert_eq!(res[1].get("ok"), Some(&Value::from(true)));
-        assert_eq!(fx.edit_text(), "after-failure");
+        assert_eq!(res[1].get("ok"), Some(&Value::from(false)));
+        assert_eq!(
+            res[1].get("code").and_then(|c| c.as_str()),
+            Some("background_unavailable")
+        );
+        assert_eq!(fx.edit_text(), "");
     }
 
     // ------------------------------------------------ no-steal (target lock + gate)
@@ -6739,16 +6587,11 @@ mod tests {
         f()
     }
 
-    /// LIVE no-steal proof: a target-locked burst delivers a posted click and
-    /// posted text to an offscreen fixture window (its own WndProc counts the
-    /// messages, the EDIT read-back proves WM_CHAR) while GetForegroundWindow
-    /// and GetCursorPos stay exactly where they were. No flags, no pointer,
-    /// no focus.
-    /// DEFAULT PATH: UIA text entry is an explicit opt-in. Without
-    /// `allow_foreground:true`, `set_value` and `type` on an element must be
-    /// refused BEFORE any provider call — no value written, no focus hint.
+    /// LIVE no-steal proof: set_value and type-on-element are refused with
+    /// background_unavailable naming the control — no provider call, no
+    /// value written. No flags, no pointer, no focus.
     #[test]
-    fn uia_text_entry_is_refused_without_the_opt_in() {
+    fn uia_text_entry_is_refused_by_policy() {
         let _g = crate::fixture::desktop();
         let fx = crate::fixture::Fixture::new();
         let hwnd = fx.hwnd_i64();
@@ -6767,8 +6610,12 @@ mod tests {
             assert_eq!(r["ok"], Value::from(false), "action {k}: {r}");
             assert_eq!(
                 r["code"],
-                Value::from("foreground_required"),
-                "action {k} must name the opt-in: {r}"
+                Value::from("background_unavailable"),
+                "action {k} must name the policy: {r}"
+            );
+            assert!(
+                r["error"].as_str().unwrap_or("").contains("auto_id:100"),
+                "action {k} must name the control: {r}"
             );
             assert!(r.get("via").is_none(), "no provider path may run: {r}");
         }
@@ -6777,20 +6624,25 @@ mod tests {
             "",
             "no provider call may have written the control"
         );
-        println!("UIA_TEXT_OPT_IN_OK refusals=2 text=\"\"");
+        assert_eq!(payload["sendinput_calls"], Value::from(0));
+        assert_eq!(payload["events"], Value::from(0));
+        println!("UIA_TEXT_POLICY_OK refusals=2 text=\"\"");
     }
 
-    /// SAFETY: private-desktop permission is EARNED. `desktop:"hidden"` plus an
-    /// explicit ordinary target used to grant it without any desktop being
-    /// created (the target wins over hidden creation), which allowed posted
-    /// keyboard over the owner's session. It must now be an ordinary target:
-    /// typed refusal, zero key messages.
+    /// SAFETY: `desktop:"hidden"` plus an explicit ordinary target is just
+    /// an ordinary target: posted keyboard goes to the locked window (never
+    /// SendInput, never the foreground), like any target-locked burst. The
+    /// private-desktop permission is still EARNED, never granted by the flag.
     #[test]
     fn hidden_flag_with_an_ordinary_target_earns_nothing() {
         let _g = crate::fixture::desktop();
         let fx = crate::fixture::Fixture::new();
-        let hwnd = fx.hwnd_i64();
-        crate::fixture::reset_msg_counts();
+        // Verify captures the locked target: use the EDIT child (a real
+        // control PrintWindow renders) instead of the offscreen frame.
+        let hwnd = fx.edit() as i64;
+        // Paint before the verify captures: a fresh window may not have
+        // processed WM_PAINT yet and would read back all-black.
+        force_paint(hwnd);
         let actions = vec![
             serde_json::json!({"type": "type", "text": "x"}),
             serde_json::json!({"type": "key", "name": "a"}),
@@ -6804,19 +6656,13 @@ mod tests {
         let payload = sc(&out);
         let results = payload["results"].as_array().expect("results");
         for (k, r) in results.iter().enumerate() {
-            assert_eq!(r["ok"], Value::from(false), "action {k}: {r}");
+            assert_eq!(r["ok"], Value::from(true), "action {k}: {r}");
             assert_eq!(
-                r["code"],
-                Value::from("foreground_required"),
-                "action {k} must be refused, not posted: {r}"
+                r["delivered"],
+                Value::from("posted"),
+                "action {k} must post to the locked target: {r}"
             );
         }
-        let (_, _, _, kd, ch) = crate::fixture::msg_counts();
-        assert_eq!(
-            (kd, ch),
-            (0, 0),
-            "zero key messages may reach an ordinary target"
-        );
         assert_eq!(payload["sendinput_calls"], Value::from(0));
         // The predicate itself: a desktop that was not created grants nothing,
         // and a window on a different desktop never matches the created name.
@@ -6824,7 +6670,7 @@ mod tests {
         assert!(!private_desktop_earned(true, "hidden-x", Some("Default")));
         assert!(!private_desktop_earned(true, "", Some("hidden-x")));
         assert!(private_desktop_earned(true, "hidden-x", Some("hidden-x")));
-        println!("HIDDEN_BYPASS_CLOSED_OK codes=foreground_required key_msgs=0");
+        println!("HIDDEN_BYPASS_CLOSED_OK posted=3 sendinput=0");
     }
 
     /// The desktop-name read is real: an ordinary fixture lives on the
@@ -6844,23 +6690,28 @@ mod tests {
         println!("WINDOW_DESKTOP_NAME_OK name={name:?}");
     }
 
-    /// LIVE: a target-locked burst delivers a posted click to an offscreen
-    /// fixture window (its own WndProc counts the message) while
-    /// GetForegroundWindow and GetCursorPos stay where they were. Plain `type`
-    /// is refused on the default path (keyboard is never posted).
+    /// LIVE: a target-locked burst delivers a posted click and posted text
+    /// to an offscreen fixture window (its own WndProc counts the click, the
+    /// EDIT guard counts the swallowed WM_CHAR) while GetForegroundWindow
+    /// and GetCursorPos stay exactly where they were. No flags, no pointer,
+    /// no focus, no SendInput.
     #[test]
     fn live_target_post_delivers_without_stealing() {
         let _g = crate::fixture::desktop();
         let fx = crate::fixture::Fixture::new();
         let hwnd = fx.hwnd_i64();
         crate::fixture::reset_msg_counts();
+        // The guard on the EDITs swallows posted WM_CHAR (proving they
+        // arrived at a text control) instead of inserting them.
+        crate::fixture::reset_swallowed_keys(fx.edit());
+        crate::fixture::reset_swallowed_keys(fx.edit_ro());
         let fg_before = crate::fixture::foreground_now();
         let cur_before = cursor_now();
         let actions = vec![
             serde_json::json!({"type": "click", "x": 20, "y": 90}),
-            // Plain `type` must be refused, not posted: WM_CHAR is not
-            // delivered reliably. Text goes through UIA on an element (own
-            // test, because the UIA provider briefly focuses its control).
+            // Plain `type` posts WM_CHAR to the target's text control
+            // (delivery, not proof of effect — the fixture guard swallows
+            // it, which is exactly the counter below).
             serde_json::json!({"type": "type", "text": "hi"}),
         ];
         let out = do_burst(&DoArgs {
@@ -6872,10 +6723,12 @@ mod tests {
         assert_eq!(results[0]["ok"], Value::from(true), "click: {results:?}");
         assert_eq!(
             results[1]["ok"],
-            Value::from(false),
-            "plain type must be refused: {results:?}"
+            Value::from(true),
+            "plain type posts to the locked target: {results:?}"
         );
-        assert_eq!(results[1]["code"], Value::from("foreground_required"));
+        assert_eq!(results[1]["delivered"], Value::from("posted"));
+        assert_eq!(results[1]["effect"], Value::from("unverified"));
+        assert_eq!(results[1]["posted"], Value::from(2), "h+i = 2 WM_CHAR");
         assert!(
             payload["foregroundUnchanged"].is_boolean(),
             "telemetry must be reported: {payload}"
@@ -6905,15 +6758,24 @@ mod tests {
             "down/up pair must arrive: {down}/{up}"
         );
         assert_eq!(mv, 0, "a plain click must not post WM_MOUSEMOVE");
-        assert_eq!(
-            crate::fixture::msg_counts().4,
-            0,
-            "plain type must post ZERO WM_CHAR messages"
+        // The guard on an EDIT swallowed the two posted WM_CHAR (proving
+        // they arrived at a text control) instead of inserting them. The
+        // pump thread dispatches asynchronously, so wait like the click
+        // pair above does.
+        assert!(
+            wait_until(|| {
+                crate::fixture::swallowed_key_count(fx.edit())
+                    + crate::fixture::swallowed_key_count(fx.edit_ro())
+                    >= 2
+            }),
+            "posted WM_CHAR must reach a text control, swallowed(edit)={} swallowed(ro)={}",
+            crate::fixture::swallowed_key_count(fx.edit()),
+            crate::fixture::swallowed_key_count(fx.edit_ro())
         );
         assert_eq!(
             fx.edit_text(),
             "",
-            "no WM_CHAR may reach the EDIT through the refused plain type"
+            "the guard swallows instead of inserting"
         );
         assert_foreground_held(fg_before, "post-delivery burst");
         report_pointer(cur_before, "post-delivery burst");
@@ -6924,40 +6786,48 @@ mod tests {
         );
     }
 
-    /// LIVE: text without keys — `type` on an element is UIA
-    /// ValuePattern.SetValue. The UIA provider briefly focuses the control it
-    /// writes to (documented in the set_value test), so this asserts delivery
-    /// and read-back, not the foreground handle.
+    /// LIVE: plain `type` posts WM_CHAR to the locked target's text
+    /// control — delivery, not proof of effect. The fixture guard swallows
+    /// the characters (counter proof they arrived) instead of inserting
+    /// them, so the EDIT stays empty while the post count is exact.
     #[test]
-    fn live_type_on_element_uses_uia_set_value() {
+    fn live_type_posts_wm_char_to_the_locked_target() {
         let _g = crate::fixture::desktop();
         let fx = crate::fixture::Fixture::new();
         let hwnd = fx.hwnd_i64();
         crate::fixture::reset_msg_counts();
+        crate::fixture::reset_swallowed_keys(fx.edit());
+        crate::fixture::reset_swallowed_keys(fx.edit_ro());
         let actions = vec![serde_json::json!({
-            "type": "type", "element": "auto_id:100", "text": "hi"
+            "type": "type", "text": "hi"
         })];
         let out = do_burst(&DoArgs {
             target: Some(serde_json::json!({ "hwnd": hwnd })),
-            // UIA text entry is an explicit opt-in (the provider may focus
-            // the control); this test exercises that path.
-            allow_foreground: true,
             ..DoArgs::new(&actions)
         });
         let payload = sc(&out);
         let r = &payload["results"][0];
-        assert_eq!(r["ok"], Value::from(true), "type on element: {r}");
-        assert_eq!(r["via"], Value::from("uia-set-value"), "{r}");
-        assert_eq!(r["delivered"], Value::from("uia"), "{r}");
-        assert_eq!(r["effect"], Value::from("verified"), "{r}");
-        assert_eq!(fx.edit_text(), "hi", "the value must be written");
+        assert_eq!(r["ok"], Value::from(true), "type posts: {r}");
+        assert_eq!(r["delivered"], Value::from("posted"), "{r}");
+        assert_eq!(r["effect"], Value::from("unverified"), "{r}");
+        assert_eq!(r["posted"], Value::from(2), "h+i = 2 WM_CHAR: {r}");
         assert_eq!(
-            crate::fixture::msg_counts().4,
-            0,
-            "ZERO WM_CHAR messages may be posted"
+            fx.edit_text(),
+            "",
+            "the guard swallows instead of inserting"
+        );
+        assert!(
+            wait_until(|| {
+                crate::fixture::swallowed_key_count(fx.edit())
+                    + crate::fixture::swallowed_key_count(fx.edit_ro())
+                    >= 2
+            }),
+            "posted WM_CHAR must reach a text control, swallowed(edit)={} swallowed(ro)={}",
+            crate::fixture::swallowed_key_count(fx.edit()),
+            crate::fixture::swallowed_key_count(fx.edit_ro())
         );
         assert_eq!(payload["sendinput_calls"], Value::from(0));
-        println!("TYPE_UIA_OK text={:?}", fx.edit_text());
+        println!("TYPE_POSTED_OK text=\"\"");
     }
 
     /// LIVE: a posted element click is delivery, not proof. The fixture EDIT
@@ -7073,10 +6943,10 @@ mod tests {
         assert_eq!(
             codes,
             vec![
-                "cursor_move_required",
-                "foreground_required",
-                "foreground_required",
-                "cursor_move_required",
+                "no_cursor_policy",
+                "target_required",
+                "target_required",
+                "no_cursor_policy",
                 "target_required",
             ],
             "gate matrix, got: {results:?}"
@@ -7090,11 +6960,11 @@ mod tests {
         report_pointer(cur_before, "gate refusal");
     }
 
-    /// LIVE: the explicit flags mint the foreground path (dry_run, so the
-    /// assembly is proven without injecting anything into the owner's
-    /// session) - the same burst that was refused above now queues events.
+    /// LIVE: the explicit flags buy nothing - the same burst is refused per
+    /// action with the policy code (dry_run proves it without touching the
+    /// desktop). No flag reaches any injection API because none exists.
     #[test]
-    fn live_explicit_flags_unlock_the_foreground_path_dry_run() {
+    fn live_explicit_flags_buy_nothing_dry_run() {
         let actions = vec![
             serde_json::json!({"type": "click", "x": 5, "y": 5}),
             serde_json::json!({"type": "type", "text": "x"}),
@@ -7106,13 +6976,19 @@ mod tests {
             ..DoArgs::new(&actions)
         });
         let payload = sc(&out);
-        assert_eq!(payload["results"][0]["ok"], Value::from(true));
-        assert_eq!(payload["results"][1]["ok"], Value::from(true));
-        assert!(payload["events"].as_i64().unwrap_or(0) >= 4);
-        assert!(
-            payload["sendinput_calls"].as_i64().unwrap_or(0) >= 1,
-            "the dry run assembles the events (and says so in sendinput_calls): {payload}"
+        assert_eq!(
+            payload["results"][0]["code"],
+            Value::from("no_foreground_policy"),
+            "allow_foreground must refuse, not unlock: {payload:?}"
         );
+        assert_eq!(
+            payload["results"][1]["code"],
+            Value::from("no_foreground_policy"),
+            "allow_foreground must refuse, not unlock: {payload:?}"
+        );
+        assert_eq!(payload["sendinput_calls"], Value::from(0));
+        assert_eq!(payload["events"], Value::from(0));
+        println!("FLAGS_BUY_NOTHING_OK codes=no_foreground_policy events=0");
     }
 
     /// LIVE: a target that closed mid-call is `target_gone` on the next
@@ -7149,10 +7025,12 @@ mod tests {
     /// LIVE, message-only: the harshest delivery case — a `HWND_MESSAGE`
     /// window that is never visible and never activatable. A target-locked
     /// posted CLICK arrives in its own WndProc while GetForegroundWindow and
-    /// GetCursorPos stay put; the keyboard verbs are refused and post
-    /// nothing (posted keyboard is never used on the owner's desktop).
+    /// GetCursorPos stay put; posted KEYS arrive too (the route is
+    /// posted-only now), proven with verify:false; the default verify:true
+    /// honestly reports unverified because a message-only window cannot be
+    /// captured for the before/after diff.
     #[test]
-    fn live_message_only_click_delivers_and_key_is_never_posted() {
+    fn live_message_only_click_and_key_post_without_stealing() {
         let _g = crate::fixture::desktop();
         let f = crate::fixture::MessageWindow::new();
         let hwnd = f.hwnd_i64();
@@ -7161,8 +7039,9 @@ mod tests {
         let cur_before = cursor_now();
         let actions = vec![
             serde_json::json!({"type": "click", "x": 4, "y": 6}),
+            serde_json::json!({"type": "key", "name": "a", "verify": false}),
+            serde_json::json!({"type": "hotkey", "keys": ["ctrl", "c"], "verify": false}),
             serde_json::json!({"type": "key", "name": "a"}),
-            serde_json::json!({"type": "hotkey", "keys": ["ctrl", "c"]}),
         ];
         let out = do_burst(&DoArgs {
             target: Some(serde_json::json!({ "hwnd": hwnd })),
@@ -7171,16 +7050,21 @@ mod tests {
         let payload = sc(&out);
         let results = payload["results"].as_array().expect("results");
         assert_eq!(results[0]["ok"], Value::from(true), "click: {results:?}");
-        // Keyboard is never posted to the owner's desktop: typed refusal,
-        // and the target sees ZERO key messages.
+        // Posted keys land on the message-only target with verify:false.
         for k in [1, 2] {
             assert_eq!(
                 results[k]["ok"],
-                Value::from(false),
-                "keyboard: {results:?}"
+                Value::from(true),
+                "posted keyboard: {results:?}"
             );
-            assert_eq!(results[k]["code"], Value::from("foreground_required"));
+            assert_eq!(results[k]["delivered"], Value::from("posted"));
+            assert_eq!(results[k]["effect"], Value::from("unverified"));
         }
+        // ...but the default verify:true cannot diff what cannot be
+        // captured: honest unverified failure, posted bytes included.
+        assert_eq!(results[3]["ok"], Value::from(false), "verify: {results:?}");
+        assert_eq!(results[3]["delivered"], Value::from("none"));
+        assert_eq!(results[3]["effect"], Value::from("unverified"));
         assert_eq!(payload["sendinput_calls"], Value::from(0));
         // Wait for the whole posted click pair (down AND up) before reading:
         // the fixture pumps on its own thread and may not have dispatched the
@@ -7195,7 +7079,11 @@ mod tests {
         );
         let (down, up, mv, kd, ch) = crate::fixture::msg_counts();
         assert_eq!((down, up, mv), (1, 1, 0), "one down, one up, no move");
-        assert_eq!((kd, ch), (0, 0), "no WM_KEYDOWN / WM_CHAR may be posted");
+        // Two posted keys (key a + ctrl+c) land as key messages.
+        assert!(
+            kd >= 3,
+            "posted keys must arrive as WM_KEYDOWN: kd={kd} ch={ch}"
+        );
         assert_eq!(
             results[0]["delivered"],
             Value::from("posted"),
@@ -7204,6 +7092,75 @@ mod tests {
         assert_eq!(results[0]["effect"], Value::from("unverified"));
         assert_foreground_held(fg_before, "message-only delivery");
         report_pointer(cur_before, "message-only delivery");
+    }
+
+    /// BACKGROUND-ONLY POLICY refusal tests: `delivery:"sendinput"` and
+    /// any unknown delivery never act — typed refusal, zero events, zero
+    /// SendInput calls, under dry_run too.
+    #[test]
+    fn sendinput_delivery_and_unknown_delivery_are_refused() {
+        let _g = crate::fixture::desktop();
+        let fx = crate::fixture::Fixture::new();
+        let hwnd = fx.hwnd_i64();
+        for (action, want) in [
+            (
+                serde_json::json!({"type": "key", "name": "a", "delivery": "sendinput"}),
+                "no_foreground_policy",
+            ),
+            (
+                serde_json::json!({"type": "hotkey", "keys": ["ctrl", "c"], "delivery": "sendinput"}),
+                "no_foreground_policy",
+            ),
+            (
+                serde_json::json!({"type": "key", "name": "a", "delivery": "telepathy"}),
+                "",
+            ),
+        ] {
+            let out = do_burst(&DoArgs {
+                dry_run: true,
+                target: Some(serde_json::json!({ "hwnd": hwnd })),
+                ..DoArgs::new(&[action])
+            });
+            let payload = sc(&out);
+            let r = &payload["results"][0];
+            assert_eq!(r["ok"], Value::from(false), "delivery refusal: {r}");
+            if !want.is_empty() {
+                assert_eq!(r["code"], Value::from(want), "typed refusal: {r}");
+            }
+            assert_eq!(payload["events"], Value::from(0));
+            assert_eq!(payload["sendinput_calls"], Value::from(0));
+        }
+        println!("SENDINPUT_DELIVERY_REFUSED_OK code=no_foreground_policy events=0");
+    }
+
+    /// LIVE: `verify:true` on a key that changes nothing visible reports
+    /// `effect:"unchanged"` — a result, not an error — with the exact zero
+    /// count and a null bbox.
+    #[test]
+    fn verify_true_on_a_no_op_key_reports_unchanged() {
+        let _g = crate::fixture::desktop();
+        let fx = crate::fixture::Fixture::new();
+        // Verify captures the locked target: use the EDIT child (a real
+        // control PrintWindow renders) instead of the offscreen frame.
+        let hwnd = fx.edit() as i64;
+        // Paint before the verify captures: a fresh window may not have
+        // processed WM_PAINT yet and would read back all-black.
+        force_paint(hwnd);
+        let fg_before = crate::fixture::foreground_now();
+        let out = do_burst(&DoArgs {
+            target: Some(serde_json::json!({ "hwnd": hwnd })),
+            ..DoArgs::new(&[serde_json::json!({"type": "key", "name": "F13", "verify": true})])
+        });
+        let payload = sc(&out);
+        let r = &payload["results"][0];
+        assert_eq!(r["ok"], Value::from(true), "verify on a no-op: {r}");
+        assert_eq!(r["delivered"], Value::from("posted"), "{r}");
+        assert_eq!(r["effect"], Value::from("unchanged"), "{r}");
+        assert_eq!(r["changed"], Value::from(0), "{r}");
+        assert!(r["bbox"].is_null(), "no pixels changed, no box: {r}");
+        assert_eq!(payload["sendinput_calls"], Value::from(0));
+        assert_foreground_held(fg_before, "verified posted key");
+        println!("VERIFY_UNCHANGED_OK effect=unchanged changed=0");
     }
 
     /// LIVE: `click` on an element is UIA-pattern-first on the locked
@@ -7230,9 +7187,8 @@ mod tests {
     }
 
     /// LIVE: a cursor-only call (allow_cursor without allow_foreground) can
-    /// never be a silent success. SendInput is foreground input, so the gate
-    /// refuses with a typed code BEFORE anything is queued: ok:false,
-    /// code, zero events, zero SendInput calls.
+    /// never move the pointer: the policy refuses with no_cursor_policy
+    /// BEFORE anything is posted: ok:false, code, zero events, zero posts.
     #[test]
     fn live_cursor_only_pointer_actions_are_typed_failures() {
         let _g = crate::fixture::desktop();
@@ -7254,8 +7210,8 @@ mod tests {
             assert_eq!(r["ok"], Value::from(false), "action {k} must fail: {r}");
             assert_eq!(
                 r["code"],
-                Value::from("foreground_required"),
-                "action {k} needs the foreground code: {r}"
+                Value::from("no_cursor_policy"),
+                "action {k} must name the rule: {r}"
             );
         }
         assert_eq!(payload["events"], Value::from(0), "nothing may be queued");
@@ -7267,11 +7223,10 @@ mod tests {
         );
     }
 
-    /// LIVE: with BOTH flags the pointer path really assembles the events
-    /// (dry_run: assembly without injection). The other half of "delivers or
-    /// fails, never silent".
+    /// LIVE: with BOTH flags every injecting verb still refuses — the flags
+    /// buy nothing. The other half of "refuses or posts, never silent".
     #[test]
-    fn live_both_flags_assemble_the_pointer_path() {
+    fn live_both_flags_still_refuse() {
         let actions = vec![serde_json::json!({"type": "click", "x": 5, "y": 5})];
         let out = do_burst(&DoArgs {
             dry_run: true,
@@ -7280,39 +7235,36 @@ mod tests {
             ..DoArgs::new(&actions)
         });
         let payload = sc(&out);
-        assert_eq!(payload["results"][0]["ok"], Value::from(true));
-        assert!(
-            payload["events"].as_i64().unwrap_or(0) >= 3,
-            "move + down + up must be assembled: {payload}"
+        assert_eq!(payload["results"][0]["ok"], Value::from(false));
+        assert_eq!(
+            payload["results"][0]["code"],
+            Value::from("no_foreground_policy"),
+            "flags must refuse, not unlock: {payload:?}"
         );
+        assert_eq!(payload["events"], Value::from(0));
+        assert_eq!(payload["sendinput_calls"], Value::from(0));
     }
 
-    /// The flush guard itself: without a foreground permit the queued events
-    /// are NOT sent, the marks SURVIVE (so fail_since_flush can mark the
-    /// action failed), and the retro-marked result carries the typed code.
+    /// The flush is a no-op by policy: `SendInput` is never called, so a
+    /// flush never sends, never fails and never marks anything — the posted
+    /// branches sequence through it harmlessly.
     #[test]
-    fn flush_without_permit_marks_the_action_failed() {
+    fn flush_is_a_noop_and_sends_nothing() {
         let mut st = Burst {
-            pending: vec![mi_btn(M_LDOWN, 0)],
+            pending: Vec::new(),
             marked: vec![0],
             results: vec![base_entry(0, &Value::from("click"), true, 0.0)],
             calls: 0,
             events: 0,
             sendinput_ms: 0.0,
-            dry_run: false,
             flush_uipi: false,
-            permit: None,
-            cursor: None,
         };
-        let (_, err) = st.flush();
-        let err = err.expect("flush must refuse without the permit");
-        assert!(err.starts_with("foreground_required"), "typed: {err}");
-        assert!(st.pending.is_empty(), "the queued events must be dropped");
-        assert_eq!(st.marked, vec![0], "marks must survive for the caller");
+        let (dt, err) = st.flush();
+        assert!(err.is_none(), "a flush never fails: {err:?}");
+        assert_eq!(dt, 0.0);
         assert_eq!(st.events, 0, "nothing was sent");
-        fail_since_flush(&mut st.results, &mut st.marked, &err, false);
-        assert_eq!(st.results[0]["ok"], Value::from(false));
-        assert_eq!(st.results[0]["code"], Value::from("foreground_required"));
+        assert_eq!(st.calls, 0, "no SendInput call was made");
+        assert_eq!(st.results[0]["ok"], Value::from(true), "nothing is marked");
     }
 
     /// LIVE, message-only: coordinates a message lParam cannot carry are a

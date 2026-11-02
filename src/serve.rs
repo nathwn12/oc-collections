@@ -2,7 +2,7 @@
 
 use crate::burst::do_burst;
 use crate::schemas::{
-    TOOL_CURSOR, TOOL_DO, TOOL_ELEMENTS, TOOL_LIST_WINDOWS, TOOL_SCREENSHOT, TOOL_WINDOW,
+    TOOL_CURSOR, TOOL_DIFF, TOOL_DO, TOOL_ELEMENTS, TOOL_LIST_WINDOWS, TOOL_SCREENSHOT, TOOL_WINDOW,
 };
 use crate::screen::{dispatch_screenshot, ShotArgs};
 use crate::shot::{compact_entry, element_model, elements_object};
@@ -126,7 +126,7 @@ fn init_result(params: &Value) -> String {
 const INIT_INSTRUCTIONS: &str = "puppet desktop-control MCP (Windows). Background-safe by default: every acting tool takes a `target` selector {hwnd?,pid?,exe?,appId?,titleContains?,className?} that resolves ONE window for the call and is revalidated before every action - no cursor movement, no keyboard injection into the owner's session, no focus stealing, no raised window, whether the target is foreground or alt-tabbed. There is no fallback to the foreground window: an ambiguous or vanished target is a typed error (ambiguous_target / target_gone). Foreground input (SendInput/SetForegroundWindow), pointer movement, and overwriting the owner's global clipboard (clipboard_set) are refused with foreground_required / cursor_move_required / clipboard_write_required unless the call passes allow_foreground:true / allow_cursor:true / allow_clipboard:true, before anything is sent or written. Control is exact and instant: clicks are one down+up at the resolved point, no interpolated pointer journey.\nTools (one line each):\n- screenshot: capture the whole virtual desktop (display=-1), one monitor, a window (window=<selector> or target={...}), or a region, without activating the window; minimized returns window_minimized, a refused frame capture_unavailable; returns the image plus source{x,y,w,h}, scale, the monitor list, the cursor, the image-to-screen formula, and foregroundUnchanged/cursorUnchanged. Coordinates are screen/virtual-desktop pixels: screen_x = source.x + round((img_x + 0.5) * source.w / image.w) (same for y).\n- list_windows: read-only visible top-level windows (hwnd/pid/exe/title/rects/elevated); never changes focus.\n- window: focus|move|resize|minimize|maximize|restore|close|topmost by selector, hwnd or target; only action=focus may touch the foreground window, every other verb is no-steal (SWP_NOACTIVATE / SW_SHOWMINNOACTIVE).\n- do: BURST tool: one call runs an ordered actions[] batch (move|click|down|up|drag|scroll|type|key|hotkey|wait|wait_for|focus_window|invoke|set_value|clipboard_set|clipboard_get) against one `target` window through UIA patterns first, then PostMessage/SendMessage with exact client coordinates; per-action ok, never aborts the rest. Under target, x/y are CLIENT-area physical pixels; without a target they are virtual-desktop pixels on the gated foreground path. dry_run=true validates and reports without injecting anything.\n- cursor: read-only cursor position plus monitor rects.\n- elements: read-only structured UI elements for a window (target/title/hwnd; zero pixels, no focus change); each entry carries ref plus fp, a stable identity fingerprint. Prefer elements over pixel guessing; pass expect_fp to invoke/set_value to refuse stale refs instead of acting on the wrong control. When text is illegible, re-request the same window with a tight region plus max_px:null (full-resolution zoom).";
 
 fn tools_list_result() -> String {
-    format!("{{\"tools\":[{TOOL_SCREENSHOT},{TOOL_LIST_WINDOWS},{TOOL_WINDOW},{TOOL_DO},{TOOL_CURSOR},{TOOL_ELEMENTS}]}}")
+    format!("{{\"tools\":[{TOOL_SCREENSHOT},{TOOL_DIFF},{TOOL_LIST_WINDOWS},{TOOL_WINDOW},{TOOL_DO},{TOOL_CURSOR},{TOOL_ELEMENTS}]}}")
 }
 
 /// `server/discover` (2026-07-28 discovery path): the full known-version
@@ -414,6 +414,7 @@ fn call_screenshot(args: &Map<String, Value>) -> String {
             "allow_crop_fallback",
             "elements",
             "target",
+            "out",
         ],
     );
     let display = req_int(args, &mut errs, "display", -1);
@@ -450,7 +451,16 @@ fn call_screenshot(args: &Map<String, Value>) -> String {
             }
         },
     };
-    let fmt = req_str(args, &mut errs, "fmt", "jpeg");
+    let fmt_arg_present = !matches!(args.get("fmt"), None | Some(Value::Null));
+    let out = opt_str(args, &mut errs, "out");
+    let fmt_default = if out.as_ref().is_some_and(|o| o.is_some()) && !fmt_arg_present {
+        // PNG only when `out` is set and `fmt` is omitted (a diff needs
+        // lossless pixels); otherwise the historical jpeg default stands.
+        "png"
+    } else {
+        "jpeg"
+    };
+    let fmt = req_str(args, &mut errs, "fmt", fmt_default);
     let quality = req_int(args, &mut errs, "quality", 80);
     let grid = req_bool(args, &mut errs, "grid");
     let allow_crop_fallback = req_bool(args, &mut errs, "allow_crop_fallback");
@@ -468,7 +478,75 @@ fn call_screenshot(args: &Map<String, Value>) -> String {
         grid: grid.unwrap(),
         allow_crop_fallback: allow_crop_fallback.unwrap(),
         elements: elements.unwrap(),
+        out: out.unwrap(),
         target: target.unwrap(),
+    })
+}
+
+fn call_diff(args: &Map<String, Value>) -> String {
+    let mut errs = Vec::new();
+    check_no_extra(
+        args,
+        &mut errs,
+        &["base", "next", "threshold", "max_px", "out", "bbox"],
+    );
+    let base = match args.get("base") {
+        None => {
+            errs.push(missing_arg("diff", args, "base"));
+            None
+        }
+        Some(v) => Some(v.clone()),
+    };
+    let next = match args.get("next") {
+        None => {
+            errs.push(missing_arg("diff", args, "next"));
+            None
+        }
+        Some(v) => Some(v.clone()),
+    };
+    let threshold = req_int(args, &mut errs, "threshold", 0);
+    let max_px: Option<Option<i64>> = match args.get("max_px") {
+        None => Some(Some(1280)),
+        Some(Value::Null) => Some(None),
+        Some(v) => match coerce_int(v) {
+            Ok(i) => Some(Some(i)),
+            Err((msg, typ)) => {
+                errs.push(crate::VErr {
+                    loc: "max_px".to_string(),
+                    msg,
+                    typ,
+                    iv: crate::render_iv(v),
+                    it: crate::input_type_of(v).to_string(),
+                });
+                None
+            }
+        },
+    };
+    let out = opt_str(args, &mut errs, "out");
+    let bbox: Option<bool> = match args.get("bbox") {
+        None => Some(true),
+        Some(Value::Bool(b)) => Some(*b),
+        Some(v) => {
+            errs.push(crate::VErr {
+                loc: "bbox".to_string(),
+                msg: "Input should be a valid boolean".to_string(),
+                typ: "bool_type".to_string(),
+                iv: crate::render_iv(v),
+                it: crate::input_type_of(v).to_string(),
+            });
+            None
+        }
+    };
+    if !errs.is_empty() {
+        return err_result_text(&verr_text("diff", &errs));
+    }
+    crate::diff::dispatch_diff(&crate::diff::DiffArgs {
+        base: base.unwrap(),
+        next: next.unwrap(),
+        threshold: threshold.unwrap(),
+        max_px: max_px.unwrap(),
+        out: out.unwrap(),
+        bbox: bbox.unwrap(),
     })
 }
 
@@ -728,6 +806,7 @@ fn tools_call(params: &Value) -> String {
     };
     match name {
         "screenshot" => call_screenshot(&args),
+        "diff" => call_diff(&args),
         "list_windows" => call_list_windows(&args),
         "window" => call_window(&args),
         "do" => call_do(&args),

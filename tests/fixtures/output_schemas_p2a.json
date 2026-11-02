@@ -19,6 +19,51 @@
     ],
     "type": "object"
   },
+  "diff": {
+    "additionalProperties": true,
+    "properties": {
+      "ok": {
+        "type": "boolean"
+      },
+      "changed": {
+        "type": "integer"
+      },
+      "total": {
+        "type": "integer"
+      },
+      "ratio": {
+        "type": "number"
+      },
+      "bbox": {
+        "type": "array"
+      },
+      "identical": {
+        "type": "boolean"
+      },
+      "base": {
+        "type": "object"
+      },
+      "next": {
+        "type": "object"
+      },
+      "threshold": {
+        "type": "integer"
+      },
+      "diff_out": {
+        "type": "object"
+      }
+    },
+    "required": [
+      "ok",
+      "changed",
+      "total",
+      "ratio",
+      "identical",
+      "base",
+      "next"
+    ],
+    "type": "object"
+  },
   "do": {
     "additionalProperties": true,
     "properties": {

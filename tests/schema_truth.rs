@@ -174,7 +174,7 @@ fn collect_required(schema: &Value, into: &mut Vec<BTreeSet<String>>) {
 #[test]
 fn every_tool_carries_truthful_annotations() {
     let tools = list_tools();
-    assert_eq!(tools.len(), 6, "six tools expected");
+    assert_eq!(tools.len(), 7, "seven tools expected");
     for t in &tools {
         let o = t.as_object().expect("tool object");
         let name = o.get("name").and_then(|n| n.as_str()).unwrap_or("?");
@@ -208,7 +208,7 @@ fn every_tool_carries_truthful_annotations() {
         );
         assert!(!open, "{name} never touches the open world");
         match name {
-            "screenshot" | "list_windows" | "cursor" | "elements" => {
+            "screenshot" | "diff" | "list_windows" | "cursor" | "elements" => {
                 assert!(ro, "{name} is read-only");
                 assert!(!dest, "{name} is not destructive");
                 assert!(idem, "{name} is idempotent");
@@ -397,6 +397,18 @@ fn p2a_output_schemas_unchanged_in_shape() {
             ],
         ),
         ("list_windows", &["windows"]),
+        (
+            "diff",
+            &[
+                "ok",
+                "changed",
+                "total",
+                "ratio",
+                "identical",
+                "base",
+                "next",
+            ],
+        ),
         ("window", &["ok"]),
         (
             "do",
@@ -477,13 +489,14 @@ fn p2a_output_schemas_match_frozen_fixture() {
         },
         [
             "cursor",
+            "diff",
             "do",
             "elements",
             "list_windows",
             "screenshot",
             "window"
         ],
-        "fixture must pin exactly the six tools"
+        "fixture must pin exactly the seven tools"
     );
     let tools = list_tools();
     for (name, want) in frozen {

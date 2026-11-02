@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `screenshot` gains `out`: an optional absolute path. The exact returned
+  bytes are also written to disk (parent dirs created) and the payload gains
+  `out:{path,bytes,fmt}`. PNG when `out` is set and `fmt` is omitted (a diff
+  needs lossless pixels). The inline image still returns.
+- New `diff` tool: compare two captures pixel by pixel. Each of `base`/`next`
+  is `{path:"<png>"}` or a capture target (`target`/`window`/`display`/
+  `region`, same selector grammar as `screenshot`); optional `threshold`
+  (0-255 per channel, default 0), `max_px` (default 1280 long edge for the
+  returned diff image), `out` (path for the diff PNG), `bbox` (default true).
+  Both sides must decode/capture to the SAME pixel dimensions, else a typed
+  `size_mismatch` naming both sizes — never a silent scale. Returns
+  `{changed,total,ratio,bbox|null,identical,base,next,diff_out?}`; the diff
+  image marks changed pixels solid red over a dimmed greyscale copy of base.
+  Read-only (`readOnlyHint:true`); errors never raise. The per-pixel rule is
+  ported from `gladius`'s `visual.rs` (`png_diff`/`DiffOpts`).
+- Posted `key`/`hotkey` delivery: `delivery:"auto"|"posted"|"sendinput"`
+  (default `auto`; `posted` requires a locked target) posts
+  `WM_KEYDOWN`/`WM_SYSKEYDOWN` (+UP) with a correct lParam (repeat 1, scan
+  code from `MapVirtualKeyW`, extended bit, Alt context code, key-up bits
+  30/31) and an 80 ms default hold. Verified by default: the target is
+  captured before and after and diffed with the pixel engine, reporting
+  `{delivered:"posted", effect:"changed"|"unchanged", changed, bbox}`;
+  `unchanged` is a result, not an error.
+
+### Changed
+- Background-only policy, absolute: `SendInput` is never called (the
+  escalation path is deleted — `src/gate.rs` holds no injection API at all),
+  so `delivery:"sendinput"` and `allow_foreground:true` return a typed
+  `no_foreground_policy` error naming the rule, instead of acting. No flag
+  buys the foreground, the pointer, or the clipboard.
+- Pointer acts that need a real cursor (`move`, cursor-less click/drag/
+  scroll) return `no_cursor_policy`; `focus_window`, `window`
+  `action:focus` and `action:maximize` return `no_foreground_policy`;
+  `clipboard_set` returns `no_clipboard_policy` (reads stay free);
+  `set_value` / `type`-on-an-element return `background_unavailable` naming
+  the control. `allow_foreground` / `allow_cursor` / `allow_clipboard`
+  survive in the schemas so old callers get a typed refusal instead of an
+  "unexpected keyword" error. Every refusal happens before anything is sent,
+  under `dry_run` too.
+- Plain `type` posts `WM_CHAR` to the locked target's writable text control
+  (a read-only control is skipped); `focus_guard` no longer restores (it
+  reports `focus_guard_error` with the policy code instead).
+- `sendinput_calls` / `sendinput_ms` are always 0 (fields kept for envelope
+  compatibility); `docs/GUIDE.md` documents the posted-only surface and the
+  six refusal codes.
+
 ### Changed
 - The release lane derives its version from history instead of taking a typed
   one. `scripts/derive-release.mjs` walks the non-merge commits since the

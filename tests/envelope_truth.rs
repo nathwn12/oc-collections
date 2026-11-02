@@ -113,13 +113,14 @@ fn list_tools() -> Vec<Value> {
 #[test]
 fn tools_list_every_tool_has_real_output_schema() {
     let tools = list_tools();
-    assert_eq!(tools.len(), 6, "six tools expected, got: {tools:?}");
+    assert_eq!(tools.len(), 7, "seven tools expected, got: {tools:?}");
     let names: Vec<&str> = tools
         .iter()
         .filter_map(|t| t.get("name").and_then(|n| n.as_str()))
         .collect();
     for want in [
         "screenshot",
+        "diff",
         "list_windows",
         "window",
         "do",
