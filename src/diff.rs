@@ -26,6 +26,26 @@ pub struct DiffArgs {
     pub bbox: bool,
 }
 
+/// Temp path for the default `out`-omitted call:
+/// `%TEMP%\opencode\puppet-diff\<stamp>.png`. The stamp is
+/// `diff-<pid>-<nanos>-<counter>` so concurrent calls never collide;
+/// parents are created by the write path.
+fn default_diff_path() -> String {
+    static CTR: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let ctr = CTR.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let name = format!("diff-{}-{nanos}-{ctr}.png", std::process::id());
+    std::env::temp_dir()
+        .join("opencode")
+        .join("puppet-diff")
+        .join(name)
+        .to_string_lossy()
+        .to_string()
+}
+
 /// Decode one `diff` operand to RGB pixels. `{path}` reads a PNG file;
 /// anything else is captured through the screenshot path at native
 /// pixels (lossless PNG, no grid, no elements) and decoded back, so the
@@ -233,45 +253,50 @@ pub fn dispatch_diff(a: &DiffArgs) -> String {
     payload.insert("next".to_string(), Value::from(next_o));
     payload.insert("threshold".to_string(), Value::from(a.threshold));
     if d.identical {
-        // No changed pixels, no diff image: an all-dimmed file still lands
-        // when `out` is set so the path contract holds on both outcomes.
-        if let Some(path) = a.out.as_deref() {
-            let flat = Img {
-                w: base.w,
-                h: base.h,
-                px: {
-                    let n = base.w as usize * base.h as usize;
-                    let mut px = vec![0u8; n * 3];
-                    for (i, chunk) in px.chunks_exact_mut(3).enumerate() {
-                        let dim = (crate::cap::gray_of(
-                            base.px[3 * i],
-                            base.px[3 * i + 1],
-                            base.px[3 * i + 2],
-                        ) as u32
-                            * 3
-                            / 5) as u8;
-                        chunk[0] = dim;
-                        chunk[1] = dim;
-                        chunk[2] = dim;
-                    }
-                    px
-                },
-            };
-            let (data, _, _, _, _, _) = match finalize(flat, a.max_px, "png", None, false) {
-                Ok(v) => v,
-                Err(e) => return err_payload(vec![("error", Value::from(e))]),
-            };
-            match crate::cap::write_bytes_out(path, &data) {
-                Ok(()) => {
-                    payload.insert(
-                        "diff_out".to_string(),
-                        Value::from(crate::cap::out_object(path, data.len(), "png")),
-                    );
+        // No changed pixels: the all-dimmed visualization still renders to
+        // a file — `out` when supplied, else the default temp path — so
+        // `diff_out` is always an object and `bbox` stays null.
+        let flat = Img {
+            w: base.w,
+            h: base.h,
+            px: {
+                let n = base.w as usize * base.h as usize;
+                let mut px = vec![0u8; n * 3];
+                for (i, chunk) in px.chunks_exact_mut(3).enumerate() {
+                    let dim = (crate::cap::gray_of(
+                        base.px[3 * i],
+                        base.px[3 * i + 1],
+                        base.px[3 * i + 2],
+                    ) as u32
+                        * 3
+                        / 5) as u8;
+                    chunk[0] = dim;
+                    chunk[1] = dim;
+                    chunk[2] = dim;
                 }
-                Err(e) => return err_payload(vec![("error", Value::from(e))]),
+                px
+            },
+        };
+        let (data, _, _, _, _, _) = match finalize(flat, a.max_px, "png", None, false) {
+            Ok(v) => v,
+            Err(e) => return err_payload(vec![("error", Value::from(e))]),
+        };
+        let owned;
+        let path = match a.out.as_deref() {
+            Some(p) => p,
+            None => {
+                owned = default_diff_path();
+                &owned
             }
-        } else {
-            payload.insert("diff_out".to_string(), Value::Null);
+        };
+        match crate::cap::write_bytes_out(path, &data) {
+            Ok(()) => {
+                payload.insert(
+                    "diff_out".to_string(),
+                    Value::from(crate::cap::out_object(path, data.len(), "png")),
+                );
+            }
+            Err(e) => return err_payload(vec![("error", Value::from(e))]),
         }
         return crate::wrapped_text(&crate::py_dumps(&Value::Object(payload)));
     }
@@ -286,18 +311,24 @@ pub fn dispatch_diff(a: &DiffArgs) -> String {
         Ok(v) => v,
         Err(e) => return err_payload(vec![("error", Value::from(e))]),
     };
-    if let Some(path) = a.out.as_deref() {
-        match crate::cap::write_bytes_out(path, &data) {
-            Ok(()) => {
-                payload.insert(
-                    "diff_out".to_string(),
-                    Value::from(crate::cap::out_object(path, data.len(), "png")),
-                );
-            }
-            Err(e) => return err_payload(vec![("error", Value::from(e))]),
+    // The diff PNG always lands on disk — `out` when supplied, else the
+    // default temp path — so `diff_out` is always an object.
+    let owned;
+    let path = match a.out.as_deref() {
+        Some(p) => p,
+        None => {
+            owned = default_diff_path();
+            &owned
         }
-    } else {
-        payload.insert("diff_out".to_string(), Value::Null);
+    };
+    match crate::cap::write_bytes_out(path, &data) {
+        Ok(()) => {
+            payload.insert(
+                "diff_out".to_string(),
+                Value::from(crate::cap::out_object(path, data.len(), "png")),
+            );
+        }
+        Err(e) => return err_payload(vec![("error", Value::from(e))]),
     }
     let blocks = vec![
         crate::image_block(
@@ -439,9 +470,9 @@ mod tests {
             .expect("structuredContent present")
     }
 
-    /// The identical-case response (`bbox: null`, `diff_out: null`) and the
-    /// differing-case response (real bbox) must both validate against the
-    /// tool's own declared `outputSchema`.
+    /// The identical-case response (`bbox: null`, `diff_out` object on disk)
+    /// and the differing-case response (real bbox, `diff_out` object) must
+    /// both validate against the tool's own declared `outputSchema`.
     #[test]
     fn diff_payload_matches_declared_output_schema() {
         let dir = std::env::temp_dir().join(format!("puppet-diff-schema-{}", std::process::id()));
@@ -489,6 +520,85 @@ mod tests {
             "differing bbox is [x,y,w,h], got: {bbox}"
         );
         assert_payload_valid_against_output_schema(&sc2);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Default `out` (omitted) still renders the diff image to a temp file
+    /// and returns `diff_out` as an object — for identical and differing
+    /// inputs alike. `bbox: null` stays correct for identical.
+    #[test]
+    fn default_diff_emits_file_object_for_identical_and_differing() {
+        let dir = std::env::temp_dir().join(format!("puppet-diff-default-{}", std::process::id()));
+        let base_p = dir.join("base.png");
+        let alt_p = dir.join("alt.png");
+        let solid = solid_img(10, 10, 60, 120, 200);
+        write_png(&base_p, &solid);
+        let mut altered = solid_img(10, 10, 60, 120, 200);
+        let p = (5 * 10 + 3) as usize;
+        altered.px[3 * p] = 255;
+        altered.px[3 * p + 1] = 0;
+        altered.px[3 * p + 2] = 0;
+        write_png(&alt_p, &altered);
+
+        for (what, next_p, want_identical) in
+            [("identical", &base_p, true), ("differing", &alt_p, false)]
+        {
+            let sc = structured_of_dispatch(&DiffArgs {
+                base: path_arg(&base_p),
+                next: path_arg(next_p),
+                threshold: 0,
+                max_px: None,
+                out: None,
+                bbox: true,
+            });
+            assert_eq!(
+                sc.get("identical"),
+                Some(&Value::from(want_identical)),
+                "{what}: identical flag"
+            );
+            if want_identical {
+                assert_eq!(
+                    sc.get("bbox"),
+                    Some(&Value::Null),
+                    "{what}: bbox stays null"
+                );
+            }
+            let diff_out = sc.get("diff_out").expect("diff_out present");
+            assert!(
+                diff_out.is_object(),
+                "{what}: default diff_out must be an object, got: {diff_out}"
+            );
+            let bytes = diff_out
+                .get("bytes")
+                .and_then(|b| b.as_i64())
+                .expect("diff_out.bytes present");
+            assert!(
+                bytes > 0,
+                "{what}: diff_out.bytes non-empty, got: {diff_out}"
+            );
+            assert_eq!(
+                diff_out.get("fmt").and_then(|f| f.as_str()),
+                Some("png"),
+                "{what}: diff_out.fmt is png, got: {diff_out}"
+            );
+            let path = diff_out
+                .get("path")
+                .and_then(|p| p.as_str())
+                .expect("diff_out.path present");
+            assert!(
+                std::path::Path::new(path).is_absolute(),
+                "{what}: diff_out.path is absolute, got: {path}"
+            );
+            let meta = std::fs::metadata(path)
+                .unwrap_or_else(|_| panic!("{what}: diff_out file must exist at {path}"));
+            assert!(
+                meta.len() > 0 && meta.len() == bytes as u64,
+                "{what}: file size matches bytes, got: {meta:?} vs {bytes}"
+            );
+            assert_payload_valid_against_output_schema(&sc);
+            let _ = std::fs::remove_file(path);
+        }
 
         let _ = std::fs::remove_dir_all(&dir);
     }

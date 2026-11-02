@@ -213,16 +213,18 @@ never raise.
 | `next` | required | Same shape as `base`. |
 | `threshold` | `0` | Per-channel tolerance 0..255; only tolerance there is. |
 | `max_px` | `1280` | Long-edge clamp for the returned diff image, aspect-preserving, never upscaling. |
-| `out` | `null` | Absolute path: write the diff PNG to disk (parent dirs created). |
+| `out` | `null` | Absolute path: override where the diff PNG lands (parent dirs created). When omitted the diff PNG still renders to `%TEMP%\opencode\puppet-diff\<stamp>.png` and `diff_out` always carries `{path,bytes,fmt}`. |
 | `bbox` | `true` | Toggle the union box of changed pixels. |
 
 Both sides must land on the SAME pixel dimensions: a mismatch is a typed
 `size_mismatch` naming both sizes, never a silent scale.
 
-**Returns** `{changed,total,ratio,bbox:[x,y,w,h]|null,identical,base:{w,h},next:{w,h},threshold,diff_out?}`.
-When anything changed, a second content block carries the diff image (changed
-pixels solid red over a dimmed greyscale copy of `base`); when identical there
-is no image block and `bbox` is `null`.
+**Returns** `{changed,total,ratio,bbox:[x,y,w,h]|null,identical,base:{w,h},next:{w,h},threshold,diff_out}`.
+`diff_out` is always an object `{path,bytes,fmt}`: the rendered diff PNG on
+disk (`out` when supplied, else the default temp path). When anything changed,
+a second content block carries the diff image (changed pixels solid red over a
+dimmed greyscale copy of `base`); when identical there is no image block, the
+file is the dimmed copy with zero red pixels, and `bbox` is `null`.
 
 ```json
 { "base": {"path": "C:/captures/before.png"}, "next": {"path": "C:/captures/after.png"} }
