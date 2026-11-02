@@ -4,7 +4,7 @@
 
 # puppet
 
-Screenshots, lists, and drives Windows windows for agents over MCP stdio. Background-safe by default: no stolen focus, pointer, or keyboard.
+Screenshot, list, and drive Windows windows for your agents over MCP stdio. Background-safe by default: no stolen focus, pointer, or keyboard.
 
 ## Install
 
@@ -51,6 +51,8 @@ cargo test --locked
 
 `cargo fmt --all --check` and `cargo clippy --all-targets --locked -- -D warnings` are the static gate.
 
-## License
+## Links
 
-MIT — see [LICENSE](LICENSE).
+- [Guide](docs/GUIDE.md)
+- [Releases](https://github.com/nathwn12/puppet/releases)
+- [MIT](LICENSE)
