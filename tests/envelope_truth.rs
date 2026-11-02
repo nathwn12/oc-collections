@@ -767,8 +767,8 @@ fn payload_conforms_to_own_output_schema() {
     assert_conforms(&schemas, &mut coverage, "elements", &r, "elements empty");
     drop(_fxe);
 
-    // diff identical (same file twice: bbox null, diff_out object on disk) AND
-    // differing (grid overlay moves pixels: real bbox array, diff_out object).
+    // diff identical (same file twice: bbox null, diff_out null) AND
+    // differing (grid overlay moves pixels: real bbox array).
     let a_p = dir.join("a.png");
     let b_p = dir.join("b.png");
     let a_path = a_p.to_string_lossy().to_string();
@@ -800,35 +800,11 @@ fn payload_conforms_to_own_output_schema() {
         let sc = r.get("structuredContent").expect("structuredContent");
         assert_eq!(sc.get("identical"), Some(&Value::from(true)));
         assert_eq!(sc.get("bbox"), Some(&Value::Null));
-        let diff_out = sc.get("diff_out").expect("diff_out present");
-        assert!(
-            diff_out.is_object(),
-            "identical diff with no out must carry diff_out as an object, got: {sc}"
-        );
-        let bytes = diff_out
-            .get("bytes")
-            .and_then(|b| b.as_i64())
-            .expect("diff_out.bytes present");
-        assert!(bytes > 0, "identical diff_out.bytes non-empty, got: {sc}");
-        let path = diff_out
-            .get("path")
-            .and_then(|p| p.as_str())
-            .expect("diff_out.path present");
-        assert!(
-            std::path::Path::new(path).is_absolute(),
-            "identical diff_out.path absolute, got: {path}"
-        );
-        assert!(
-            std::path::Path::new(path).exists(),
-            "identical diff_out file must exist at {path}, got: {sc}"
-        );
-        let meta = std::fs::metadata(path).expect("diff_out file metadata");
         assert_eq!(
-            meta.len(),
-            bytes as u64,
-            "identical diff_out file size matches bytes, got: {sc}"
+            sc.get("diff_out"),
+            Some(&Value::Null),
+            "identical diff with no out must carry diff_out:null, got: {sc}"
         );
-        let _ = std::fs::remove_file(path);
     }
     assert_conforms(&schemas, &mut coverage, "diff", &r, "diff identical");
     let r = s.result(
@@ -849,35 +825,6 @@ fn payload_conforms_to_own_output_schema() {
             bbox.is_array() && bbox.as_array().map(|a| a.len()) == Some(4),
             "differing bbox is [x,y,w,h], got: {bbox}"
         );
-        let diff_out = sc.get("diff_out").expect("diff_out present");
-        assert!(
-            diff_out.is_object(),
-            "differing diff with no out must carry diff_out as an object, got: {sc}"
-        );
-        let bytes = diff_out
-            .get("bytes")
-            .and_then(|b| b.as_i64())
-            .expect("diff_out.bytes present");
-        assert!(bytes > 0, "differing diff_out.bytes non-empty, got: {sc}");
-        let path = diff_out
-            .get("path")
-            .and_then(|p| p.as_str())
-            .expect("diff_out.path present");
-        assert!(
-            std::path::Path::new(path).is_absolute(),
-            "differing diff_out.path absolute, got: {path}"
-        );
-        assert!(
-            std::path::Path::new(path).exists(),
-            "differing diff_out file must exist at {path}, got: {sc}"
-        );
-        let meta = std::fs::metadata(path).expect("diff_out file metadata");
-        assert_eq!(
-            meta.len(),
-            bytes as u64,
-            "differing diff_out file size matches bytes, got: {sc}"
-        );
-        let _ = std::fs::remove_file(path);
     }
     assert_conforms(&schemas, &mut coverage, "diff", &r, "diff differing");
 

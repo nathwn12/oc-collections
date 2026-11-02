@@ -8,8 +8,8 @@
 // schema sets additionalProperties: true; props declaring no type pass
 // unconstrained). The diff row uses two identical PNGs (one screenshot
 // written with out, diffed against itself), so the bbox:null /
-// diff_out:object shape (default temp file, never null) is proven on
-// the release binary before publish can run.
+// diff_out:null shape that once shipped in violation of the schema is
+// proven on the release binary before publish can run.
 //
 // Usage: node scripts/conformance-check.mjs --exe <path-to-puppet.exe>
 // Windows-only; Node stdlib only. Prints a CHECK/RESULT table, exits 1 on
@@ -177,8 +177,8 @@ async function main() {
     await row("screenshot", { display: -1, region: [0, 0, 64, 64], out: png }, "screenshot out set");
     if (!existsSync(png)) fail("screenshot", `out file missing: ${png}`);
 
-    // diff on two identical PNGs: bbox null, diff_out object on disk — the
-    // null shape once shipped in violation of its own schema.
+    // diff on two identical PNGs: bbox null, diff_out null — the shape that
+    // once shipped in violation of its own schema.
     await row("diff", { base: { path: png }, next: { path: png } }, "diff identical PNGs");
 
     // window: unknown title is a typed target_gone refusal (no desktop
