@@ -1,6 +1,6 @@
-// MCP server surface: exactly six tools.
+// MCP server surface: exactly seven tools.
 //
-// pty_spawn / pty_write / pty_read / pty_resize / pty_kill / pty_list.
+// run / pty_spawn / pty_write / pty_read / pty_resize / pty_kill / pty_list.
 // Every handler funnels through wrap(), so a throw becomes a typed tool error
 // and never escapes into the JSON-RPC transport.
 
@@ -14,10 +14,14 @@ const require = createRequire(import.meta.url);
 const { version } = require('../package.json');
 
 const INSTRUCTIONS = [
-  'janua gives you persistent interactive terminals. Use pty_spawn for programs you need to talk to over time',
-  '(dev servers, REPLs, anything that prompts), not for one-shot commands. Keep the returned sessionId, read with',
-  'pty_read using the cursor it returns so output is never duplicated, write with pty_write, resize with pty_resize',
-  'when a full-screen program finds the terminal too small, and pty_kill when done.',
+  'janua runs commands once and gives you persistent interactive terminals.',
+  'Use run for a command whose output you want once: it starts a fresh PTY, optionally writes stdin, and returns',
+  'when the command exits, the match pattern appears, or timeoutMs passes (killing the tree unless keep is true).',
+  'Use pty_spawn for long-lived work you will talk to over several calls (dev servers, REPLs, anything that',
+  'prompts), and give it a name to address the session by that name later. Keep the returned sessionId or name,',
+  'read with pty_read using the cursor it returns so output is never duplicated, write with pty_write, resize',
+  'with pty_resize when a full-screen program finds the terminal too small, and pty_kill when done. Every',
+  'sessionId input also accepts a session name.',
 ].join(' ');
 
 /** Wrap a handler so success is a payload and every throw is a typed tool error. */
@@ -46,6 +50,23 @@ const SPAWN_OUTPUT = z.object({
   sessionId: z.string().describe('Session id to pass to the other tools.'),
   pid: z.number().describe('Process id of the program in the terminal.'),
   title: z.string().describe('Label shown by pty_list.'),
+  name: z.string().nullable().describe('Name given at spawn, or null when the session is anonymous.'),
+  reused: z.boolean().describe('True when the name already belonged to a live session and that session was returned instead of a new one.'),
+});
+// run is one call for one command: it returns the command's output and exit
+// code, and says whether the answer came from a match or ran out of time.
+const RUN_OUTPUT = z.object({
+  data: z.string().describe('Output the command produced, stripped of ANSI sequences unless stripAnsi is false.'),
+  exitCode: z.number().nullable().describe('Exit code once the program has exited, otherwise null.'),
+  timedOut: z.boolean().describe('True when timeoutMs ran out before the program exited or match appeared.'),
+  matched: z.boolean().describe('True when match was given and the output matched it, or when no match was given.'),
+  sessionId: z.string().describe('Session id the command ran under; pass it or name to pty_read/pty_write/pty_kill when keep is true.'),
+  name: z.string().nullable().describe('Name given at run, or null.'),
+  cursor: z.number().describe('Byte offset to pass to pty_read to continue after the returned data.'),
+  dropped: z.number().describe('Bytes the buffer discarded before this run could read them.'),
+  bytes: z.number().describe('Total bytes the command produced, including bytes beyond maxBytes.'),
+  truncated: z.boolean().describe('True when maxBytes cut the returned data, so the command produced more.'),
+  durationMs: z.number().describe('Wall-clock milliseconds the whole call took.'),
 });
 // pty_write only carries read fields when waitMs > 0, so every one of them is
 // optional: a caller that just types gets {ok}, a caller that waits gets the
@@ -85,6 +106,7 @@ const READ_OUTPUT = z.object({
 });
 const SESSION_SHAPE = {
   sessionId: z.string(),
+  name: z.string().nullable().describe('Name given at spawn, or null.'),
   pid: z.number(),
   title: z.string(),
   command: z.string(),
@@ -112,16 +134,50 @@ export function createServer(options = {}) {
   );
 
   server.registerTool(
+    'run',
+    {
+      title: 'Run a one-shot command',
+      description:
+        'Run a command once in a fresh PTY and return when it exits, when match appears in its output, or when '
+        + 'timeoutMs passes: {data, exitCode, timedOut, matched, sessionId, name, cursor, dropped, bytes, '
+        + 'truncated, durationMs}. stdin (a string, no newline added) is written immediately. maxBytes caps data '
+        + '(default and maximum 1048576) and truncated: true means the command produced more. On match or timeout '
+        + 'the process tree is killed unless keep is true; with keep the session stays addressable by sessionId or '
+        + 'name for pty_read, pty_write and pty_kill. shell: true takes command as one platform command line '
+        + '(cmd.exe /d /s /c on Windows, /bin/sh -c elsewhere) and requires args to be empty. Use this for '
+        + 'commands whose output you want once; use pty_spawn for long-lived work you will talk to over several calls.',
+      inputSchema: z.object({
+        command: z.string().describe('Executable to run: a name resolved on PATH, an absolute path, or — with shell: true — one command line.'),
+        args: z.array(z.string()).optional().describe('Arguments for command, one array entry each. Must be empty when shell is true.'),
+        cwd: z.string().optional().describe('Working directory for the command. Must exist. Defaults to the server process cwd.'),
+        env: z.record(z.string(), z.string()).optional().describe('Extra environment variables, merged over the server environment.'),
+        stdin: z.string().optional().describe('Text written to the command stdin immediately after spawn, with no newline added.'),
+        timeoutMs: z.number().int().min(1).max(3600000).optional().describe('Give up after this many milliseconds (default 120000, max 3600000).'),
+        maxBytes: z.number().int().min(1).max(1048576).optional().describe('Maximum bytes of data to return (default 1048576); the rest is drained and reported in bytes with truncated: true.'),
+        stripAnsi: z.boolean().optional().describe('Remove ANSI escape sequences from data (default true).'),
+        match: z.string().optional().describe('Regular expression (at most 200 characters) that ends the run early when the output matches it.'),
+        shell: z.boolean().optional().describe('Run command as one platform command line through cmd.exe /d /s /c on Windows or /bin/sh -c elsewhere (default false).'),
+        name: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/).optional().describe('Optional session name (1-64 characters: letter or digit first, then letters, digits, ".", "_" or "-"). A live name is refused rather than reused.'),
+        keep: z.boolean().optional().describe('Leave the session running on match or timeout instead of killing the tree (default false).'),
+      }),
+      outputSchema: RUN_OUTPUT,
+      annotations: MUTATING,
+    },
+    wrap(async (args) => manager.run(args)),
+  );
+
+  server.registerTool(
     'pty_spawn',
     {
       title: 'Spawn interactive terminal',
       description:
-        'Start a program in a persistent pseudo-terminal and return {sessionId, pid, title}. '
+        'Start a program in a persistent pseudo-terminal and return {sessionId, pid, title, name, reused}. '
         + 'The program keeps running until pty_kill or its own exit; nothing is run through a shell, '
         + 'so command and args are passed exactly as given. On Windows a bare name is resolved through '
         + 'PATH and PATHEXT, and a .cmd/.bat shim (npm, npx, pnpm, yarn, tsc) runs through cmd /c with its '
-        + 'arguments quoted. Use this for anything you need to talk to '
-        + '(dev servers, REPLs, installers that prompt), not for commands whose output you want once.',
+        + 'arguments quoted. Give a name to address the session by name later; a live name returns that same '
+        + 'session with reused: true unless reuse is false, which is invalid_args. Use this for anything you '
+        + 'need to talk to (dev servers, REPLs, installers that prompt), not for commands whose output you want once.',
       inputSchema: z.object({
         command: z.string().describe('Executable to run: a name resolved on PATH, or an absolute path. No shell string.'),
         args: z.array(z.string()).optional().describe('Arguments for command, one array entry each.'),
@@ -131,6 +187,8 @@ export function createServer(options = {}) {
         rows: z.number().int().min(1).max(1000).optional().describe('Terminal rows (default 24).'),
         title: z.string().optional().describe('Short label for this session, shown by pty_list. Defaults to the command name.'),
         description: z.string().optional().describe('What this session is for, in 5-10 words, so a later read of pty_list makes sense on its own. Optional (defaults to the title) and at most 200 characters.'),
+        name: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/).optional().describe('Optional stable name (1-64 characters: letter or digit first, then letters, digits, ".", "_" or "-"). Every sessionId input accepts it too.'),
+        reuse: z.boolean().optional().describe('When name is already used by a live session, return that session instead of spawning (default true). false makes it invalid_args with name_taken.'),
       }),
       outputSchema: SPAWN_OUTPUT,
       annotations: MUTATING,
@@ -149,7 +207,7 @@ export function createServer(options = {}) {
         + '{data, cursor, exited, exitCode, dropped, matched, incomplete, truncated}. Without waitMs nothing '
         + 'is read, so a caller that expects output must either pass waitMs here or call pty_read next.',
       inputSchema: z.object({
-        sessionId: z.string().describe('Session id returned by pty_spawn.'),
+        sessionId: z.string().describe('Session id or name: the id pty_spawn or run returned, or the name given at spawn.'),
         data: z.string().describe('Text to send. Escape sequences such as \\u0003 (Ctrl+C) are sent literally.'),
         newline: z.boolean().optional().describe('Append a carriage return after data (default true).'),
         waitMs: z.number().int().min(0).max(10000).optional().describe('After writing, wait up to this many milliseconds for a reply and return it (default 0: write only).'),
@@ -191,7 +249,7 @@ export function createServer(options = {}) {
         + 'session exits, or waitMs runs out, then reports matched: false on timeout — so a non-zero waitMs is what '
         + 'makes match useful.',
       inputSchema: z.object({
-        sessionId: z.string().describe('Session id returned by pty_spawn.'),
+        sessionId: z.string().describe('Session id or name: the id pty_spawn or run returned, or the name given at spawn.'),
         cursor: z.number().int().min(0).optional().describe('Byte offset from the previous read. Omit to read from the start of the buffer.'),
         maxBytes: z.number().int().min(1).max(1048576).optional().describe('Maximum bytes to return (default 8000).'),
         waitMs: z.number().int().min(0).max(10000).optional().describe('Wait up to this many milliseconds for new output (default 0).'),
@@ -223,7 +281,7 @@ export function createServer(options = {}) {
         + '{ok, cols, rows} for the size now in force, which pty_list also reports. A call naming neither dimension '
         + 'is invalid_args; resizing a session whose program has already exited is pty_resize_failed.',
       inputSchema: z.object({
-        sessionId: z.string().describe('Session id returned by pty_spawn.'),
+        sessionId: z.string().describe('Session id or name: the id pty_spawn or run returned, or the name given at spawn.'),
         cols: z.number().int().min(1).max(1000).optional().describe('Terminal columns to apply. Omit to keep the current columns; at least one of cols and rows is required.'),
         rows: z.number().int().min(1).max(1000).optional().describe('Terminal rows to apply. Omit to keep the current rows; at least one of cols and rows is required.'),
       }),
@@ -244,7 +302,7 @@ export function createServer(options = {}) {
         + 'session returns ok:true, exited:true. The session stays listed with its exit code so its last output '
         + 'can still be read.',
       inputSchema: z.object({
-        sessionId: z.string().describe('Session id returned by pty_spawn.'),
+        sessionId: z.string().describe('Session id or name: the id pty_spawn or run returned, or the name given at spawn.'),
         signal: z.string().optional().describe('POSIX signal name (default SIGTERM). Ignored on Windows, where the process tree is terminated.'),
       }),
       outputSchema: KILL_OUTPUT,
@@ -258,11 +316,12 @@ export function createServer(options = {}) {
     {
       title: 'List terminals',
       description:
-        'List sessions this server knows about, newest last, one page at a time: sessionId, pid, title, command, '
-        + 'args, cwd, description, cols, rows, exited, exitCode, bytes emitted, and createdAt. cols and rows are the '
-        + 'size in force now, so a session resized with pty_resize reports the new geometry here. Returns '
-        + '{sessions, total, nextOffset}: total counts every session known, and nextOffset is null on the last page. '
-        + 'Use it to recover a session id you lost, or to recall what an existing session was for.',
+        'List sessions this server knows about, newest last, one page at a time: sessionId, name, pid, title, '
+        + 'command, args, cwd, description, cols, rows, exited, exitCode, bytes emitted, and createdAt. name is the '
+        + 'name given at spawn (or null). cols and rows are the size in force now, so a session resized with '
+        + 'pty_resize reports the new geometry here. Returns {sessions, total, nextOffset}: total counts every '
+        + 'session known, and nextOffset is null on the last page. Use it to recover a session id or name you lost, '
+        + 'or to recall what an existing session was for.',
       inputSchema: z.object({
         limit: z.number().int().min(1).max(200).optional().describe('Sessions to return (default 50, max 200).'),
         offset: z.number().int().min(0).optional().describe('Sessions to skip from the oldest (default 0).'),

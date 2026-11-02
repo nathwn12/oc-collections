@@ -28,8 +28,11 @@ export function invalidArgs(message) {
   return new JanuaError(ERROR_CODES.INVALID_ARGS, message);
 }
 
-export function sessionNotFound(sessionId) {
-  return new JanuaError(ERROR_CODES.SESSION_NOT_FOUND, `no session with id "${sessionId}"`);
+export function sessionNotFound(reference) {
+  return new JanuaError(
+    ERROR_CODES.SESSION_NOT_FOUND,
+    `no session with id or name "${reference}"`,
+  );
 }
 
 export function describeCause(err) {
