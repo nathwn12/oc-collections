@@ -428,16 +428,17 @@ function killPipe(session, signal) {
 
 export const MAX_MATCH_PATTERN = 200;
 
-// A poll, not a busy wait: the event loop must stay free for the PTY's own exit
-// callback while the kill is being confirmed.
+// A poll, not a busy wait: the loop stays free for the child's own exit while
+// the kill is being confirmed. The timer is deliberately referenced: a pipe
+// session has no PTY handle keeping the loop alive, so an unref'd poll would
+// let Node report event-loop-resolved while the kill is still pending.
 async function waitForGone(isGone, timeoutMs, pollMs) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     if (isGone()) return true;
     if (Date.now() >= deadline) return false;
     await new Promise((resolve) => {
-      const timer = setTimeout(resolve, pollMs);
-      if (typeof timer.unref === 'function') timer.unref();
+      setTimeout(resolve, pollMs);
     });
   }
 }
