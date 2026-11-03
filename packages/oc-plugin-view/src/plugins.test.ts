@@ -54,6 +54,28 @@ describe("installedPlugins", () => {
 })
 
 describe("labelOf", () => {
+  test("strips one trailing .host segment from server entry ids", () => {
+    expect(
+      labelOf(plugin({ id: "flight-deck.host", source: { type: "package", target: "flight-deck" } })),
+    ).toBe("flight-deck")
+    expect(labelOf(plugin({ id: "oc-talk", source: { type: "package", target: "oc-talk" } }))).toBe(
+      "oc-talk",
+    )
+    expect(
+      labelOf(
+        plugin({ id: "universal-modder", source: { type: "package", target: "universal-modder" } }),
+      ),
+    ).toBe("universal-modder")
+    expect(
+      labelOf(
+        plugin({ id: "oc-plugin-view.host", source: { type: "package", target: "oc-plugin-view" } }),
+      ),
+    ).toBe("oc-plugin-view")
+    expect(labelOf(plugin({ id: "a.host.host", source: { type: "package", target: "a" } }))).toBe(
+      "a.host",
+    )
+  })
+
   test("falls back from id to target to path to plugin", () => {
     expect(labelOf(pkg)).toBe("other-plugin")
     expect(labelOf(plugin({ source: { type: "package", target: "@scope/name" } }))).toBe("@scope/name")
