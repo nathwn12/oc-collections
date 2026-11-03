@@ -1,0 +1,65 @@
+{
+  "name": "oc-plugin-view",
+  "version": "0.1.0",
+  "description": "A Plugins section for the OpenCode sidebar that lists installed and loaded server plugins.",
+  "type": "module",
+  "license": "MIT",
+  "author": "nathwn12",
+  "homepage": "https://github.com/nathwn12/oc-collections/tree/main/packages/oc-plugin-view",
+  "bugs": "https://github.com/nathwn12/oc-collections/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nathwn12/oc-collections.git",
+    "directory": "packages/oc-plugin-view"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "tui",
+    "plugin"
+  ],
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./dist/index.js"
+    },
+    "./tui": {
+      "types": "./src/tui.tsx",
+      "import": "./dist/tui.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "compile": "bun scripts/build.ts",
+    "check": "bun run typecheck && bun test",
+    "check:dist": "bun run compile && git diff --exit-code -- dist",
+    "prepublishOnly": "bun run check && bun run compile"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@opencode/plugin": "^2.2.5"
+  },
+  "peerDependencies": {
+    "@opentui/core": ">=0.8.0",
+    "@opentui/solid": ">=0.8.0",
+    "solid-js": ">=1.9.0"
+  },
+  "devDependencies": {
+    "@opencode/plugin": "2.2.5",
+    "@opentui/core": "0.8.0",
+    "@opentui/solid": "0.8.0",
+    "@types/bun": "^1.4.4",
+    "solid-js": "1.9.18",
+    "typescript": "^5.9.3"
+  }
+}
