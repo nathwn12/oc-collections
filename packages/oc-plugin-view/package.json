@@ -33,8 +33,13 @@
     "src",
     "README.md",
     "LICENSE",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "!src/**/*.test.*"
   ],
+  "engines": {
+    "node": ">=22",
+    "bun": ">=1.4.0"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "bun test",

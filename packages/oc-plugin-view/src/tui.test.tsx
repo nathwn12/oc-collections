@@ -34,11 +34,7 @@ function plugin(id: string, status: "active" | "failed"): InstalledPlugin {
 /** Mirrors the slot render: the store lives at the host boundary, the rendered props are plain values. */
 function harness(items: InstalledPlugin[], open = true) {
   const [state, setState] = createStore({ items, open })
-  let lastToggle = 0
   const onToggle = () => {
-    const now = Date.now()
-    if (now - lastToggle < 200) return
-    lastToggle = now
     if (state.items.length <= 2) return
     setState("open", (value) => !value)
   }
@@ -100,7 +96,6 @@ test("header click collapses and expands the section", async () => {
     expect(collapsed).not.toContain("• b")
     expect(collapsed).not.toContain("• c")
 
-    await Bun.sleep(210)
     await app.mockMouse.click(2, 0)
     await app.renderOnce()
     const reopened = app.captureCharFrame()
@@ -113,12 +108,75 @@ test("header click collapses and expands the section", async () => {
   }
 })
 
-test("setup loads the filtered list once, subscribes, and unsubscribes on cleanup", async () => {
+test("a click toggles exactly once, even when held past 200 ms", async () => {
+  const view = harness([plugin("a", "active"), plugin("b", "active"), plugin("c", "active")])
+  const app = await testRender(() => view, { width: 44, height: 10 })
+  try {
+    await app.renderOnce()
+    expect(app.captureCharFrame()).toContain("▼ Plugins")
+
+    await app.mockMouse.click(2, 0)
+    await app.renderOnce()
+    expect(app.captureCharFrame()).toContain("▶ Plugins (3 active)")
+
+    const reopen = harness([plugin("a", "active"), plugin("b", "active"), plugin("c", "active")])
+    const held = await testRender(() => reopen, { width: 44, height: 10 })
+    try {
+      await held.renderOnce()
+      expect(held.captureCharFrame()).toContain("▼ Plugins")
+      await held.mockMouse.pressDown(2, 0)
+      await Bun.sleep(250)
+      await held.mockMouse.release(2, 0)
+      await held.renderOnce()
+      expect(held.captureCharFrame()).toContain("▶ Plugins (3 active)")
+    } finally {
+      held.renderer.destroy()
+    }
+  } finally {
+    app.renderer.destroy()
+  }
+})
+
+test("a row click dispatches plugins.list", async () => {
+  let dispatched: string | undefined
+  const ctx = {
+    theme: {
+      text: {
+        base: color,
+        muted: color,
+        feedback: {
+          success: { base: color },
+          error: { base: color },
+        },
+      },
+    },
+    keymap: {
+      dispatch: (action: string) => {
+        dispatched = action
+      },
+    },
+  } as unknown as Plugin.Context
+  const items = [plugin("alpha", "active"), plugin("beta", "failed")]
+  const view = () => <SidebarPlugins context={ctx} items={items} open={true} onToggle={() => {}} />
+  const app = await testRender(() => view, { width: 44, height: 10 })
+  try {
+    await app.renderOnce()
+    expect(app.captureCharFrame()).toContain("alpha")
+    await app.mockMouse.click(4, 1)
+    await app.renderOnce()
+    expect(dispatched).toBe("plugins.list")
+  } finally {
+    app.renderer.destroy()
+  }
+})
+
+test("setup loads the filtered list, subscribes, and disposes the slot plus subscription on cleanup", async () => {
   let store: { items: InstalledPlugin[] } | undefined
   let view: { key: string; initial: { open: boolean } } | undefined
   let listed: string | undefined
   let subscribed: string | undefined
   let unsubscribed = false
+  let slotDisposed = false
   let claim: { append?: string } | undefined
   const context = {
     location: { directory: "/workspace" },
@@ -136,6 +194,8 @@ test("setup loads the filtered list once, subscribes, and unsubscribes on cleanu
                 state: { status: "failed", error: "boom" },
               },
               { source: { type: "local", path: "/plugins/a.ts" }, state: { status: "active" } },
+              { id: "oc-plugin-view.host", source: { type: "package", target: "oc-plugin-view" }, state: { status: "active" } },
+              { source: { type: "package", target: "oc-plugin-view" }, state: { status: "active" } },
             ],
           }
         },
@@ -165,6 +225,9 @@ test("setup loads the filtered list once, subscribes, and unsubscribes on cleanu
     ui: {
       slot: (value: { append?: string }) => {
         claim = value
+        return () => {
+          slotDisposed = true
+        }
       },
     },
   } as unknown as Plugin.Context
@@ -179,4 +242,70 @@ test("setup loads the filtered list once, subscribes, and unsubscribes on cleanu
   expect(store?.items.map((item) => item.id ?? item.source.path)).toEqual(["/plugins/a.ts", "broken", "zeta"])
   cleanup?.()
   expect(unsubscribed).toBe(true)
+  expect(slotDisposed).toBe(true)
+})
+
+test("a stale load result is dropped and no write happens after teardown", async () => {
+  let store: { items: InstalledPlugin[] } | undefined
+  let reloader: (() => void) | undefined
+  let slotDisposed = false
+  const resolvers: Array<(value: { data: InstalledPlugin[] }) => void> = []
+  const context = {
+    location: { directory: "/workspace" },
+    client: {
+      plugin: {
+        list: () => new Promise<{ data: InstalledPlugin[] }>((resolve) => resolvers.push(resolve)),
+      },
+    },
+    data: {
+      location: { default: () => ({ directory: "/fallback" }) },
+      on: (_type: string, callback: () => void) => {
+        reloader = callback
+        return () => {}
+      },
+    },
+    storage: {
+      memory: (_key: string, { initial }: { initial: { items: InstalledPlugin[] } }) => {
+        const [state, set] = createStore(initial)
+        store = state
+        return [state, (mutation: (draft: { items: InstalledPlugin[] }) => void) => set(produce(mutation))]
+      },
+      store: (_key: string, { initial }: { initial: { open: boolean } }) => {
+        const [state, set] = createStore(initial)
+        return [state, async (mutation: (draft: { open: boolean }) => void) => set(produce(mutation))]
+      },
+    },
+    ui: {
+      slot: () => () => {
+        slotDisposed = true
+      },
+    },
+  } as unknown as Plugin.Context
+
+  const cleanup = await definition.setup(context)
+  expect(resolvers.length).toBe(1)
+  reloader?.()
+  expect(resolvers.length).toBe(2)
+
+  resolvers[1]({
+    data: [{ id: "zeta", source: { type: "package", target: "zeta" }, state: { status: "active" } }],
+  })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(store?.items.map((item) => item.id)).toEqual(["zeta"])
+
+  resolvers[0]({
+    data: [{ id: "alpha", source: { type: "package", target: "alpha" }, state: { status: "active" } }],
+  })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(store?.items.map((item) => item.id)).toEqual(["zeta"])
+
+  reloader?.()
+  expect(resolvers.length).toBe(3)
+  cleanup?.()
+  expect(slotDisposed).toBe(true)
+  resolvers[2]({
+    data: [{ id: "late", source: { type: "package", target: "late" }, state: { status: "active" } }],
+  })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(store?.items.map((item) => item.id)).toEqual(["zeta"])
 })
