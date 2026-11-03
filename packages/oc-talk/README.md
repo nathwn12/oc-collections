@@ -1,6 +1,6 @@
 # oc-talk
 
-Gives an agent eight tools to run the session lifecycle across the sessions next door: find a peer, hand it a message, read what it answered, park it, wake it, close it.
+Gives an agent thirteen tools to run the session lifecycle and hold a two-way conversation across the sessions next door: find a peer, hand it a message, read what it answered, park it, wake it, close it.
 
 ## Install
 
@@ -10,7 +10,7 @@ The package is published on npm as `oc-talk`, and OpenCode installs it from the 
 { "plugins": ["oc-talk@0.1.8"] }
 ```
 
-Restart OpenCode. The plugin registers its eight tools when the session starts, and uses the same `opencode` binary that is running it.
+Restart OpenCode. The plugin registers its thirteen tools when the session starts, and uses the same `opencode` binary that is running it.
 
 ### Development
 
@@ -41,14 +41,33 @@ Restart OpenCode either way.
 
 | Tool | What it does for you |
 | --- | --- |
-| `session_list` | Turns a title you remember into the `ses_…` id every other tool accepts, one page at a time. |
-| `session_send` | Delivers one message to a peer verbatim and lets its loop run; it preempts the peer's running turn unless you ask for `queue`. |
-| `session_read` | Reads the peer's newest messages, verbatim, newest first — nothing is pushed to you. |
-| `session_close` | Renames to `done <work>` and compacts, in that order, so a finished session stops reading as live. |
-| `session_open` | Creates `active <work>`, or revives the one live session whose title matches, and is the only way back from `done`. |
-| `session_kick` | Wakes a live session: marks it active, then delivers one message ahead of its running turn. |
-| `session_park` | Marks a session idle by title only — no message, no compaction, nothing already running is touched. |
-| `session_kill` | Parks the session and interrupts its active execution, covering that session alone. |
+| `session_list` | Finds peers by id or title, or one dispatcher's workers with `parentID`; lists only, never sends. |
+| `session_send` | Delivers one message verbatim with optional `metadata`, steering the peer by default. |
+| `session_read` | Reads the peer's newest messages newest-first, with `cursor`/`since` paging and `metadata` rows. |
+| `session_close` | Renames to `done <work>` then compacts, leaving an already-closed session byte-identical. |
+| `session_open` | Creates `active <work>` or revives the one live match; the only way back from `done`. |
+| `session_kick` | Renames to `active` then delivers one message ahead of the peer's running turn. |
+| `session_park` | Marks a session idle by title only — no message, no compaction. |
+| `session_kill` | Parks the session then interrupts that session alone; `cascaded` is always `false`. |
+| `session_ask` | Sends one question, waits until the peer idles, and returns only that question's answers. |
+| `session_wait` | Blocks until the peer idles without sending, giving up with `timedOut:true` after `waitMs`. |
+| `session_reply` | Answers the asker with `text` carrying `metadata.re` for the message id it answers. |
+| `session_thread` | Reads one exchange both-sides from a message id, stopping before the next question. |
+| `session_broadcast` | Asks many peers at once and returns one row per target, never a rejected batch. |
+
+## Two sessions, one exchange
+
+A asks B, B answers, then B asks back. Each answer is tied to its question id:
+
+```json
+session_ask { "to": "worker build", "text": "Status?" }
+→ { "askedMessageID": "msg_q1", "answer": [{ "id": "msg_a1", "text": "Green." }], "timedOut": false }
+session_reply { "to": "dispatcher", "text": "Green.", "re": "msg_q1" }
+session_ask { "to": "dispatcher", "text": "Next?" }
+→ { "askedMessageID": "msg_q2", "answer": [{ "id": "msg_a2", "text": "Ship it." }], "timedOut": false }
+```
+
+The reply is correlated by message id (`askedMessageID` / `re`), never by "whatever came last": `session_ask` returns only the assistant messages after its own accepted message up to the next user message, so a later unrelated exchange never leaks in.
 
 ## Requirements
 
