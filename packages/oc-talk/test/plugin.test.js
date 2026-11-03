@@ -1,10 +1,12 @@
 // Offline contract tests for the plugin surface.
 //
-// These prove what a host can break without any peer running: all eight verbs
-// register with their exact routing descriptions, one prefix rewrite never
-// stacks, `done` is a lock the lifecycle verbs refuse while `open` alone lifts
-// it, and title resolution answers with candidates or near-misses instead of a
-// guess — plus that no removal verb exists anywhere in the source.
+// These prove what a host can break without any peer running: all thirteen
+// verbs register with their exact routing descriptions, one prefix rewrite
+// never stacks, `done` is a lock the lifecycle verbs refuse while `open` alone
+// lifts it, title resolution answers with candidates or near-misses instead of
+// a guess, and an ask answers the exact message it asked — proven positionally
+// against a transcript with a later unrelated exchange above it — plus that no
+// removal verb exists anywhere in the source.
 //
 // Nothing here reaches the network or starts a real peer: every resolution test
 // injects its own session scan, and the only tool calls made are ones that fail
@@ -23,7 +25,7 @@ let loads = 0;
 // state, and a cached module would carry one test's registration into the next.
 const load = () => import(pathToFileURL(ENTRY).href + '?n=' + ++loads);
 
-const EIGHT = [
+const TOOLS = [
   'session_list',
   'session_send',
   'session_read',
@@ -32,19 +34,24 @@ const EIGHT = [
   'session_kick',
   'session_park',
   'session_kill',
+  'session_ask',
+  'session_wait',
+  'session_reply',
+  'session_thread',
+  'session_broadcast',
 ];
 
 const DESCRIPTIONS = {
   session_list:
-    'List every live OpenCode session as id, title, directory and last-update time. ' +
+    'List every live OpenCode session as id, title, directory and last-update time; pass `parentID` to list only one dispatcher\'s workers. ' +
     'Fire when you need to find a peer session to talk to, or to turn a title into an id. ' +
     'Lists only: it never sends, reads, wakes, or steers anything.',
   session_send:
-    'Deliver one text message to another session by id (ses_...) or unambiguous title substring, with resume defaulting to true. ' +
+    'Deliver one text message to another session by id (ses_...) or unambiguous title substring, with resume defaulting to true; an optional `metadata` object travels in the prompt body so the peer can see who sent it and which message it answers. ' +
     'Fire instead of dispatching a lane whenever a peer must act; `delivery` is `steer` by default so a correction preempts the peer\'s running turn, and `queue` waits behind it. ' +
     'Refuses a `done ` session with a typed error, and never guesses: a missing or ambiguous title fails with candidates.',
   session_read:
-    "Read another session's newest messages by id (ses_...) or unambiguous title substring, newest first, default 20, text verbatim. " +
+    "Read another session's newest messages by id (ses_...) or unambiguous title substring, newest first, default 20, text verbatim; `cursor` pages forward, `since` keeps only newer messages, and each row carries `metadata`, `outcome`, `finish` and `completed` where the peer sent them. " +
     'Fire when you need what a peer actually said. ' +
     'Reads only: it never sends, wakes, or steers the other session, and never guesses — a missing or ambiguous title fails with candidates.',
   session_close:
@@ -67,6 +74,23 @@ const DESCRIPTIONS = {
     'Stop a live session hard: rewrite its title to `parked <work>`, then interrupt its active execution; park is graceful, kill is hard. ' +
     'The interrupt covers only the target session: cascaded is always false and live child sessions return as children ids, never claimed stopped. ' +
     'Refuses a `done ` session with a typed error; session_open is the only revival path.',
+  session_ask:
+    'Send one message to a peer and wait until it is idle, then return the assistant messages that answer that exact message and nothing after the next question. ' +
+    'Fire when you need a peer\'s answer, not just its newest text; `delivery` is `steer` by default so the question preempts the peer\'s running turn, and `queue` waits behind it. ' +
+    'A peer that never idles within `waitMs` returns `timedOut:true` with what exists, never a success.',
+  session_wait:
+    'Block until a peer session is idle without sending anything, giving up after `waitMs` with `timedOut:true`. ' +
+    'Fire when an answer you already asked for needs time to land before you read it.',
+  session_reply:
+    'Answer the session that asked you: send one message carrying `metadata.re` with the message id it answers. ' +
+    'Fire to close someone\'s `session_ask` with your result; `delivery` is `steer` by default so the reply preempts the peer\'s running turn, and `queue` waits behind it. ' +
+    'Refuses a `done ` session with a typed error, like `session_send`.',
+  session_thread:
+    'Read one exchange from a peer as an ordered both-sides view starting at the given message id, stopping before the next question. ' +
+    'Fire when an answer needs its asking message beside it to make sense.',
+  session_broadcast:
+    'Ask one question of many peer sessions at once and return one row per target with its answer or its error. ' +
+    'Fire to fan out to a dispatcher\'s workers; one peer\'s failure is a row, never a rejection.',
 };
 
 const SESSIONS = [
@@ -89,7 +113,7 @@ function host() {
   return { ctx, added };
 }
 
-test('the V2 definition registers all eight tools through setup', async () => {
+test('the V2 definition registers all thirteen tools through setup', async () => {
   const mod = await load();
 
   // A host with no tool domain registers nothing and must not throw.
@@ -98,7 +122,7 @@ test('the V2 definition registers all eight tools through setup', async () => {
 
   const { ctx, added } = host();
   await mod.default.setup(ctx);
-  assert.deepEqual(added.map((t) => t.name), EIGHT);
+  assert.deepEqual(added.map((t) => t.name), TOOLS);
 
   for (const tool of added) {
     assert.equal(typeof tool.execute, 'function');
@@ -109,8 +133,9 @@ test('the V2 definition registers all eight tools through setup', async () => {
 
 // The send-then-poll wait verb queued its message behind the long turn it then
 // waited on, so it was removed rather than fixed. An absent tool must fail here
-// before a host can offer it again.
-test('session_await is not registered, and the surface is exactly the eight verbs', async () => {
+// before a host can offer it again. Its `timeoutMs` spelling stays banned with
+// it; the conversation verbs' bounded `waitMs` is the legitimate budget now.
+test('session_await is not registered, and the surface is exactly the thirteen verbs', async () => {
   const mod = await load();
   const { ctx, added } = host();
   await mod.default.setup(ctx);
@@ -118,13 +143,15 @@ test('session_await is not registered, and the surface is exactly the eight verb
 
   assert.ok(!names.includes('session_await'), 'session_await must not be registered');
   // Exactly the remaining verbs, in order: no ninth verb and no renamed one.
-  assert.deepEqual(names, EIGHT);
-  assert.equal(names.length, 8);
+  assert.deepEqual(names, TOOLS);
+  assert.equal(names.length, 13);
 
   // The source carries no registration for it either, nor its wait budget, so a
-  // stray block cannot come back with the tool list silently left at eight.
+  // stray block cannot come back with the tool list silently left at thirteen.
+  // `waitMs` is allowed: it is the bounded budget the conversation verbs take.
   const src = fs.readFileSync(ENTRY, 'utf8');
-  assert.doesNotMatch(src, /session_await|timeoutMs|AWAIT_/);
+  assert.doesNotMatch(src, /session_await|AWAIT_/);
+  assert.match(src, /waitMs/);
 });
 
 // The port itself. The V2 host loads a V1 object export and never calls its
@@ -443,7 +470,7 @@ test('a reload re-registers tools: setup twice leaves exactly one live registrat
 
   await mod.ensureTools(ctx);
   assert.equal(registrations.length, 1, 'the first call must register');
-  assert.deepEqual(registrations[0].added.map((t) => t.name), EIGHT);
+  assert.deepEqual(registrations[0].added.map((t) => t.name), TOOLS);
   assert.equal(registrations[0].disposed, 0, 'the first registration starts live');
 
   // The reload shape: the host disposed the previous transform and re-ran setup
@@ -453,7 +480,7 @@ test('a reload re-registers tools: setup twice leaves exactly one live registrat
   assert.equal(registrations.length, 2, 'a reload must register again, not skip');
   assert.equal(registrations[0].disposed, 1, 'the previous registration must be disposed');
   assert.equal(registrations[1].disposed, 0, 'the new registration must be the live one');
-  assert.deepEqual(registrations[1].added.map((t) => t.name), EIGHT);
+  assert.deepEqual(registrations[1].added.map((t) => t.name), TOOLS);
 
   // The same shape through the public surface the host actually calls.
   const viaSetup = reloadHost();
@@ -473,7 +500,7 @@ test('setup resolves to void and leaves exactly one live registration', async ()
   // registration across a reload.
   assert.equal(await mod.default.setup(ctx), undefined);
   assert.equal(registrations.length, 1, 'setup must register');
-  assert.deepEqual(registrations[0].added.map((t) => t.name), EIGHT);
+  assert.deepEqual(registrations[0].added.map((t) => t.name), TOOLS);
   assert.equal(registrations[0].disposed, 0, 'the registration is live after setup');
 });
 
@@ -496,8 +523,8 @@ test('two host locations each keep their own live registration', async () => {
   assert.equal(second.registrations.length, 1, 'the second location must register');
   assert.equal(first.registrations[0].disposed, 0, 'the second location must not dispose the first location\'s tools');
   assert.equal(second.registrations[0].disposed, 0, 'the second location\'s own registration is live');
-  assert.deepEqual(first.registrations[0].added.map((t) => t.name), EIGHT);
-  assert.deepEqual(second.registrations[0].added.map((t) => t.name), EIGHT);
+  assert.deepEqual(first.registrations[0].added.map((t) => t.name), TOOLS);
+  assert.deepEqual(second.registrations[0].added.map((t) => t.name), TOOLS);
 
   // A reload of one location disposes only its own previous registration.
   await mod.ensureTools(first.ctx);
@@ -515,5 +542,296 @@ test('two host locations each keep their own live registration', async () => {
   assert.equal(second.registrations[1].disposed, 0);
   assert.equal(first.registrations[1].disposed, 0, 'the other location stays live across a setup');
 });
+
+// ---- Conversation verbs: ask, wait, reply, thread, broadcast ----
+
+// A fake estate for one peer: the accepted question plus two answers, with a
+// later unrelated exchange above them. Newest first, as the backend returns.
+function askTranscript() {
+  return [
+    { id: 'msg_new_asst', type: 'assistant', time: { created: 60 }, text: 'LATER: unrelated answer' },
+    { id: 'msg_new_user', type: 'user', time: { created: 59 }, text: 'unrelated later question' },
+    { id: 'msg_ans2', type: 'assistant', time: { created: 50 }, text: 'second', outcome: 'completed' },
+    { id: 'msg_ans1', type: 'assistant', time: { created: 49 }, text: 'first' },
+    { id: 'msg_ours', type: 'user', time: { created: 40 }, text: 'the question' },
+    { id: 'msg_old', type: 'assistant', time: { created: 10 }, text: 'older exchange' },
+  ];
+}
+
+// A fake backend for one peer: prompt accepts with a known id, wait is idle
+// at once, and the transcript above is what a read finds.
+function askPeerRunner(askedID = 'msg_ours', transcript = askTranscript()) {
+  return async (args) => {
+    const [verb, target] = args;
+    if (verb === 'session.get') return { ok: true, json: { data: { id: 'ses_peer', title: 'active peer' } } };
+    if (verb === 'post' && String(target).endsWith('/wait')) return { ok: true, json: { data: {} } };
+    if (verb === 'post' && String(target).endsWith('/prompt')) {
+      return { ok: true, json: { data: { id: askedID, sessionID: 'ses_peer', time: { created: 40 } } } };
+    }
+    if (verb === 'session.message.list') return { ok: true, json: { data: transcript } };
+    return { ok: true, json: { data: {} } };
+  };
+}
+
+test('session_ask returns only the assistant messages between our question and the next one', async () => {
+  const mod = await load();
+  mod.setApiRunner(askPeerRunner());
+  const { ctx, added } = host();
+  await mod.default.setup(ctx);
+  const ask = added.find((t) => t.name === 'session_ask');
+  const out = JSON.parse((await ask.execute({ to: 'ses_peer', text: 'the question', waitMs: 5000 })).content);
+  assert.equal(out.error, undefined, 'ask must succeed: ' + JSON.stringify(out));
+  assert.equal(out.sessionID, 'ses_peer');
+  assert.equal(out.title, 'active peer');
+  assert.equal(out.askedMessageID, 'msg_ours');
+  // Positional, not "the last assistant message": the later unrelated exchange
+  // above must not leak in, and nothing below the question may either.
+  assert.deepEqual(out.answer, [
+    { id: 'msg_ans1', text: 'first' },
+    { id: 'msg_ans2', text: 'second' },
+  ]);
+  assert.equal(out.outcome, 'completed');
+  assert.equal(out.timedOut, false);
+  assert.ok(typeof out.waitedMs === 'number' && out.waitedMs >= 0);
+});
+
+test('a peer that never idles reports timedOut:true, never success', async () => {
+  const neverIdle = async (args) => {
+    const [verb, target] = args;
+    if (verb === 'session.get') return { ok: true, json: { data: { id: 'ses_busy', title: 'active busy' } } };
+    if (verb === 'post' && String(target).endsWith('/wait')) return { ok: false, code: 'timeout', detail: 'opencode api call exceeded 20000ms' };
+    if (verb === 'post' && String(target).endsWith('/prompt')) {
+      return { ok: true, json: { data: { id: 'msg_q', sessionID: 'ses_busy', time: { created: 1 } } } };
+    }
+    if (verb === 'session.message.list') {
+      return { ok: true, json: { data: [{ id: 'msg_q', type: 'user', time: { created: 1 }, text: 'q' }] } };
+    }
+    return { ok: true, json: { data: {} } };
+  };
+
+  const mod = await load();
+  mod.setApiRunner(neverIdle);
+  const { ctx, added } = host();
+  await mod.default.setup(ctx);
+  const wait = added.find((t) => t.name === 'session_wait');
+  const wout = JSON.parse((await wait.execute({ to: 'ses_busy', waitMs: 40 })).content);
+  assert.equal(wout.error, undefined);
+  assert.equal(wout.sessionID, 'ses_busy');
+  assert.equal(wout.timedOut, true, 'a wait that gave up must say so');
+  assert.ok(typeof wout.waitedMs === 'number' && wout.waitedMs >= 0);
+
+  // The ask path asks first, then reports the same flag with what exists.
+  const mod2 = await load();
+  mod2.setApiRunner(neverIdle);
+  const h2 = host();
+  await mod2.default.setup(h2.ctx);
+  const ask = h2.added.find((t) => t.name === 'session_ask');
+  const aout = JSON.parse((await ask.execute({ to: 'ses_busy', text: 'q', waitMs: 40 })).content);
+  assert.equal(aout.error, undefined, 'a timeout is a row with a flag, not a failure: ' + JSON.stringify(aout));
+  assert.equal(aout.timedOut, true, 'timedOut:true must be explicit, never a silent success');
+  assert.equal(aout.askedMessageID, 'msg_q');
+  assert.deepEqual(aout.answer, []);
+});
+
+test('session_broadcast answers the healthy peers when one peer throws', async () => {
+  const mod = await load();
+  mod.setApiRunner(async (args) => {
+    const [verb, target] = args;
+    const m = String(target || '');
+    const sid = (args.find((a) => String(a).startsWith('sessionID=')) || '').slice('sessionID='.length)
+      || (/\/api\/session\/([^/]+)/.exec(m) || [])[1]
+      || '';
+    if (verb === 'session.get') return { ok: true, json: { data: { id: sid, title: 'active ' + sid } } };
+    if (verb === 'post' && m.endsWith('/wait')) return { ok: true, json: { data: {} } };
+    if (verb === 'post' && m.endsWith('/prompt')) {
+      if (sid === 'ses_bad') throw new Error('boom');
+      return { ok: true, json: { data: { id: 'msg_q_' + sid, sessionID: sid, time: { created: 1 } } } };
+    }
+    if (verb === 'session.message.list') {
+      return {
+        ok: true,
+        json: {
+          data: [
+            { id: 'msg_a_' + sid, type: 'assistant', time: { created: 2 }, text: 'answer ' + sid },
+            { id: 'msg_q_' + sid, type: 'user', time: { created: 1 }, text: 'q' },
+          ],
+        },
+      };
+    }
+    return { ok: true, json: { data: {} } };
+  });
+  const { ctx, added } = host();
+  await mod.default.setup(ctx);
+  const bc = added.find((t) => t.name === 'session_broadcast');
+  const out = JSON.parse((await bc.execute({ targets: ['ses_ok1', 'ses_bad', 'ses_ok2'], text: 'status?', waitMs: 5000 })).content);
+  assert.equal(out.length, 3);
+  const [r1, r2, r3] = out;
+  assert.equal(r1.ok, true);
+  assert.equal(r1.sessionID, 'ses_ok1');
+  assert.deepEqual(r1.answer, [{ id: 'msg_a_ses_ok1', text: 'answer ses_ok1' }]);
+  assert.equal(r1.timedOut, false);
+  assert.equal(r2.ok, false, 'one peer failing must be a row, never a rejection');
+  assert.ok(r2.error, 'the failing row carries its error');
+  assert.equal(r3.ok, true);
+  assert.deepEqual(r3.answer, [{ id: 'msg_a_ses_ok2', text: 'answer ses_ok2' }]);
+});
+
+test('metadata travels in the prompt body, and reply marks re', async () => {
+  const mod = await load();
+  const calls = [];
+  mod.setApiRunner(async (args) => {
+    calls.push(args);
+    const [verb] = args;
+    if (verb === 'session.get') return { ok: true, json: { data: { id: 'ses_a', title: 'active work' } } };
+    if (verb === 'post') return { ok: true, json: { data: { id: 'msg_sent', sessionID: 'ses_a', time: { created: 1 } } } };
+    return { ok: true, json: { data: {} } };
+  });
+  const { ctx, added } = host();
+  await mod.default.setup(ctx);
+  const send = added.find((t) => t.name === 'session_send');
+  await send.execute({ to: 'ses_a', text: 'hi', metadata: { from: 'dispatcher' } });
+  assert.deepEqual(promptBody(calls).metadata, { from: 'dispatcher' });
+
+  const reply = added.find((t) => t.name === 'session_reply');
+  calls.length = 0;
+  const rout = JSON.parse((await reply.execute({ to: 'ses_a', text: 'done', re: 'msg_123' })).content);
+  assert.equal(rout.error, undefined);
+  assert.equal(rout.id, 'msg_sent');
+  assert.equal(rout.sessionID, 'ses_a');
+  assert.deepEqual(promptBody(calls).metadata, { re: 'msg_123' });
+
+  // A caller-supplied object merges instead of being replaced.
+  calls.length = 0;
+  await reply.execute({ to: 'ses_a', text: 'done', re: 'msg_123', metadata: { from: 'worker' } });
+  assert.deepEqual(promptBody(calls).metadata, { from: 'worker', re: 'msg_123' });
+});
+
+test('session_read carries peer metadata and pages with since/cursor', async () => {
+  const mod = await load();
+  const calls = [];
+  mod.setApiRunner(async (args) => {
+    calls.push(args);
+    const [verb] = args;
+    if (verb === 'session.get') return { ok: true, json: { data: { id: 'ses_a', title: 'active work' } } };
+    if (verb === 'session.message.list') {
+      return {
+        ok: true,
+        json: {
+          data: [
+            { id: 'msg_new', type: 'assistant', time: { created: 30, completed: 31 }, text: 'new', metadata: { from: 'peer' }, outcome: 'completed', finish: 'stop' },
+            { id: 'msg_mid', type: 'user', time: { created: 20 }, text: 'q' },
+            { id: 'msg_old', type: 'assistant', time: { created: 10 }, text: 'old' },
+          ],
+          cursor: { next: 'next-page' },
+        },
+      };
+    }
+    return { ok: true, json: { data: {} } };
+  });
+  const { ctx, added } = host();
+  await mod.default.setup(ctx);
+  const read = added.find((t) => t.name === 'session_read');
+
+  // No pagination args: the historical bare array, with extras appended after
+  // the four historical keys.
+  const plain = JSON.parse((await read.execute({ to: 'ses_a' })).content);
+  assert.equal(plain.length, 3);
+  assert.deepEqual(Object.keys(plain[0]), ['id', 'type', 'created', 'text', 'metadata', 'outcome', 'finish', 'completed']);
+  assert.deepEqual(plain[0].metadata, { from: 'peer' });
+  assert.equal(plain[0].completed, 31);
+
+  // since as a message id keeps only newer rows and returns the page shape.
+  const paged = JSON.parse((await read.execute({ to: 'ses_a', since: 'msg_mid' })).content);
+  assert.deepEqual(paged.messages.map((m) => m.id), ['msg_new']);
+  assert.equal(paged.cursor.next, 'next-page');
+
+  // since as a timestamp filters by creation time instead.
+  const timed = JSON.parse((await read.execute({ to: 'ses_a', since: 15 })).content);
+  assert.deepEqual(timed.messages.map((m) => m.id), ['msg_new', 'msg_mid']);
+
+  // cursor reaches the backend verbatim.
+  await read.execute({ to: 'ses_a', cursor: 'next-page' });
+  const listCall = calls.filter((a) => a[0] === 'session.message.list').pop();
+  assert.ok(listCall.includes('cursor=next-page'));
+});
+
+test('session_list passes parentID so a dispatcher can enumerate its workers', async () => {
+  const mod = await load();
+  const calls = [];
+  mod.setApiRunner(async (args) => {
+    calls.push(args);
+    return { ok: true, json: { data: [{ id: 'ses_w', title: 'worker one', location: { directory: '/w' }, time: { updated: 1 }, parentID: 'ses_p' }], cursor: {} } };
+  });
+  const { ctx, added } = host();
+  await mod.default.setup(ctx);
+  const list = added.find((t) => t.name === 'session_list');
+  const out = JSON.parse((await list.execute({ parentID: 'ses_p' })).content);
+  assert.deepEqual(out.sessions.map((s) => s.id), ['ses_w']);
+  assert.ok(calls.some((a) => a.includes('parentID=ses_p')), 'parentID must reach the backend');
+});
+
+test('session_thread shows one exchange both-sides in order', async () => {
+  const mod = await load();
+  mod.setApiRunner(askPeerRunner());
+  const { ctx, added } = host();
+  await mod.default.setup(ctx);
+  const thread = added.find((t) => t.name === 'session_thread');
+  const out = JSON.parse((await thread.execute({ to: 'ses_peer', messageID: 'msg_ours' })).content);
+  assert.equal(out.error, undefined);
+  assert.equal(out.sessionID, 'ses_peer');
+  assert.equal(out.messageID, 'msg_ours');
+  assert.deepEqual(out.messages.map((m) => m.id), ['msg_ours', 'msg_ans1', 'msg_ans2']);
+
+  const missing = JSON.parse((await thread.execute({ to: 'ses_peer', messageID: 'msg_nope' })).content);
+  assert.equal(missing.error, 'message_not_found');
+});
+
+test('ask, reply and broadcast steer by default and honour queue', async () => {
+  for (const name of ['session_ask', 'session_reply', 'session_broadcast']) {
+    const mod = await load();
+    const calls = [];
+    mod.setApiRunner(async (args) => {
+      calls.push(args);
+      const [verb, target] = args;
+      const m = String(target || '');
+      const sid = (args.find((a) => String(a).startsWith('sessionID=')) || '').slice('sessionID='.length)
+        || (/\/api\/session\/([^/]+)/.exec(m) || [])[1]
+        || 'ses_a';
+      if (verb === 'session.get') return { ok: true, json: { data: { id: sid, title: 'active work' } } };
+      if (verb === 'post' && m.endsWith('/wait')) return { ok: true, json: { data: {} } };
+      if (verb === 'post' && m.endsWith('/prompt')) {
+        return { ok: true, json: { data: { id: 'msg_q', sessionID: sid, time: { created: 1 } } } };
+      }
+      if (verb === 'session.message.list') {
+        return {
+          ok: true,
+          json: {
+            data: [
+              { id: 'msg_a', type: 'assistant', time: { created: 2 }, text: 'answer' },
+              { id: 'msg_q', type: 'user', time: { created: 1 }, text: 'q' },
+            ],
+          },
+        };
+      }
+      return { ok: true, json: { data: {} } };
+    });
+    const { ctx, added } = host();
+    await mod.default.setup(ctx);
+    const tool = added.find((t) => t.name === name);
+    const base = name === 'session_broadcast'
+      ? { targets: ['ses_a'], text: 'hi' }
+      : name === 'session_reply'
+        ? { to: 'ses_a', text: 'hi', re: 'msg_q' }
+        : { to: 'ses_a', text: 'hi', waitMs: 5000 };
+    const out = JSON.parse((await tool.execute(base)).content);
+    assert.equal(out.error, undefined, name + ' default run failed: ' + JSON.stringify(out));
+    assert.equal(promptBody(calls).delivery, 'steer', name + ' must steer by default');
+    calls.length = 0;
+    const out2 = JSON.parse((await tool.execute({ ...base, delivery: 'queue' })).content);
+    assert.equal(out2.error, undefined, name + ' override run failed: ' + JSON.stringify(out2));
+    assert.equal(promptBody(calls).delivery, 'queue', name + ' must honour queue');
+  }
+});
+
 
 
