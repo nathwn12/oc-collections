@@ -49,7 +49,7 @@ npm run check
 - `scripts/check-launcher.mjs` — offline validation for the npx launcher packages (bin, files, manifest consistency).
 - `Cargo.toml` — an intentionally empty virtual workspace: the frozen Rust MCP crates were removed on 2026-10-29 and their implementations now live in their own repositories; `members` stays an explicit empty list because a `crates/*` glob is an error when it matches nothing.
 - `packages/<name>/` — one family package per directory; each keeps its own manifest, tests, and version line.
-- `.github/workflows/check.yml` — index integrity, the offline doc check, the vocabulary guard, and the workspace-wide check.
+- `.github/workflows/ci.yml` — index integrity, the offline doc check, the vocabulary guard, and the workspace-wide check (static checks in the `static` job, workspace checks in the `workspaces` job).
 - `assets/signature.svg` — shared footer signature.
 - `.gitattributes` — line-ending and export settings.
 - `.gitignore` — local ignore rules.

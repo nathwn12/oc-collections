@@ -27,7 +27,7 @@ bun run compile
 - `flight-deck.schema.json` — types, defaults and allowed values.
 - `INSTALL.md` — the npm-only install route.
 - `CHANGELOG.md` — release history.
-- `../../.github/workflows/check.yml` — the repo's offline checks on pushes and pull requests.
+- `../../.github/workflows/ci.yml` — the repo's offline checks on pushes and pull requests (the `static` job).
 - `../../.github/workflows/release.yml` — the tag-driven publish workflow.
 - `assets/` — repo images (icon, signature).
 
