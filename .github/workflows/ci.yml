@@ -104,6 +104,15 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-node-
 
+      # Stale entries are rejected by the per-workspace content key inside the script, so a restore from an older commit is safe.
+      - name: Cache check results
+        uses: actions/cache@v4
+        with:
+          path: .cache/checks
+          key: checks-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            checks-${{ runner.os }}-
+
       # Required: the root manifest declares no dependencies, and each
       # workspace's check resolves its bins through the hoisted root
       # node_modules that `npm ci` builds from package-lock.json. Skipped on
