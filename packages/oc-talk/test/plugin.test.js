@@ -576,8 +576,9 @@ function askTranscript() {
 
 // A fake backend for one peer: prompt accepts with a known id, wait is idle
 // at once, and the transcript above is what a read finds. Strict like the
-// live server: cursor+order together is a 400 InvalidCursorError. Order-aware:
-// order=desc returns newest-first, no order returns oldest-first.
+// live server: cursor+order together is a 400 InvalidCursorError. Order-aware
+// like the live server: order=asc returns oldest-first, anything else
+// (order=desc or no order) returns newest-first.
 function askPeerRunner(askedID = 'msg_ours', transcript = askTranscript()) {
   return async (args) => {
     const [verb, target] = args;
@@ -589,8 +590,8 @@ function askPeerRunner(askedID = 'msg_ours', transcript = askTranscript()) {
     if (verb === 'session.message.list') {
       const bad = cursorOrderError(args);
       if (bad) return bad;
-      const desc = args.some((a) => String(a) === 'order=desc');
-      const data = desc ? transcript : transcript.slice().reverse();
+      const wantAsc = args.some((a) => String(a) === 'order=asc');
+      const data = wantAsc ? transcript.slice().reverse() : transcript;
       return { ok: true, json: { data } };
     }
     return { ok: true, json: { data: {} } };
@@ -676,7 +677,7 @@ test('session_broadcast answers the healthy peers when one peer throws', async (
     if (verb === 'session.message.list') {
       const bad = cursorOrderError(args);
       if (bad) return bad;
-      const desc = args.some((a) => String(a) === 'order=desc');
+      const wantAsc = args.some((a) => String(a) === 'order=asc');
       const rows = [
         { id: 'msg_a_' + sid, type: 'assistant', time: { created: 2 }, text: 'answer ' + sid },
         { id: 'msg_q_' + sid, type: 'user', time: { created: 1 }, text: 'q' },
@@ -684,7 +685,7 @@ test('session_broadcast answers the healthy peers when one peer throws', async (
       return {
         ok: true,
         json: {
-          data: desc ? rows : rows.slice().reverse(),
+          data: wantAsc ? rows.slice().reverse() : rows,
         },
       };
     }
@@ -746,7 +747,7 @@ test('session_read carries peer metadata and pages with since/cursor', async () 
     if (verb === 'session.message.list') {
       const bad = cursorOrderError(args);
       if (bad) return bad;
-      const desc = args.some((a) => String(a) === 'order=desc');
+      const wantAsc = args.some((a) => String(a) === 'order=asc');
       const descRows = [
         { id: 'msg_new', type: 'assistant', time: { created: 30, completed: 31 }, text: 'new', metadata: { from: 'peer' }, outcome: 'completed', finish: 'stop' },
         { id: 'msg_mid', type: 'user', time: { created: 20 }, text: 'q' },
@@ -755,7 +756,7 @@ test('session_read carries peer metadata and pages with since/cursor', async () 
       return {
         ok: true,
         json: {
-          data: desc ? descRows : descRows.slice().reverse(),
+          data: wantAsc ? descRows.slice().reverse() : descRows,
           cursor: { next: 'next-page' },
         },
       };
@@ -842,7 +843,7 @@ test('ask, reply and broadcast steer by default and honour queue', async () => {
       if (verb === 'session.message.list') {
         const bad = cursorOrderError(args);
         if (bad) return bad;
-        const desc = args.some((a) => String(a) === 'order=desc');
+        const wantAsc = args.some((a) => String(a) === 'order=asc');
         const rows = [
           { id: 'msg_a', type: 'assistant', time: { created: 2 }, text: 'answer' },
           { id: 'msg_q', type: 'user', time: { created: 1 }, text: 'q' },
@@ -850,7 +851,7 @@ test('ask, reply and broadcast steer by default and honour queue', async () => {
         return {
           ok: true,
           json: {
-            data: desc ? rows : rows.slice().reverse(),
+            data: wantAsc ? rows.slice().reverse() : rows,
           },
         };
       }
@@ -889,9 +890,10 @@ function pagedTranscriptAsc() {
   ];
 }
 
-// Strict paginating fake: rejects cursor+order like the server, pages 2 rows
-// at a time in the requested order (desc when order=desc, asc otherwise) so
-// both the old desc fetcher and the fixed asc fetcher see consistent pages.
+// Strict paginating fake, live-faithful: no order on a first page means desc
+// (newest first, like the server); an explicit order wins there; a cursor
+// alone preserves its page's order and cursor+order is 400. Cursors encode
+// their order as `<asc|desc>-off-<n>` exactly like the live cursor embeds it.
 function pagedRunner(calls) {
   const asc = pagedTranscriptAsc();
   const desc = asc.slice().reverse();
@@ -906,18 +908,26 @@ function pagedRunner(calls) {
       calls.push(args);
       const bad = cursorOrderError(args);
       if (bad) return bad;
-      const wantDesc = args.some((a) => String(a) === 'order=desc');
-      const full = wantDesc ? desc : asc;
       const cur = (args.find((a) => String(a).startsWith('cursor=')) || '').slice('cursor='.length);
-      const off = cur ? parseInt(cur.slice('off-'.length), 10) : 0;
-      const start = Number.isFinite(off) ? off : 0;
+      const orderArg = (args.find((a) => String(a).startsWith('order=')) || '').slice('order='.length);
+      let order;
+      let start = 0;
+      if (cur) {
+        const m = /^(asc|desc)-off-(\d+)$/.exec(cur);
+        assert.ok(m, 'cursor must encode its order, saw ' + cur);
+        order = m[1];
+        start = parseInt(m[2], 10);
+      } else {
+        order = orderArg === 'asc' ? 'asc' : 'desc';
+      }
+      const full = order === 'asc' ? asc : desc;
       const page = full.slice(start, start + 2);
       const nextOff = start + 2 < full.length ? start + 2 : null;
       return {
         ok: true,
         json: {
           data: page,
-          cursor: { previous: null, next: nextOff === null ? null : 'off-' + nextOff },
+          cursor: { previous: null, next: nextOff === null ? null : order + '-off-' + nextOff },
         },
       };
     }
@@ -940,8 +950,10 @@ test('session_ask pages past one page without cursor+order and correlates', asyn
   ]);
   assert.equal(out.outcome, 'completed');
   assert.ok(calls.length >= 2, 'must force at least two pages, saw ' + calls.length);
-  for (const c of calls) {
-    assert.ok(!c.some((a) => String(a).startsWith('order=')), 'no page may send order with cursor: ' + JSON.stringify(c));
+  assert.ok(calls[0].some((a) => String(a) === 'order=asc'), 'first page must ask order=asc: ' + JSON.stringify(calls[0]));
+  for (const c of calls.slice(1)) {
+    assert.ok(c.some((a) => String(a).startsWith('cursor=')), 'later pages must carry the cursor: ' + JSON.stringify(c));
+    assert.ok(!c.some((a) => String(a).startsWith('order=')), 'no cursor page may send order: ' + JSON.stringify(c));
   }
 });
 
@@ -956,9 +968,92 @@ test('session_thread pages past one page without cursor+order and stays ordered'
   assert.equal(out.error, undefined, 'multi-page thread must succeed: ' + JSON.stringify(out));
   assert.deepEqual(out.messages.map((m) => m.id), ['msg_ours', 'msg_ans1', 'msg_ans2']);
   assert.ok(calls.length >= 2, 'must force at least two pages, saw ' + calls.length);
-  for (const c of calls) {
-    assert.ok(!c.some((a) => String(a).startsWith('order=')), 'no page may send order with cursor: ' + JSON.stringify(c));
+  assert.ok(calls[0].some((a) => String(a) === 'order=asc'), 'first page must ask order=asc: ' + JSON.stringify(calls[0]));
+  for (const c of calls.slice(1)) {
+    assert.ok(c.some((a) => String(a).startsWith('cursor=')), 'later pages must carry the cursor: ' + JSON.stringify(c));
+    assert.ok(!c.some((a) => String(a).startsWith('order=')), 'no cursor page may send order: ' + JSON.stringify(c));
   }
+});
+
+// ---- Live orientation regression: the ask must answer the question just asked ----
+//
+// The live server returns newest-first when no order is given (like order=desc);
+// only an explicit order=asc returns oldest-first, and a cursor preserves the
+// order of its first page (cursor+order is 400). A fake that answers no-order
+// with oldest-first hides the double-reverse class, so these fakes model the
+// live rule exactly and the transcript below is kept in chronological ascending
+// order with desc derived as its reverse.
+function faithfulStaticRunner(asc, askedID) {
+  return async (args) => {
+    const [verb, target] = args;
+    if (verb === 'session.get') return { ok: true, json: { data: { id: 'ses_peer', title: 'active peer' } } };
+    if (verb === 'post' && String(target).endsWith('/wait')) return { ok: true, json: { data: {} } };
+    if (verb === 'post' && String(target).endsWith('/prompt')) {
+      return { ok: true, json: { data: { id: askedID, sessionID: 'ses_peer', time: { created: 1 } } } };
+    }
+    if (verb === 'session.message.list') {
+      const bad = cursorOrderError(args);
+      if (bad) return bad;
+      const wantAsc = args.some((a) => String(a) === 'order=asc');
+      const data = wantAsc ? asc : asc.slice().reverse();
+      return { ok: true, json: { data } };
+    }
+    return { ok: true, json: { data: {} } };
+  };
+}
+
+function twoExchangeAsc() {
+  return [
+    { id: 'msg_q1', type: 'user', time: { created: 10 }, text: 'reply OCTALK-LIVE-OK' },
+    { id: 'msg_a1', type: 'assistant', time: { created: 11 }, text: 'OCTALK-LIVE-OK' },
+    { id: 'msg_q2', type: 'user', time: { created: 20 }, text: 'reply OCTALK-SECOND-OK' },
+    { id: 'msg_a2', type: 'assistant', time: { created: 21 }, text: 'OCTALK-SECOND-OK' },
+  ];
+}
+
+test('session_ask on the second exchange returns the SECOND answer, never the first', async () => {
+  const mod = await load();
+  mod.setApiRunner(faithfulStaticRunner(twoExchangeAsc(), 'msg_q2'));
+  const { ctx, added } = host();
+  await mod.default.setup(ctx);
+  const ask = added.find((t) => t.name === 'session_ask');
+  const out = JSON.parse((await ask.execute({ to: 'ses_peer', text: 'reply OCTALK-SECOND-OK', waitMs: 5000 })).content);
+  assert.equal(out.error, undefined, 'second ask must succeed: ' + JSON.stringify(out));
+  assert.equal(out.askedMessageID, 'msg_q2');
+  assert.deepEqual(out.answer, [{ id: 'msg_a2', text: 'OCTALK-SECOND-OK' }]);
+  assert.ok(!out.answer.some((a) => a.text.includes('LIVE-OK')), 'must never leak the LIVE answer into the SECOND ask');
+});
+
+test('an ask with no assistant turn yet returns empty, never a previous answer', async () => {
+  const asc = [
+    { id: 'msg_q1', type: 'user', time: { created: 10 }, text: 'first' },
+    { id: 'msg_a1', type: 'assistant', time: { created: 11 }, text: 'PREV-ANSWER' },
+    { id: 'msg_q2', type: 'user', time: { created: 20 }, text: 'second, unanswered' },
+  ];
+  const mod = await load();
+  mod.setApiRunner(faithfulStaticRunner(asc, 'msg_q2'));
+  const { ctx, added } = host();
+  await mod.default.setup(ctx);
+  const ask = added.find((t) => t.name === 'session_ask');
+  const out = JSON.parse((await ask.execute({ to: 'ses_peer', text: 'second, unanswered', waitMs: 5000 })).content);
+  assert.equal(out.error, undefined, 'unanswered ask must succeed: ' + JSON.stringify(out));
+  assert.deepEqual(out.answer, []);
+  assert.equal(out.timedOut, false);
+});
+
+test('session_thread across two exchanges stays chronological', async () => {
+  const asc = twoExchangeAsc();
+  const mod = await load();
+  mod.setApiRunner(faithfulStaticRunner(asc, 'msg_q2'));
+  const { ctx, added } = host();
+  await mod.default.setup(ctx);
+  const thread = added.find((t) => t.name === 'session_thread');
+  const first = JSON.parse((await thread.execute({ to: 'ses_peer', messageID: 'msg_q1' })).content);
+  assert.equal(first.error, undefined, 'thread q1 must succeed: ' + JSON.stringify(first));
+  assert.deepEqual(first.messages.map((m) => m.id), ['msg_q1', 'msg_a1']);
+  const second = JSON.parse((await thread.execute({ to: 'ses_peer', messageID: 'msg_q2' })).content);
+  assert.equal(second.error, undefined, 'thread q2 must succeed: ' + JSON.stringify(second));
+  assert.deepEqual(second.messages.map((m) => m.id), ['msg_q2', 'msg_a2']);
 });
 
 

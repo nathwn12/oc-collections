@@ -321,15 +321,17 @@ async function waitForIdle(sessionID, waitMs) {
   }
 }
 
-// Newest-first view built from ascending pages: the server forbids cursor and
-// order together (400 InvalidCursorError), so page ascending with cursor alone
-// (no order) and reverse once to keep the newest-first contract.
-async function collectMessagesDesc(sessionID, perPage, maxPages) {
+// Canonical internal order is chronological ascending (oldest first):
+// the first page asks order=asc explicitly and cursor pages follow with the
+// cursor alone (the cursor preserves that order; cursor+order is 400), so the
+// accumulation is oldest-to-newest with no reversal anywhere on this path.
+async function collectMessages(sessionID, perPage, maxPages) {
   const asc = [];
   let cursor = null;
   for (let page = 0; page < maxPages; page++) {
     const args = ['session.message.list', '--param', 'sessionID=' + sessionID, '--param', 'limit=' + perPage];
     if (cursor) args.push('--param', 'cursor=' + cursor);
+    else args.push('--param', 'order=asc');
     const r = await runApi(args);
     if (!r.ok) return r;
     const rows = Array.isArray(r.json.data) ? r.json.data : [];
@@ -338,20 +340,17 @@ async function collectMessagesDesc(sessionID, perPage, maxPages) {
     if (!next) break;
     cursor = next;
   }
-  return { ok: true, messages: asc.slice().reverse() };
+  return { ok: true, messages: asc };
 }
 
-// Positional correlation: in oldest-first order, the answer to one user
-// message is the assistant messages that follow it up to (not including) the
-// next user message. A later unrelated exchange above never leaks in, because
-// the slice stops at the next question either way.
-function sliceAfter(messagesAsc, askedID) {
-  const at = messagesAsc.findIndex((m) => m && m.id === askedID);
+// sliceAfter: the messages strictly after our user message in chronological order, stopping at the next user message.
+function sliceAfter(sessionMessages, ourMessageID) {
+  const at = sessionMessages.findIndex((m) => m && m.id === ourMessageID);
   if (at < 0) return { answer: [], outcome: '' };
   const answer = [];
   let outcome = '';
-  for (let i = at + 1; i < messagesAsc.length; i++) {
-    const m = messagesAsc[i] || {};
+  for (let i = at + 1; i < sessionMessages.length; i++) {
+    const m = sessionMessages[i] || {};
     if (m.type === 'user') break;
     if (m.type !== 'assistant') continue;
     answer.push({ id: m.id, text: messageText(m) });
@@ -380,12 +379,12 @@ async function askFlow(sessionID, title, opts) {
       if (waited.code === 'session_not_found') return { ok: false, error: 'session_not_found', reason: 'session ' + sessionID + ' is gone: ' + waited.detail };
       return { ok: false, error: waited.code, reason: 'wait failed: ' + waited.detail };
     }
-    const got = await collectMessagesDesc(sessionID, ASK_MESSAGE_LIMIT, ASK_MAX_PAGES);
+    const got = await collectMessages(sessionID, ASK_MESSAGE_LIMIT, ASK_MAX_PAGES);
     if (!got.ok) {
       if (got.code === 'session_not_found') return { ok: false, error: 'session_not_found', reason: 'session ' + sessionID + ' is gone: ' + got.detail };
       return { ok: false, error: got.code || 'backend_error', reason: 'read failed: ' + (got.detail || 'request failed') };
     }
-    const cut = sliceAfter(got.messages.slice().reverse(), askedMessageID);
+    const cut = sliceAfter(got.messages, askedMessageID);
     return {
       ok: true,
       sessionID,
@@ -620,8 +619,9 @@ async function ensureTools(ctx) {
         if (!Number.isFinite(limit)) return fail('bad_request', 'limit must be a number');
         limit = Math.min(Math.max(limit, 1), READ_MAX_LIMIT);
         // The server forbids cursor+order together (400 InvalidCursorError):
-        // first page asks order=desc alone, cursor pages ask cursor alone
-        // (ascending) and reverse once to keep the newest-first contract.
+        // first page asks order=desc alone, cursor pages ask cursor alone and
+        // keep that desc order (the cursor preserves its page's order), so the
+        // newest-first contract holds with no reversal on this boundary.
         const hasCursor = args.cursor !== undefined;
         const listArgs = ['session.message.list', '--param', 'sessionID=' + t.id, '--param', 'limit=' + limit];
         if (!hasCursor) listArgs.push('--param', 'order=desc');
@@ -641,7 +641,7 @@ async function ensureTools(ctx) {
           return fail(r.code, 'read failed: ' + r.detail);
         }
         const rowsRaw = Array.isArray(r.json.data) ? r.json.data : [];
-        const rows = hasCursor ? rowsRaw.slice().reverse() : rowsRaw;
+        const rows = rowsRaw;
         let kept = rows;
         if (typeof args.since === 'number') {
           kept = rows.filter((m) => ((m.time && m.time.created) || 0) > args.since);
@@ -981,9 +981,10 @@ async function ensureTools(ctx) {
         }
         let outcome = '';
         try {
-          const got = await collectMessagesDesc(t.id, 5, 1);
+          const got = await collectMessages(t.id, 5, 1);
           if (got.ok) {
-            for (const m of got.messages) {
+            for (let i = got.messages.length - 1; i >= 0; i--) {
+              const m = got.messages[i];
               if (m && (m.outcome !== undefined || m.finish !== undefined)) {
                 outcome = m.outcome !== undefined ? m.outcome : m.finish;
                 break;
@@ -1072,12 +1073,12 @@ async function ensureTools(ctx) {
         }
         const t = await resolveTarget(args.to);
         if (!t.ok) return fail(t.error, t.reason, t.candidates, t.truncated);
-        const got = await collectMessagesDesc(t.id, ASK_MESSAGE_LIMIT, ASK_MAX_PAGES);
+        const got = await collectMessages(t.id, ASK_MESSAGE_LIMIT, ASK_MAX_PAGES);
         if (!got.ok) {
           if (got.code === 'session_not_found') return fail('session_not_found', 'session ' + t.id + ' is gone: ' + got.detail);
           return fail(got.code || 'backend_error', 'read failed: ' + (got.detail || 'request failed'));
         }
-        const asc = got.messages.slice().reverse();
+        const asc = got.messages.slice();
         const at = asc.findIndex((m) => m && m.id === args.messageID);
         if (at < 0) return fail('message_not_found', 'message ' + args.messageID + ' is not in session ' + t.id);
         const view = [];
