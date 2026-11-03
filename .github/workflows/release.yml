@@ -282,10 +282,13 @@ jobs:
 
       - name: cleanroom
         # The cleanroom half is what proves a packed tarball installs into an
-        # empty project and loads there.
+        # empty project and loads there. Scoped to the released package: only
+        # its bytes publish, so only its tarball is packed, installed and probed.
         if: ${{ env.REFUSED != '1' && env.SKIP != '1' }}
-        shell: pwsh
-        run: node scripts/cleanroom.mjs
+        shell: bash
+        env:
+          PACKAGE: ${{ matrix.name }}
+        run: node scripts/cleanroom.mjs --package "${PACKAGE}"
 
       - name: Assert the version cells (manifest, index, lockfile)
         # Read the three cells back after the write: the tarball, the index

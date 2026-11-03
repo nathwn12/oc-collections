@@ -24,7 +24,8 @@
  * probe is the install's proof; it goes live for a package that ships tests.
  *
  * Order is the workspace-plan order, the same list the root fan-out uses;
- * packs run concurrently but install and probe in that order.
+ * packs run concurrently but install and probe in that order. The release lane
+ * passes --package to scope this to the released package; a bare run still proves all seven.
  *
  * `--check` proves this harness in both directions, offline against fixtures:
  * a good fixture installs and probes clean; a wrong `main`, an entry file
@@ -286,7 +287,7 @@ function preflight(dirs, quiet = false) {
   return true
 }
 
-async function runReal() {
+async function runReal(scoped = null) {
   const dirs = workspaceDirs(ROOT)
   if (!preflight(dirs)) {
     process.exitCode = 1
@@ -297,10 +298,24 @@ async function runReal() {
     const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"))
     byName.set(path.basename(dir), pkg.name)
   }
+  // The release lane names the manifest package (scoped for janua/oc-bifrost);
+  // a bare directory name works too. Either way this resolves to one directory.
+  let scopedDir = null
+  if (scoped !== null) {
+    const match = [...byName.entries()].find(([dir, name]) => scoped === dir || scoped === name)
+    if (!match) {
+      const known = [...byName.entries()].map(([dir, name]) => (dir === name ? dir : `${dir} (${name})`))
+      console.error(`cleanroom: unknown workspace "${scoped}"; known workspaces: ${known.join(", ")}`)
+      process.exitCode = 2
+      return
+    }
+    scopedDir = match[0]
+  }
   // Plan order, then anything discovered but unplanned (pack-check owns the
   // plan-mismatch refusal; this run still installs what exists).
   const order = Object.keys(PLAN.check).filter((name) => byName.has(name))
   for (const name of byName.keys()) if (!order.includes(name)) order.push(name)
+  const selected = scopedDir === null ? order : order.filter((name) => name === scopedDir)
 
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "oc-collections-cleanroom-"))
   const failures = []
@@ -310,8 +325,8 @@ async function runReal() {
     const packedByDir = new Map()
     let packIndex = 0
     async function packWorker() {
-      while (packIndex < order.length) {
-        const dirName = order[packIndex++]
+      while (packIndex < selected.length) {
+        const dirName = selected[packIndex++]
         const name = byName.get(dirName)
         console.log(`\n[cleanroom] packing ${name}`)
         const tgz = await packWorkspaceAsync(name, destination)
@@ -319,10 +334,10 @@ async function runReal() {
         else packedByDir.set(dirName, { name, tgz })
       }
     }
-    await Promise.all(Array.from({ length: Math.min(PACK_CONCURRENCY, order.length) }, packWorker))
+    await Promise.all(Array.from({ length: Math.min(PACK_CONCURRENCY, selected.length) }, packWorker))
     // Plan order is preserved for the install below: same tarball set as the
     // serial run, only packed concurrently.
-    const tarballs = order.filter((dirName) => packedByDir.has(dirName)).map((dirName) => packedByDir.get(dirName))
+    const tarballs = selected.filter((dirName) => packedByDir.has(dirName)).map((dirName) => packedByDir.get(dirName))
     if (tarballs.length > 0) {
       console.log(`\n[cleanroom] installing ${tarballs.length} tarball(s) into a private project`)
       const app = installTarballs(root, tarballs)
@@ -345,7 +360,7 @@ async function runReal() {
     process.exitCode = 1
     return
   }
-  console.log(`\ncleanroom: ${order.length} package(s) installed from their tarballs and loadable`)
+  console.log(`\ncleanroom: ${selected.length} package(s) installed from their tarballs and loadable`)
 }
 
 /** One fixture package, optionally broken, packed, installed and probed. */
@@ -425,15 +440,35 @@ function runCheck() {
 
 async function main() {
   const args = process.argv.slice(2)
-  const unknown = args.filter((arg) => arg !== "--check")
-  if (unknown.length > 0) {
-    console.error(`usage: node scripts/cleanroom.mjs [--check] (got "${unknown.join(" ")}")`)
+  let check = false
+  let scoped = null
+  let packageSeen = 0
+  const unknown = []
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]
+    if (arg === "--check") {
+      check = true
+      continue
+    }
+    if (arg === "--package" || arg.startsWith("--package=")) {
+      packageSeen += 1
+      if (packageSeen === 1) {
+        scoped = arg.startsWith("--package=") ? arg.slice("--package=".length) : args[i + 1]
+        if (!arg.startsWith("--package=")) i += 1
+      }
+      continue
+    }
+    unknown.push(arg)
+  }
+  if (scoped !== null && (scoped === undefined || scoped.startsWith("--"))) scoped = ""
+  if (unknown.length > 0 || packageSeen > 1 || (check && packageSeen > 0) || (packageSeen === 1 && scoped === "")) {
+    console.error(`usage: node scripts/cleanroom.mjs [--check] [--package <workspace-name>] (got "${args.join(" ")}")`)
     process.exitCode = 2
     return
   }
   try {
-    if (args.includes("--check")) runCheck()
-    else await runReal()
+    if (check) runCheck()
+    else await runReal(scoped)
   } catch (error) {
     console.error(`cleanroom: ${error.message}`)
     process.exitCode = 1
