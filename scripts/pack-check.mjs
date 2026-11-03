@@ -121,7 +121,10 @@ function main() {
         .map((target) => target.replace(/^\.\//, ""))
         .filter((target) => !entries.includes(`package/${target}`))
 
-      const missingFiles = (pkg.files ?? []).filter((file) => {
+      // A `files` entry starting with `!` is an npm exclusion pattern, never a
+      // required path (e.g. oc-plugin-view's `!src/**/*.test.*`).
+      const requiredFiles = (pkg.files ?? []).filter((file) => !String(file).startsWith("!"))
+      const missingFiles = requiredFiles.filter((file) => {
         const clean = file.replace(/\/+$/, "")
         return !entries.some((entry) => entry === `package/${clean}` || entry.startsWith(`package/${clean}/`))
       })
@@ -131,7 +134,7 @@ function main() {
       console.log(`  forbidden entries: ${forbidden.length ? forbidden.join(", ") : "none"}`)
       console.log(`  manifest byte-equal: ${manifestEqual}`)
       console.log(`  entry points present: ${missingEntries.length ? "MISSING " + missingEntries.join(", ") : `yes (${declared.size})`}`)
-      console.log(`  files entries present: ${missingFiles.length ? "MISSING " + missingFiles.join(", ") : `yes (${(pkg.files ?? []).length})`}`)
+      console.log(`  files entries present: ${missingFiles.length ? "MISSING " + missingFiles.join(", ") : `yes (${requiredFiles.length})`}`)
       console.log(`  ${ok ? "PASS" : "FAIL"}`)
       if (!ok) failures.push(pkg.name)
     }

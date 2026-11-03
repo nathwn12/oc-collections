@@ -36,7 +36,8 @@ $temp = Join-Path ([System.IO.Path]::GetTempPath()) ('oc-collections-check-index
 New-Item -ItemType Directory -Force -Path $temp | Out-Null
 $fail = 0
 try {
-    # 1. No rows at all.
+    # 1-3 setup stays serial: each fixture file below is read by exactly one
+    # check, and the positive control's summary feeds the header cases (3b).
     $emptyFixture = Join-Path $temp 'no-index-rows.md'
     Set-Content -LiteralPath $emptyFixture -Encoding utf8 -Value @(
         '# Not an index',
@@ -44,50 +45,79 @@ try {
         'This file has a heading and prose, but no index table rows.',
         ''
     )
-    $emptyOut = @(& pwsh -NoProfile -File $check --structural -Path $emptyFixture 2>&1)
-    $emptyExit = $LASTEXITCODE
-    Write-Output ('negative control (zero rows): exit={0}' -f $emptyExit)
-    $emptyOut | ForEach-Object { Write-Output ('  ' + $_) }
-    if ($emptyExit -eq 0) {
-        Write-Output 'FAIL: a zero-row input exited 0'
-        $fail++
-    }
-    if (-not ($emptyOut -match 'no index rows recognised')) {
-        Write-Output 'FAIL: a zero-row input did not name the failure'
-        $fail++
-    }
-
-    # 2. A real table plus a phantom package row.
     $phantomFixture = Join-Path $temp 'phantom-package.md'
     $realReadme = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..' 'README.md') -Raw
     $phantomRow = '| phantom-pkg | Phantom package. | not on npm | [repo](https://example.com) |'
     Set-Content -LiteralPath $phantomFixture -Encoding utf8 -Value ($realReadme.TrimEnd() + "`n`n" + $phantomRow + "`n")
-    $phantomOut = @(& pwsh -NoProfile -File $check --structural -Path $phantomFixture 2>&1)
-    $phantomExit = $LASTEXITCODE
-    Write-Output ('negative control (phantom package): exit={0}' -f $phantomExit)
-    $phantomOut | Where-Object { $_ -match 'phantom-pkg|no such package' } | ForEach-Object { Write-Output ('  ' + $_) }
-    if ($phantomExit -eq 0) {
-        Write-Output 'FAIL: a table naming a non-existent package exited 0'
-        $fail++
-    }
-    if (-not ($phantomOut -match 'phantom-pkg' -and $phantomOut -match 'no such package')) {
-        Write-Output 'FAIL: the phantom-package failure was not named'
-        $fail++
-    }
 
-    # 3. The real README passes, offline.
-    $posOut = @(& pwsh -NoProfile -File $check --structural 2>&1)
-    $posExit = $LASTEXITCODE
+    # 1-3 are independent once their fixtures exist, so the three checks run
+    # concurrently (ThrottleLimit 8). Each worker returns its own output lines
+    # plus its failure count; the parent re-emits them in case order, so the
+    # output lines, assertions and failure counting match the serial run.
+    $phaseA = @(
+        [pscustomobject]@{ Key = 0; Kind = 'empty' }
+        [pscustomobject]@{ Key = 1; Kind = 'phantom' }
+        [pscustomobject]@{ Key = 2; Kind = 'positive' }
+    ) | ForEach-Object -Parallel {
+        $key = $_.Key
+        $kind = $_.Kind
+        $ck = $using:check
+        $emptyFx = $using:emptyFixture
+        $phantomFx = $using:phantomFixture
+        $lines = @()
+        $f = 0
+        $out = @()
+        $exit = 0
+        if ($kind -eq 'empty') {
+            $out = @(& pwsh -NoProfile -File $ck --structural -Path $emptyFx 2>&1)
+            $exit = $LASTEXITCODE
+            $lines += ('negative control (zero rows): exit={0}' -f $exit)
+            $out | ForEach-Object { $lines += ('  ' + $_) }
+            if ($exit -eq 0) {
+                $lines += 'FAIL: a zero-row input exited 0'
+                $f++
+            }
+            if (-not ($out -match 'no index rows recognised')) {
+                $lines += 'FAIL: a zero-row input did not name the failure'
+                $f++
+            }
+        } elseif ($kind -eq 'phantom') {
+            $out = @(& pwsh -NoProfile -File $ck --structural -Path $phantomFx 2>&1)
+            $exit = $LASTEXITCODE
+            $lines += ('negative control (phantom package): exit={0}' -f $exit)
+            $out | Where-Object { $_ -match 'phantom-pkg|no such package' } | ForEach-Object { $lines += ('  ' + $_) }
+            if ($exit -eq 0) {
+                $lines += 'FAIL: a table naming a non-existent package exited 0'
+                $f++
+            }
+            if (-not ($out -match 'phantom-pkg' -and $out -match 'no such package')) {
+                $lines += 'FAIL: the phantom-package failure was not named'
+                $f++
+            }
+        } else {
+            $out = @(& pwsh -NoProfile -File $ck --structural 2>&1)
+            $exit = $LASTEXITCODE
+            $sum = ($out | Where-Object { $_ -match '^structural:' } | Select-Object -Last 1)
+            $lines += ('positive control (README): exit={0}; {1}' -f $exit, $sum)
+            if ($exit -ne 0) {
+                $lines += 'FAIL: the real README did not pass the structural check'
+                $f++
+            }
+            if ($sum -notmatch '^structural: rows=(\d+) .* failed=0$' -or [int]$Matches[1] -lt 1) {
+                $lines += 'FAIL: the structural run recognised no rows'
+                $f++
+            }
+        }
+        [pscustomobject]@{ Key = $key; Lines = $lines; Fail = $f; Out = $out; Exit = $exit }
+    } -ThrottleLimit 8
+    foreach ($r in ($phaseA | Sort-Object Key)) {
+        $r.Lines | ForEach-Object { Write-Output $_ }
+        $fail += $r.Fail
+    }
+    $posResult = @($phaseA | Where-Object { $_.Key -eq 2 })[0]
+    $posOut = @($posResult.Out)
+    $posExit = $posResult.Exit
     $summary = ($posOut | Where-Object { $_ -match '^structural:' } | Select-Object -Last 1)
-    Write-Output ('positive control (README): exit={0}; {1}' -f $posExit, $summary)
-    if ($posExit -ne 0) {
-        Write-Output 'FAIL: the real README did not pass the structural check'
-        $fail++
-    }
-    if ($summary -notmatch '^structural: rows=(\d+) .* failed=0$' -or [int]$Matches[1] -lt 1) {
-        Write-Output 'FAIL: the structural run recognised no rows'
-        $fail++
-    }
 
     # 3b. The header row is skipped by label, in either spelling this index has
     # used; any other label still becomes a phantom package, so the same table
@@ -105,27 +135,47 @@ try {
         [pscustomobject]@{ Label = 'Package'; Exit = 0; Rows = $readmeRows; Packages = $readmePackages; Extra = 0; Failed = 0 }
         [pscustomobject]@{ Label = 'Bogus'; Exit = 1; Rows = $readmeRows + 1; Packages = $readmePackages; Extra = 1; Failed = 1 }
     )
-    foreach ($case in $headerCases) {
-        $fixture = Join-Path $temp ('header-' + $case.Label + '.md')
-        $table = @(($tableLines[0] -replace '^\|[^|]*\|', ('| ' + $case.Label + ' |'))) + @($tableLines | Select-Object -Skip 1)
+    # The two header labels use distinct fixtures and are independent of each
+    # other (their expected counts were already derived from the positive
+    # control above), so they run concurrently and are re-emitted in order.
+    $headerResults = @($headerCases | ForEach-Object -Parallel {
+        $label = $_.Label
+        $wantExit = $_.Exit
+        $wantRows = $_.Rows
+        $wantPkgs = $_.Packages
+        $wantExtra = $_.Extra
+        $wantFailed = $_.Failed
+        $ck = $using:check
+        $tp = $using:temp
+        $tl = $using:tableLines
+        $lines = @()
+        $f = 0
+        $fixture = Join-Path $tp ('header-' + $label + '.md')
+        $table = @(($tl[0] -replace '^\|[^|]*\|', ('| ' + $label + ' |'))) + @($tl | Select-Object -Skip 1)
         Set-Content -LiteralPath $fixture -Encoding utf8 -Value $table
-        $headerOut = @(& pwsh -NoProfile -File $check --structural -Path $fixture 2>&1)
+        $headerOut = @(& pwsh -NoProfile -File $ck --structural -Path $fixture 2>&1)
         $headerExit = $LASTEXITCODE
         $headerSummary = ($headerOut | Where-Object { $_ -match '^structural:' } | Select-Object -Last 1)
-        Write-Output ('header token ({0}): exit={1}; {2}' -f $case.Label, $headerExit, $headerSummary)
-        $headerOut | Where-Object { $_ -match 'no such package' } | ForEach-Object { Write-Output ('  ' + $_) }
-        if ($headerExit -ne $case.Exit) {
-            Write-Output ('FAIL: header {0} exited {1}, expected {2}' -f $case.Label, $headerExit, $case.Exit)
-            $fail++
+        $lines += ('header token ({0}): exit={1}; {2}' -f $label, $headerExit, $headerSummary)
+        $headerOut | Where-Object { $_ -match 'no such package' } | ForEach-Object { $lines += ('  ' + $_) }
+        if ($headerExit -ne $wantExit) {
+            $lines += ('FAIL: header {0} exited {1}, expected {2}' -f $label, $headerExit, $wantExit)
+            $f++
         }
-        if ($headerSummary -notmatch ('^structural: rows={0} packages={1} omitted=0 missing=0 extra={2} failed={3}$' -f $case.Rows, $case.Packages, $case.Extra, $case.Failed)) {
-            Write-Output ('FAIL: header {0} did not produce the expected summary' -f $case.Label)
-            $fail++
+        if ($headerSummary -notmatch ('^structural: rows={0} packages={1} omitted=0 missing=0 extra={2} failed={3}$' -f $wantRows, $wantPkgs, $wantExtra, $wantFailed)) {
+            $lines += ('FAIL: header {0} did not produce the expected summary' -f $label)
+            $f++
         }
-        if ($case.Exit -ne 0 -and -not ($headerOut -match ('FAIL ' + $case.Label) -and $headerOut -match 'no such package')) {
-            Write-Output ('FAIL: header {0} did not fail as a phantom package' -f $case.Label)
-            $fail++
+        if ($wantExit -ne 0 -and -not ($headerOut -match ('FAIL ' + $label) -and $headerOut -match 'no such package')) {
+            $lines += ('FAIL: header {0} did not fail as a phantom package' -f $label)
+            $f++
         }
+        [pscustomobject]@{ Label = $label; Lines = $lines; Fail = $f }
+    } -ThrottleLimit 8)
+    foreach ($label in @('Package', 'Bogus')) {
+        $hr = @($headerResults | Where-Object { $_.Label -eq $label })[0]
+        $hr.Lines | ForEach-Object { Write-Output $_ }
+        $fail += $hr.Fail
     }
 
     # 3c. A synthetic tree. The real script bytes run against a copy that
@@ -172,6 +222,11 @@ try {
         }
         return ($out -join "`n")
     }
+    # Serial by dependency: the version case below runs against the synthetic
+    # tree built in 3c, and with a single case concurrency would buy nothing.
+    # The scope controls in section 4 stay serial for the same reason: they
+    # share the dot-sourced $script:RegistryScope module state, are
+    # in-memory, and cost nothing to run in order.
     $versionCases = @(
         [pscustomobject]@{
             What   = 'released package, stale version cell'
@@ -274,6 +329,7 @@ try {
     try {
         $registryCases = @(
             [pscustomobject]@{
+                Key     = 0
                 What    = 'shelf table, every pin published'
                 Path    = $shelfFixture
                 Args    = @()
@@ -282,6 +338,7 @@ try {
                 Needles = @('PASS oc-bifrost.*@nathwn12/oc-bifrost', 'PASS oc-flight-deck', 'PASS oc-harness-setup', 'SKIP oc-talk', 'SKIP oc-collections')
             }
             [pscustomobject]@{
+                Key     = 1
                 What    = 'shelf table, not-yet-released pin'
                 Path    = $staleFixture
                 Args    = @()
@@ -290,6 +347,7 @@ try {
                 Needles = @('FAIL oc-flight-deck.*version 9\.9\.9 not published')
             }
             [pscustomobject]@{
+                Key     = 2
                 What    = '--package names a target row'
                 Path    = $shelfFixture
                 Args    = @('--package', 'oc-flight-deck')
@@ -298,6 +356,7 @@ try {
                 Needles = @('PASS oc-flight-deck')
             }
             [pscustomobject]@{
+                Key     = 3
                 What    = '--package names an absent row'
                 Path    = $shelfFixture
                 Args    = @('--package', 'oc-not-in-the-table')
@@ -306,6 +365,7 @@ try {
                 Needles = @("FAILED: no index row for package 'oc-not-in-the-table'")
             }
             [pscustomobject]@{
+                Key     = 4
                 What    = '--package names a non-target row'
                 Path    = $shelfFixture
                 Args    = @('--package', 'oc-talk')
@@ -314,26 +374,45 @@ try {
                 Needles = @('not an installation target')
             }
         )
-        foreach ($case in $registryCases) {
-            $caseArgv = @('--registry') + @($case.Args) + @('-Path', $case.Path)
-            $caseOut = @(& pwsh -NoProfile -File $fakeCheck @caseArgv 2>&1)
+        # The five shelf-registry checks are independent once their fixtures
+        # exist (read-only documents plus the synthetic checker and one
+        # process-wide fixtures variable), so they run concurrently and are
+        # re-emitted in table order with identical assertions.
+        $shelfResults = @($registryCases | ForEach-Object -Parallel {
+            $key = $_.Key
+            $what = $_.What
+            $pth = $_.Path
+            $argvIn = @(@($_.Args) | Where-Object { $_ -ne $null })
+            $wantExit = $_.Exit
+            $wantSummary = $_.Summary
+            $needles = @(@($_.Needles) | Where-Object { $_ -ne $null })
+            $fc = $using:fakeCheck
+            $lines = @()
+            $f = 0
+            $caseArgv = @('--registry') + $argvIn + @('-Path', $pth)
+            $caseOut = @(& pwsh -NoProfile -File $fc @caseArgv 2>&1)
             $caseExit = $LASTEXITCODE
-            Write-Output ('shelf registry ({0}): exit={1}' -f $case.What, $caseExit)
-            $caseOut | Where-Object { $_ -match '^(PASS|FAIL|SKIP|FAILED|INFO|registry:)' } | ForEach-Object { Write-Output ('  ' + $_) }
-            if ($caseExit -ne $case.Exit) {
-                Write-Output ('FAIL: shelf registry {0} exited {1}, expected {2}' -f $case.What, $caseExit, $case.Exit)
-                $fail++
+            $lines += ('shelf registry ({0}): exit={1}' -f $what, $caseExit)
+            $caseOut | Where-Object { $_ -match '^(PASS|FAIL|SKIP|FAILED|INFO|registry:)' } | ForEach-Object { $lines += ('  ' + $_) }
+            if ($caseExit -ne $wantExit) {
+                $lines += ('FAIL: shelf registry {0} exited {1}, expected {2}' -f $what, $caseExit, $wantExit)
+                $f++
             }
-            foreach ($needle in $case.Needles) {
+            foreach ($needle in $needles) {
                 if (@($caseOut | Where-Object { $_ -match $needle }).Count -eq 0) {
-                    Write-Output ('FAIL: shelf registry {0} never showed {1}' -f $case.What, $needle)
-                    $fail++
+                    $lines += ('FAIL: shelf registry {0} never showed {1}' -f $what, $needle)
+                    $f++
                 }
             }
-            if ($case.Summary -and @($caseOut | Where-Object { $_ -match $case.Summary }).Count -eq 0) {
-                Write-Output ('FAIL: shelf registry {0} did not produce the expected summary' -f $case.What)
-                $fail++
+            if ($wantSummary -and @($caseOut | Where-Object { $_ -match $wantSummary }).Count -eq 0) {
+                $lines += ('FAIL: shelf registry {0} did not produce the expected summary' -f $what)
+                $f++
             }
+            [pscustomobject]@{ Key = $key; Lines = $lines; Fail = $f }
+        } -ThrottleLimit 8)
+        foreach ($sr in ($shelfResults | Sort-Object Key)) {
+            $sr.Lines | ForEach-Object { Write-Output $_ }
+            $fail += $sr.Fail
         }
     } finally {
         if ($null -eq $previousFixtures) {

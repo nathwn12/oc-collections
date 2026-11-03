@@ -23,7 +23,8 @@
  * refuses a `test/` entry), so today that step reports "not shipped" and the
  * probe is the install's proof; it goes live for a package that ships tests.
  *
- * Order is the workspace-plan order, the same list the root fan-out uses.
+ * Order is the workspace-plan order, the same list the root fan-out uses;
+ * packs run concurrently but install and probe in that order.
  *
  * `--check` proves this harness in both directions, offline against fixtures:
  * a good fixture installs and probes clean; a wrong `main`, an entry file
@@ -34,7 +35,7 @@
  * Failures set process.exitCode and return; a forced exit can truncate the
  * lines still queued when CI pipes them.
  */
-import { spawnSync } from "node:child_process"
+import { spawn, spawnSync } from "node:child_process"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
@@ -80,7 +81,7 @@ for (const target of leaves(manifest.exports)) entries.add(target)
 const missingEntries = [...entries]
   .map((entry) => entry.replace(/^\\.\\//, ""))
   .filter((entry) => !fs.existsSync(path.join(dir, entry)))
-const files = (manifest.files ?? []).map((entry) => entry.replace(/\\/+$/, ""))
+const files = (manifest.files ?? []).map((entry) => String(entry).replace(/\\/+$/, "")).filter((entry) => !entry.startsWith("!"))
 const missingFiles = files.filter((entry) => !fs.existsSync(path.join(dir, entry)))
 
 if (entries.size === 0) {
@@ -171,9 +172,31 @@ function npm(args, cwd) {
 
 const fileUrl = (target) => path.resolve(target).split(path.sep).join("/")
 
+// Packs run concurrently across workspaces (one tarball set, same flags).
+const PACK_CONCURRENCY = Math.max(1, Math.min(os.cpus().length || 4, 8))
+
+/** Async npm with captured output, for the concurrent pack phase. */
+function npmAsync(args, cwd) {
+  return new Promise((resolve) => {
+    const npmCli = process.env.npm_execpath
+    const child = npmCli
+      ? spawn(process.execPath, [npmCli, ...args], { cwd })
+      : spawn(process.platform === "win32" ? "npm.cmd" : "npm", args, {
+          cwd,
+          shell: process.platform === "win32",
+        })
+    let stdout = ""
+    let stderr = ""
+    if (child.stdout) child.stdout.on("data", (chunk) => { stdout += chunk.toString("utf8") })
+    if (child.stderr) child.stderr.on("data", (chunk) => { stderr += chunk.toString("utf8") })
+    child.on("error", (err) => resolve({ status: 1, stdout, stderr: stderr + String(err?.message ?? err) }))
+    child.on("close", (status) => resolve({ status: status ?? 1, stdout, stderr }))
+  })
+}
+
 /** Pack one workspace into `destination`; returns the tarball path or null. */
-function packWorkspace(name, destination) {
-  const packed = npm(["pack", "--ignore-scripts", "--workspace", name, "--pack-destination", destination], ROOT)
+async function packWorkspaceAsync(name, destination) {
+  const packed = await npmAsync(["pack", "--ignore-scripts", "--workspace", name, "--pack-destination", destination], ROOT)
   if (packed.status !== 0) {
     console.error(`  FAIL npm pack ${name} (exit ${packed.status})\n${(packed.stderr ?? "").trim()}`)
     return null
@@ -193,7 +216,7 @@ function installTarballs(root, tarballs) {
     `${JSON.stringify({ name: "cleanroom", version: "0.0.0", private: true, dependencies }, null, 2)}\n`,
   )
   fs.writeFileSync(path.join(app, "probe.mjs"), PROBE)
-  const installed = npm(["install", "--ignore-scripts", "--no-audit", "--no-fund"], app)
+  const installed = npm(["install", "--ignore-scripts", "--no-audit", "--no-fund", "--prefer-offline"], app)
   if (installed.status !== 0) {
     console.error(`  FAIL npm install (exit ${installed.status})\n${(installed.stdout ?? "").trim()}\n${(installed.stderr ?? "").trim()}`)
     return null
@@ -253,7 +276,7 @@ function preflight(dirs, quiet = false) {
   return true
 }
 
-function runReal() {
+async function runReal() {
   const dirs = workspaceDirs(ROOT)
   if (!preflight(dirs)) {
     process.exitCode = 1
@@ -274,14 +297,22 @@ function runReal() {
   try {
     const destination = path.join(root, "tarballs")
     fs.mkdirSync(destination, { recursive: true })
-    const tarballs = []
-    for (const dirName of order) {
-      const name = byName.get(dirName)
-      console.log(`\n[cleanroom] packing ${name}`)
-      const tgz = packWorkspace(name, destination)
-      if (tgz === null) failures.push(name)
-      else tarballs.push({ name, tgz })
+    const packedByDir = new Map()
+    let packIndex = 0
+    async function packWorker() {
+      while (packIndex < order.length) {
+        const dirName = order[packIndex++]
+        const name = byName.get(dirName)
+        console.log(`\n[cleanroom] packing ${name}`)
+        const tgz = await packWorkspaceAsync(name, destination)
+        if (tgz === null) failures.push(name)
+        else packedByDir.set(dirName, { name, tgz })
+      }
     }
+    await Promise.all(Array.from({ length: Math.min(PACK_CONCURRENCY, order.length) }, packWorker))
+    // Plan order is preserved for the install below: same tarball set as the
+    // serial run, only packed concurrently.
+    const tarballs = order.filter((dirName) => packedByDir.has(dirName)).map((dirName) => packedByDir.get(dirName))
     if (tarballs.length > 0) {
       console.log(`\n[cleanroom] installing ${tarballs.length} tarball(s) into a private project`)
       const app = installTarballs(root, tarballs)
@@ -382,7 +413,7 @@ function runCheck() {
   if (failed > 0) process.exitCode = 1
 }
 
-function main() {
+async function main() {
   const args = process.argv.slice(2)
   const unknown = args.filter((arg) => arg !== "--check")
   if (unknown.length > 0) {
@@ -392,7 +423,7 @@ function main() {
   }
   try {
     if (args.includes("--check")) runCheck()
-    else runReal()
+    else await runReal()
   } catch (error) {
     console.error(`cleanroom: ${error.message}`)
     process.exitCode = 1
