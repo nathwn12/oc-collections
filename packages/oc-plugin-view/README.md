@@ -4,7 +4,13 @@
 
 ## Install
 
-Add the plugin to `plugins` in `~/.config/opencode/opencode.jsonc`, before any other sidebar TUI plugin such as `oc-flight-deck`:
+```sh
+opencode plugin add oc-plugin-view
+```
+
+Restart OpenCode. The plugin loads on the next start.
+
+List this package before any other sidebar TUI plugin such as `oc-flight-deck` to keep its Plugins section above other sidebar rows:
 
 ```jsonc
 {
@@ -12,28 +18,32 @@ Add the plugin to `plugins` in `~/.config/opencode/opencode.jsonc`, before any o
 }
 ```
 
-Order matters. OpenCode builds the TUI from builtins, then discovered plugins, then server plugins in `opencode.jsonc` order, and finally plugins listed in `cli.json`. A plugin loaded from `cli.json` always renders last, so a sidebar section declared there lands below sections from `opencode.jsonc`. Listing this package first keeps its Plugins section above other sidebar rows.
-
 The package ships a no-op server entry next to the TUI export, so the TUI half is loaded from the server plugin list; that is what places it in the ordering above.
 
-Reload the TUI with `/reload`, or restart it. OpenCode installs the package and loads it on the next start.
+## Uninstall
+
+```sh
+opencode plugin remove oc-plugin-view
+```
+
+Restart OpenCode. To disable without uninstalling, remove the entry from the `plugins` array in `opencode.jsonc` and restart.
 
 ## Usage
 
-The section appears in the sidebar when at least one package or local server plugin is installed. It lists the plugin label and its state:
+The section appears in the sidebar when at least one package or local server plugin besides this one is installed. With no other package plugin installed the section is hidden: the plugin excludes its own entries. It lists the plugin label and its state:
 
 - **Active** — the server loaded the plugin. The row carries a green bullet.
 - **Error** — the server failed to load the plugin. The row carries a red bullet.
 
-Click a row to open OpenCode's native plugin manager at `plugins.list`. When more than two plugins are listed, click the section header to collapse or expand it. The collapsed header reads `Plugins (N active, M errors)`, and the open/closed choice persists across restarts.
+Click a row to open OpenCode's native plugin manager at `plugins.list`. When more than two plugins are listed, click the section header to collapse or expand it. The collapsed header reads `Plugins (N active)` when nothing failed and `Plugins (N active, M error)` or `Plugins (N active, M errors)` when entries failed, and the open/closed choice persists across restarts.
 
-Builtin and SDK entries are not listed. Only plugins from a package source or a local file are shown.
+Builtin and SDK entries are not listed. Only plugins from a package source or a local file are shown, excluding any entry whose id, source target, or source path names `oc-plugin-view`.
 
 ## How it looks
 
 ```text
 ▼ Plugins
-• oc-plugin-view                 Active
+• @scope/good-plugin             Active
 • @scope/broken-plugin           Error
 • ./local-plugin.ts              Active
 ```

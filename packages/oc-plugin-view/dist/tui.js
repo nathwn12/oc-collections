@@ -6,9 +6,13 @@ import { Plugin } from "@opencode/plugin/tui";
 function labelOf(plugin) {
   return plugin.id ?? plugin.source.target ?? plugin.source.path ?? "plugin";
 }
-var SELF_HOST_ID = "oc-plugin-view.host";
+var SELF_NAME = "oc-plugin-view";
+function isSelf(plugin) {
+  const candidates = [plugin.id, plugin.source.target, plugin.source.path];
+  return candidates.some((value) => typeof value === "string" && value.includes(SELF_NAME));
+}
 function installedPlugins(items) {
-  return items.filter((item) => (item.source.type === "package" || item.source.type === "local") && item.id !== SELF_HOST_ID).sort((left, right) => {
+  return items.filter((item) => (item.source.type === "package" || item.source.type === "local") && !isSelf(item)).sort((left, right) => {
     const a = labelOf(left).toLowerCase();
     const b = labelOf(right).toLowerCase();
     return a < b ? -1 : a > b ? 1 : 0;
@@ -42,18 +46,16 @@ function SidebarPlugins(props) {
         /* @__PURE__ */ jsxs("box", {
           flexDirection: "row",
           gap: 1,
-          onMouseDown: props.onToggle,
-          onMouseUp: props.onToggle,
           children: [
             items.length > 2 ? /* @__PURE__ */ jsx("text", {
               fg: theme.text.base,
-              onMouseDown: props.onToggle,
               onMouseUp: props.onToggle,
               children: open ? "\u25BC" : "\u25B6"
             }) : null,
             /* @__PURE__ */ jsxs("text", {
               fg: theme.text.base,
-              onMouseDown: props.onToggle,
+              wrapMode: "none",
+              truncate: true,
               onMouseUp: props.onToggle,
               children: [
                 /* @__PURE__ */ jsx("b", {
@@ -76,14 +78,15 @@ function SidebarPlugins(props) {
         }),
         items.length <= 2 || open ? items.map((item) => {
           const failed = () => item.state.status === "failed";
+          const openList = () => props.context.keymap.dispatch("plugins.list");
           return /* @__PURE__ */ jsxs("box", {
             flexDirection: "row",
             gap: 1,
             minWidth: 0,
-            onMouseUp: () => props.context.keymap.dispatch("plugins.list"),
             children: [
               /* @__PURE__ */ jsx("text", {
                 flexShrink: 0,
+                onMouseUp: openList,
                 style: {
                   fg: failed() ? theme.text.feedback.error.base : theme.text.feedback.success.base
                 },
@@ -96,6 +99,7 @@ function SidebarPlugins(props) {
                 flexGrow: 1,
                 flexShrink: 1,
                 minWidth: 0,
+                onMouseUp: openList,
                 children: /* @__PURE__ */ jsx("b", {
                   children: labelOf(item)
                 })
@@ -104,6 +108,7 @@ function SidebarPlugins(props) {
                 fg: failed() ? theme.text.feedback.error.base : theme.text.muted,
                 wrapMode: "none",
                 flexShrink: 0,
+                onMouseUp: openList,
                 children: statusLabel(item.state.status)
               })
             ]
@@ -120,26 +125,28 @@ var tui_default = Plugin.define({
       initial: { items: [] }
     });
     const [view, updateView] = context.storage.store("view", { initial: { open: true } });
-    let lastToggle = 0;
     const toggle = () => {
-      const now = Date.now();
-      if (now - lastToggle < 200)
-        return;
-      lastToggle = now;
       if (state.items.length <= 2)
         return;
       updateView((draft) => {
         draft.open = !draft.open;
       }).catch((error) => console.error("Failed to persist Plugins sidebar state", error));
     };
+    let generation = 0;
+    let disposed = false;
     const load = () => {
-      context.client.plugin.list({ location: context.location ?? context.data.location.default() }).then((result) => update((draft) => {
-        draft.items = installedPlugins(result.data);
-      })).catch((error) => console.warn("Failed to load plugins for the sidebar", error));
+      const id = ++generation;
+      context.client.plugin.list({ location: context.location ?? context.data.location.default() }).then((result) => {
+        if (disposed || id !== generation)
+          return;
+        update((draft) => {
+          draft.items = installedPlugins(result.data);
+        });
+      }).catch((error) => console.warn("Failed to load plugins for the sidebar", error));
     };
     load();
     const unsubscribe = context.data.on("plugin.updated", load);
-    context.ui.slot({
+    const disposeSlot = context.ui.slot({
       append: "sidebar.content",
       render: () => {
         const items = state.items;
@@ -152,7 +159,11 @@ var tui_default = Plugin.define({
         });
       }
     });
-    return () => unsubscribe();
+    return () => {
+      disposed = true;
+      disposeSlot();
+      unsubscribe();
+    };
   }
 });
 export {

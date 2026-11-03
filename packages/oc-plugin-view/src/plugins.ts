@@ -19,13 +19,18 @@ export function labelOf(plugin: InstalledPlugin): string {
   return plugin.id ?? plugin.source.target ?? plugin.source.path ?? "plugin"
 }
 
-const SELF_HOST_ID = "oc-plugin-view.host"
+const SELF_NAME = "oc-plugin-view"
+
+function isSelf(plugin: InstalledPlugin): boolean {
+  const candidates = [plugin.id, plugin.source.target, plugin.source.path]
+  return candidates.some((value) => typeof value === "string" && value.includes(SELF_NAME))
+}
 
 export function installedPlugins(items: readonly InstalledPlugin[]): InstalledPlugin[] {
   return items
     .filter(
       (item) =>
-        (item.source.type === "package" || item.source.type === "local") && item.id !== SELF_HOST_ID,
+        (item.source.type === "package" || item.source.type === "local") && !isSelf(item),
     )
     .sort((left, right) => {
       const a = labelOf(left).toLowerCase()
