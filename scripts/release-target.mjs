@@ -27,6 +27,7 @@ export const ALLOWED = [
   "@nathwn12/janua",
   "oc-flight-deck",
   "oc-harness-setup",
+  "oc-plugin-view",
   "oc-talk",
   "rea-shim",
 ]

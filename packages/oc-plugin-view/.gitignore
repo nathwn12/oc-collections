@@ -1,0 +1,13 @@
+node_modules/
+dist/
+# dist/ stays committed: the git+file:// install route loads the built entry from the clone.
+!dist/
+coverage/
+*.log
+.env
+.env.*
+.DS_Store
+Thumbs.db
+
+# Local OpenCode config (plugin loading, per-developer settings).
+.opencode/

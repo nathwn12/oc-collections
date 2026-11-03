@@ -19,6 +19,10 @@ $script:RegistryScope = [ordered]@{
         Scope  = 'released'
         Reason = 'packages/oc-harness-setup; published by this repo''s release workflow.'
     }
+    'oc-plugin-view' = [pscustomobject]@{
+        Scope  = 'released'
+        Reason = 'packages/oc-plugin-view; published by this repo''s release workflow.'
+    }
     '@nathwn12/janua' = [pscustomobject]@{
         Scope  = 'released'
         Reason = 'packages/janua; published by this repo''s release workflow.'
