@@ -51,6 +51,46 @@ describe("installedPlugins", () => {
     ]
     expect(installedPlugins(items).map(labelOf)).toEqual(["Alpha", "beta", "zeta"])
   })
+
+  test("orders a single failed plugin before active ones", () => {
+    const failed = plugin({
+      id: "zulu",
+      source: { type: "package", target: "zulu" },
+      state: { status: "failed", error: "boom" },
+    })
+    const items = [
+      plugin({ id: "alpha", source: { type: "package", target: "alpha" } }),
+      plugin({ id: "mike", source: { type: "package", target: "mike" } }),
+      failed,
+    ]
+    expect(installedPlugins(items).map(labelOf)).toEqual(["zulu", "alpha", "mike"])
+  })
+
+  test("keeps all-active entries in alphabetical order", () => {
+    const items = [
+      plugin({ id: "zeta", source: { type: "package", target: "zeta" } }),
+      plugin({ id: "beta", source: { type: "package", target: "beta" } }),
+      plugin({ id: "alpha", source: { type: "package", target: "alpha" } }),
+    ]
+    expect(installedPlugins(items).map(labelOf)).toEqual(["alpha", "beta", "zeta"])
+  })
+
+  test("keeps alphabetical order among failed plugins", () => {
+    const items = [
+      plugin({
+        id: "zulu",
+        source: { type: "package", target: "zulu" },
+        state: { status: "failed", error: "boom" },
+      }),
+      plugin({ id: "mike", source: { type: "package", target: "mike" } }),
+      plugin({
+        id: "alpha",
+        source: { type: "package", target: "alpha" },
+        state: { status: "failed", error: "boom" },
+      }),
+    ]
+    expect(installedPlugins(items).map(labelOf)).toEqual(["alpha", "zulu", "mike"])
+  })
 })
 
 describe("labelOf", () => {

@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Failed plugins now sort before active ones in the sidebar, keeping alphabetical order inside each group.
 - Server entry ids now render as their plugin name: the sidebar label strips one trailing `.host` segment (`flight-deck.host` reads as `flight-deck`), while the `source.target`/`path` fallbacks and the self-exclusion are unchanged.
 
 ## [0.1.0] - 2026-11-03

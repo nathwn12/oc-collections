@@ -14,6 +14,10 @@ function isSelf(plugin) {
 }
 function installedPlugins(items) {
   return items.filter((item) => (item.source.type === "package" || item.source.type === "local") && !isSelf(item)).sort((left, right) => {
+    const failedLeft = left.state.status === "failed" ? 0 : 1;
+    const failedRight = right.state.status === "failed" ? 0 : 1;
+    if (failedLeft !== failedRight)
+      return failedLeft - failedRight;
     const a = labelOf(left).toLowerCase();
     const b = labelOf(right).toLowerCase();
     return a < b ? -1 : a > b ? 1 : 0;
