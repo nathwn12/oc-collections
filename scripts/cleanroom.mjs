@@ -216,11 +216,21 @@ function installTarballs(root, tarballs) {
     `${JSON.stringify({ name: "cleanroom", version: "0.0.0", private: true, dependencies }, null, 2)}\n`,
   )
   fs.writeFileSync(path.join(app, "probe.mjs"), PROBE)
-  const installed = npm(["install", "--ignore-scripts", "--no-audit", "--no-fund", "--prefer-offline"], app)
+  const base = ["install", "--ignore-scripts", "--no-audit", "--no-fund"]
+  const offline = npm([...base, "--offline"], app)
+  if (offline.status === 0) {
+    console.log("  install succeeded offline (--offline)")
+    return app
+  }
+  fs.rmSync(path.join(app, "node_modules"), { recursive: true, force: true })
+  fs.rmSync(path.join(app, "package-lock.json"), { force: true })
+  console.log(`  offline install missed (exit ${offline.status}); retrying online with --prefer-offline`)
+  const installed = npm([...base, "--prefer-offline"], app)
   if (installed.status !== 0) {
     console.error(`  FAIL npm install (exit ${installed.status})\n${(installed.stdout ?? "").trim()}\n${(installed.stderr ?? "").trim()}`)
     return null
   }
+  console.log("  install succeeded online (--prefer-offline)")
   return app
 }
 
