@@ -4,7 +4,8 @@ import { Plugin } from "@opencode/plugin/tui";
 
 // src/plugins.ts
 function labelOf(plugin) {
-  return plugin.id ?? plugin.source.target ?? plugin.source.path ?? "plugin";
+  const id = plugin.id?.endsWith(".host") === true ? plugin.id.slice(0, -".host".length) : plugin.id;
+  return id ?? plugin.source.target ?? plugin.source.path ?? "plugin";
 }
 var SELF_NAME = "oc-plugin-view";
 function isSelf(plugin) {

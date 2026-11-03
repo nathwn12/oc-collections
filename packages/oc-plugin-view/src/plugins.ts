@@ -16,7 +16,9 @@ export type InstalledPlugin = {
 }
 
 export function labelOf(plugin: InstalledPlugin): string {
-  return plugin.id ?? plugin.source.target ?? plugin.source.path ?? "plugin"
+  const id =
+    plugin.id?.endsWith(".host") === true ? plugin.id.slice(0, -".host".length) : plugin.id
+  return id ?? plugin.source.target ?? plugin.source.path ?? "plugin"
 }
 
 const SELF_NAME = "oc-plugin-view"
