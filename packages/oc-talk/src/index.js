@@ -321,23 +321,24 @@ async function waitForIdle(sessionID, waitMs) {
   }
 }
 
-// Newest-first pages of one session's messages, following cursor.next up to
-// maxPages so a question asked a while ago is still found.
+// Newest-first view built from ascending pages: the server forbids cursor and
+// order together (400 InvalidCursorError), so page ascending with cursor alone
+// (no order) and reverse once to keep the newest-first contract.
 async function collectMessagesDesc(sessionID, perPage, maxPages) {
-  const all = [];
+  const asc = [];
   let cursor = null;
   for (let page = 0; page < maxPages; page++) {
-    const args = ['session.message.list', '--param', 'sessionID=' + sessionID, '--param', 'limit=' + perPage, '--param', 'order=desc'];
+    const args = ['session.message.list', '--param', 'sessionID=' + sessionID, '--param', 'limit=' + perPage];
     if (cursor) args.push('--param', 'cursor=' + cursor);
     const r = await runApi(args);
     if (!r.ok) return r;
     const rows = Array.isArray(r.json.data) ? r.json.data : [];
-    all.push(...rows);
+    asc.push(...rows);
     const next = (r.json.cursor && r.json.cursor.next) || null;
     if (!next) break;
     cursor = next;
   }
-  return { ok: true, messages: all };
+  return { ok: true, messages: asc.slice().reverse() };
 }
 
 // Positional correlation: in oldest-first order, the answer to one user
@@ -618,8 +619,13 @@ async function ensureTools(ctx) {
         let limit = args.limit === undefined ? READ_DEFAULT_LIMIT : Math.floor(args.limit);
         if (!Number.isFinite(limit)) return fail('bad_request', 'limit must be a number');
         limit = Math.min(Math.max(limit, 1), READ_MAX_LIMIT);
-        const listArgs = ['session.message.list', '--param', 'sessionID=' + t.id, '--param', 'limit=' + limit, '--param', 'order=desc'];
-        if (args.cursor !== undefined) {
+        // The server forbids cursor+order together (400 InvalidCursorError):
+        // first page asks order=desc alone, cursor pages ask cursor alone
+        // (ascending) and reverse once to keep the newest-first contract.
+        const hasCursor = args.cursor !== undefined;
+        const listArgs = ['session.message.list', '--param', 'sessionID=' + t.id, '--param', 'limit=' + limit];
+        if (!hasCursor) listArgs.push('--param', 'order=desc');
+        if (hasCursor) {
           if (typeof args.cursor !== 'string' || !args.cursor) return fail('bad_request', 'cursor must be a non-empty string');
           listArgs.push('--param', 'cursor=' + args.cursor);
         }
@@ -634,7 +640,8 @@ async function ensureTools(ctx) {
           if (r.code === 'session_not_found') return fail('session_not_found', 'session ' + t.id + ' is gone: ' + r.detail);
           return fail(r.code, 'read failed: ' + r.detail);
         }
-        const rows = Array.isArray(r.json.data) ? r.json.data : [];
+        const rowsRaw = Array.isArray(r.json.data) ? r.json.data : [];
+        const rows = hasCursor ? rowsRaw.slice().reverse() : rowsRaw;
         let kept = rows;
         if (typeof args.since === 'number') {
           kept = rows.filter((m) => ((m.time && m.time.created) || 0) > args.since);

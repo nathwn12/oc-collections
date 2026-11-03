@@ -348,6 +348,20 @@ test('source carries no credential, localhost reference or removal verb', () => 
   assert.doesNotMatch(surface, /delete/i);
 });
 
+// The live server rejects cursor+order together with 400 InvalidCursorError:
+// `opencode api session.message.list --param sessionID=<id> --param limit=5
+// --param order=desc` plus a cursor always 400s on the second page, while the
+// same cursor without order succeeds. Every message.list fake below enforces
+// the same rule so this class cannot pass again.
+function cursorOrderError(args) {
+  const hasCursor = args.some((a) => String(a).startsWith('cursor='));
+  const hasOrder = args.some((a) => String(a).startsWith('order='));
+  if (hasCursor && hasOrder) {
+    return { ok: false, code: 'backend_error', detail: 'InvalidCursorError: Cursor cannot be combined with order' };
+  }
+  return null;
+}
+
 // A recording backend: every call is captured and each verb answers with the
 // smallest payload its caller needs, so a whole tool execute runs offline with
 // no peer, no CLI and no network.
@@ -360,6 +374,8 @@ function recorder(session = { id: 'ses_a', title: 'active work' }) {
     if (verb === 'session.list') return { ok: true, json: { data: [] } };
     if (verb === 'patch') return { ok: true, json: { data: {} } };
     if (verb === 'session.message.list') {
+      const bad = cursorOrderError(args);
+      if (bad) return bad;
       return { ok: true, json: { data: [{ id: 'msg_reply', type: 'assistant', time: { created: Date.now() + 5000 }, text: 'done' }] } };
     }
     if (verb === 'post' && String(target).endsWith('/prompt')) {
@@ -559,7 +575,9 @@ function askTranscript() {
 }
 
 // A fake backend for one peer: prompt accepts with a known id, wait is idle
-// at once, and the transcript above is what a read finds.
+// at once, and the transcript above is what a read finds. Strict like the
+// live server: cursor+order together is a 400 InvalidCursorError. Order-aware:
+// order=desc returns newest-first, no order returns oldest-first.
 function askPeerRunner(askedID = 'msg_ours', transcript = askTranscript()) {
   return async (args) => {
     const [verb, target] = args;
@@ -568,7 +586,13 @@ function askPeerRunner(askedID = 'msg_ours', transcript = askTranscript()) {
     if (verb === 'post' && String(target).endsWith('/prompt')) {
       return { ok: true, json: { data: { id: askedID, sessionID: 'ses_peer', time: { created: 40 } } } };
     }
-    if (verb === 'session.message.list') return { ok: true, json: { data: transcript } };
+    if (verb === 'session.message.list') {
+      const bad = cursorOrderError(args);
+      if (bad) return bad;
+      const desc = args.some((a) => String(a) === 'order=desc');
+      const data = desc ? transcript : transcript.slice().reverse();
+      return { ok: true, json: { data } };
+    }
     return { ok: true, json: { data: {} } };
   };
 }
@@ -604,6 +628,8 @@ test('a peer that never idles reports timedOut:true, never success', async () =>
       return { ok: true, json: { data: { id: 'msg_q', sessionID: 'ses_busy', time: { created: 1 } } } };
     }
     if (verb === 'session.message.list') {
+      const bad = cursorOrderError(args);
+      if (bad) return bad;
       return { ok: true, json: { data: [{ id: 'msg_q', type: 'user', time: { created: 1 }, text: 'q' }] } };
     }
     return { ok: true, json: { data: {} } };
@@ -648,13 +674,17 @@ test('session_broadcast answers the healthy peers when one peer throws', async (
       return { ok: true, json: { data: { id: 'msg_q_' + sid, sessionID: sid, time: { created: 1 } } } };
     }
     if (verb === 'session.message.list') {
+      const bad = cursorOrderError(args);
+      if (bad) return bad;
+      const desc = args.some((a) => String(a) === 'order=desc');
+      const rows = [
+        { id: 'msg_a_' + sid, type: 'assistant', time: { created: 2 }, text: 'answer ' + sid },
+        { id: 'msg_q_' + sid, type: 'user', time: { created: 1 }, text: 'q' },
+      ];
       return {
         ok: true,
         json: {
-          data: [
-            { id: 'msg_a_' + sid, type: 'assistant', time: { created: 2 }, text: 'answer ' + sid },
-            { id: 'msg_q_' + sid, type: 'user', time: { created: 1 }, text: 'q' },
-          ],
+          data: desc ? rows : rows.slice().reverse(),
         },
       };
     }
@@ -714,14 +744,18 @@ test('session_read carries peer metadata and pages with since/cursor', async () 
     const [verb] = args;
     if (verb === 'session.get') return { ok: true, json: { data: { id: 'ses_a', title: 'active work' } } };
     if (verb === 'session.message.list') {
+      const bad = cursorOrderError(args);
+      if (bad) return bad;
+      const desc = args.some((a) => String(a) === 'order=desc');
+      const descRows = [
+        { id: 'msg_new', type: 'assistant', time: { created: 30, completed: 31 }, text: 'new', metadata: { from: 'peer' }, outcome: 'completed', finish: 'stop' },
+        { id: 'msg_mid', type: 'user', time: { created: 20 }, text: 'q' },
+        { id: 'msg_old', type: 'assistant', time: { created: 10 }, text: 'old' },
+      ];
       return {
         ok: true,
         json: {
-          data: [
-            { id: 'msg_new', type: 'assistant', time: { created: 30, completed: 31 }, text: 'new', metadata: { from: 'peer' }, outcome: 'completed', finish: 'stop' },
-            { id: 'msg_mid', type: 'user', time: { created: 20 }, text: 'q' },
-            { id: 'msg_old', type: 'assistant', time: { created: 10 }, text: 'old' },
-          ],
+          data: desc ? descRows : descRows.slice().reverse(),
           cursor: { next: 'next-page' },
         },
       };
@@ -749,10 +783,13 @@ test('session_read carries peer metadata and pages with since/cursor', async () 
   const timed = JSON.parse((await read.execute({ to: 'ses_a', since: 15 })).content);
   assert.deepEqual(timed.messages.map((m) => m.id), ['msg_new', 'msg_mid']);
 
-  // cursor reaches the backend verbatim.
-  await read.execute({ to: 'ses_a', cursor: 'next-page' });
+  // cursor reaches the backend verbatim, and never together with order: the
+  // live server 400s InvalidCursorError on the pair.
+  const cout = JSON.parse((await read.execute({ to: 'ses_a', cursor: 'next-page' })).content);
+  assert.equal(cout.error, undefined, 'cursor page must succeed: ' + JSON.stringify(cout));
   const listCall = calls.filter((a) => a[0] === 'session.message.list').pop();
   assert.ok(listCall.includes('cursor=next-page'));
+  assert.ok(!listCall.some((a) => String(a).startsWith('order=')), 'cursor and order must never combine');
 });
 
 test('session_list passes parentID so a dispatcher can enumerate its workers', async () => {
@@ -803,13 +840,17 @@ test('ask, reply and broadcast steer by default and honour queue', async () => {
         return { ok: true, json: { data: { id: 'msg_q', sessionID: sid, time: { created: 1 } } } };
       }
       if (verb === 'session.message.list') {
+        const bad = cursorOrderError(args);
+        if (bad) return bad;
+        const desc = args.some((a) => String(a) === 'order=desc');
+        const rows = [
+          { id: 'msg_a', type: 'assistant', time: { created: 2 }, text: 'answer' },
+          { id: 'msg_q', type: 'user', time: { created: 1 }, text: 'q' },
+        ];
         return {
           ok: true,
           json: {
-            data: [
-              { id: 'msg_a', type: 'assistant', time: { created: 2 }, text: 'answer' },
-              { id: 'msg_q', type: 'user', time: { created: 1 }, text: 'q' },
-            ],
+            data: desc ? rows : rows.slice().reverse(),
           },
         };
       }
@@ -830,6 +871,93 @@ test('ask, reply and broadcast steer by default and honour queue', async () => {
     const out2 = JSON.parse((await tool.execute({ ...base, delivery: 'queue' })).content);
     assert.equal(out2.error, undefined, name + ' override run failed: ' + JSON.stringify(out2));
     assert.equal(promptBody(calls).delivery, 'queue', name + ' must honour queue');
+  }
+});
+
+// The live defect: the server 400s cursor+order together, so a peer with more
+// messages than one page broke every ask/thread that reached a second page.
+// These force at least two pages (page size 2) and prove ascending paging
+// with no order collects the whole transcript and still correlates.
+function pagedTranscriptAsc() {
+  return [
+    { id: 'msg_old', type: 'assistant', time: { created: 10 }, text: 'older exchange' },
+    { id: 'msg_ours', type: 'user', time: { created: 40 }, text: 'the question' },
+    { id: 'msg_ans1', type: 'assistant', time: { created: 49 }, text: 'first' },
+    { id: 'msg_ans2', type: 'assistant', time: { created: 50 }, text: 'second', outcome: 'completed' },
+    { id: 'msg_new_user', type: 'user', time: { created: 59 }, text: 'unrelated later question' },
+    { id: 'msg_new_asst', type: 'assistant', time: { created: 60 }, text: 'LATER: unrelated answer' },
+  ];
+}
+
+// Strict paginating fake: rejects cursor+order like the server, pages 2 rows
+// at a time in the requested order (desc when order=desc, asc otherwise) so
+// both the old desc fetcher and the fixed asc fetcher see consistent pages.
+function pagedRunner(calls) {
+  const asc = pagedTranscriptAsc();
+  const desc = asc.slice().reverse();
+  return async (args) => {
+    const [verb, target] = args;
+    if (verb === 'session.get') return { ok: true, json: { data: { id: 'ses_peer', title: 'active peer' } } };
+    if (verb === 'post' && String(target).endsWith('/wait')) return { ok: true, json: { data: {} } };
+    if (verb === 'post' && String(target).endsWith('/prompt')) {
+      return { ok: true, json: { data: { id: 'msg_ours', sessionID: 'ses_peer', time: { created: 40 } } } };
+    }
+    if (verb === 'session.message.list') {
+      calls.push(args);
+      const bad = cursorOrderError(args);
+      if (bad) return bad;
+      const wantDesc = args.some((a) => String(a) === 'order=desc');
+      const full = wantDesc ? desc : asc;
+      const cur = (args.find((a) => String(a).startsWith('cursor=')) || '').slice('cursor='.length);
+      const off = cur ? parseInt(cur.slice('off-'.length), 10) : 0;
+      const start = Number.isFinite(off) ? off : 0;
+      const page = full.slice(start, start + 2);
+      const nextOff = start + 2 < full.length ? start + 2 : null;
+      return {
+        ok: true,
+        json: {
+          data: page,
+          cursor: { previous: null, next: nextOff === null ? null : 'off-' + nextOff },
+        },
+      };
+    }
+    return { ok: true, json: { data: {} } };
+  };
+}
+
+test('session_ask pages past one page without cursor+order and correlates', async () => {
+  const mod = await load();
+  const calls = [];
+  mod.setApiRunner(pagedRunner(calls));
+  const { ctx, added } = host();
+  await mod.default.setup(ctx);
+  const ask = added.find((t) => t.name === 'session_ask');
+  const out = JSON.parse((await ask.execute({ to: 'ses_peer', text: 'the question', waitMs: 5000 })).content);
+  assert.equal(out.error, undefined, 'multi-page ask must succeed: ' + JSON.stringify(out));
+  assert.deepEqual(out.answer, [
+    { id: 'msg_ans1', text: 'first' },
+    { id: 'msg_ans2', text: 'second' },
+  ]);
+  assert.equal(out.outcome, 'completed');
+  assert.ok(calls.length >= 2, 'must force at least two pages, saw ' + calls.length);
+  for (const c of calls) {
+    assert.ok(!c.some((a) => String(a).startsWith('order=')), 'no page may send order with cursor: ' + JSON.stringify(c));
+  }
+});
+
+test('session_thread pages past one page without cursor+order and stays ordered', async () => {
+  const mod = await load();
+  const calls = [];
+  mod.setApiRunner(pagedRunner(calls));
+  const { ctx, added } = host();
+  await mod.default.setup(ctx);
+  const thread = added.find((t) => t.name === 'session_thread');
+  const out = JSON.parse((await thread.execute({ to: 'ses_peer', messageID: 'msg_ours' })).content);
+  assert.equal(out.error, undefined, 'multi-page thread must succeed: ' + JSON.stringify(out));
+  assert.deepEqual(out.messages.map((m) => m.id), ['msg_ours', 'msg_ans1', 'msg_ans2']);
+  assert.ok(calls.length >= 2, 'must force at least two pages, saw ' + calls.length);
+  for (const c of calls) {
+    assert.ok(!c.some((a) => String(a).startsWith('order=')), 'no page may send order with cursor: ' + JSON.stringify(c));
   }
 });
 
