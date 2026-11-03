@@ -17,10 +17,11 @@
  * Workspaces run concurrently (min(cpus, 8)); --serial forces plan order.
  * The check purpose caches green runs (scripts/check-cache.mjs): a workspace
  * whose key is unchanged prints "unchanged since last green (cached)" and is
- * not re-run. --no-cache or OC_CHECK_CACHE=0 disables the cache entirely.
- * Through npm the flag must go after `--` (`npm run check -- --no-cache`):
- * a bare `npm run check --no-cache` is swallowed by npm itself, which owns
- * `cache` as a path config (npm 12 warns "invalid config cache=false").
+ * not re-run. `node scripts/workspace-run.mjs check --no-cache` or
+ * `OC_CHECK_CACHE=0` disables the cache entirely. The npm `--no-cache`
+ * spellings must not be used: npm consumes `--no-cache` as its own cache
+ * config (warns `invalid config cache=false`) and delivers an empty argv
+ * plus an unchanged environment, so no in-script detection can see it.
  */
 import { spawn, spawnSync } from "node:child_process"
 import os from "node:os"
@@ -212,12 +213,10 @@ async function runParallel(purpose, plan, dirs, useCache) {
 function main() {
   const raw = process.argv.slice(2)
   const serial = raw.includes("--serial")
-  // npm_config_cache covers npm versions that propagate the negation; npm 12
-  // rejects it ("invalid config cache=false") and drops the bare flag instead.
+  // `--no-cache` works on direct invocation only; through npm use OC_CHECK_CACHE=0.
   const cacheOff =
     raw.includes("--no-cache") ||
-    process.env.OC_CHECK_CACHE === "0" ||
-    process.env.npm_config_cache === "false"
+    process.env.OC_CHECK_CACHE === "0"
   const unknown = raw.filter((arg) => arg !== "--serial" && arg !== "--no-cache" && arg.startsWith("-"))
   const purpose = raw.find((arg) => !arg.startsWith("-"))
 

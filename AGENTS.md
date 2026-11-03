@@ -33,7 +33,7 @@ npm run check
 
 `npm run check` runs every package's own check (typecheck, compile, tests) and exits `0` only when every package is green.
 
-A repeat run reuses `.cache/checks` keyed on exact inputs; disable with `OC_CHECK_CACHE=0` (`npm run check -- --no-cache` also works; a bare `--no-cache` is eaten by npm and must not be used).
+A repeat run reuses `.cache/checks` keyed on exact inputs; through npm disable with `OC_CHECK_CACHE=0` — the npm `--no-cache` spellings are consumed by npm and must not be used.
 
 ## Layout
 
