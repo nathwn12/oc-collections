@@ -5,3 +5,4 @@ dist/
 *.tgz
 coverage/
 target/
+.cache/

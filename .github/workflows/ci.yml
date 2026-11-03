@@ -1,6 +1,10 @@
-# The gate. Two jobs: `index` installs the workspaces on Windows and runs the
-# real per-workspace checks through the root wrapper; `posix` runs janua's own
-# tests on Ubuntu, where its POSIX pipe path executes instead of skipping.
+# The gate. Three jobs on two lanes: `static` runs the no-install checks on
+# Windows (index files, structural + selftest, vocabulary, docs + selftest);
+# `workspaces` installs on Windows and runs the real per-workspace checks
+# through the root wrapper; `posix` runs janua's own tests on Ubuntu, where
+# its POSIX pipe path executes instead of skipping. `static` and `workspaces`
+# run in parallel: the fast lane fails in about a second on a missing file,
+# the slow lane proves the tree installs and checks green.
 #
 # `npm run check` is the documented root gate: scripts/check-docs.mjs, then its
 # selftest, then scripts/workspace-run.mjs check, which runs each workspace's
@@ -10,7 +14,7 @@
 # tree fails here too.
 #
 # The previous gate ran on ubuntu-latest and only proved four root files were
-# tracked. janua is cross-platform: the Windows job keeps the full gate, and
+# tracked. janua is cross-platform: the Windows jobs keep the full gate, and
 # the `posix` job proves the POSIX branch that a Windows run cannot reach.
 name: ci
 
@@ -30,7 +34,45 @@ permissions:
   contents: read
 
 jobs:
-  index:
+  static:
+    runs-on: windows-latest
+    # No install: tracked-file facts, structural checks and Node scripts that
+    # need only the tree. Fails in about a second on a missing file.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Cheap guard first: a missing licence, README, changelog or signature is
+      # a tracked-file fact, answered in about a second with no install.
+      - name: Index files present
+        run: git ls-files --error-unmatch README.md LICENSE CHANGELOG.md assets/signature.svg
+
+      - name: Index structure (offline)
+        # The structural half needs no registry: it checks the table names
+        # against the repo's package inventory. The self-test proves it can go
+        # red without network.
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File scripts/check-index.ps1 --structural
+          pwsh -NoProfile -File scripts/check-index.selftest.ps1
+
+      - name: No internal vocabulary in the index's own files
+        # One definition, shared with `npm run check`: the patterns, the excluded
+        # path and the "a grep error is never clean" rule live in the script.
+        run: node scripts/check-vocabulary.mjs
+
+      - name: Documentation truth (offline)
+        # Path claims in maintainer docs, plus the checker's own red/green proof.
+        shell: pwsh
+        run: |
+          node scripts/check-docs.mjs
+          node scripts/check-docs.selftest.mjs
+
+  workspaces:
     runs-on: windows-latest
     # A local cold `npm run check` takes ~73s, and oc-harness-setup alone is
     # ~51s of it (real npm installs plus a packed-tarball install). A Windows
@@ -40,11 +82,6 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-
-      # Cheap guard first: a missing licence, README, changelog or signature is
-      # a tracked-file fact, answered in about a second with no install.
-      - name: Index files present
-        run: git ls-files --error-unmatch README.md LICENSE CHANGELOG.md assets/signature.svg
 
       - uses: actions/setup-node@v4
         with:
@@ -58,17 +95,28 @@ jobs:
         with:
           bun-version: 1.4.2
 
+      - name: Cache node_modules
+        id: cache-node
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
       # Required: the root manifest declares no dependencies, and each
       # workspace's check resolves its bins through the hoisted root
-      # node_modules that `npm ci` builds from package-lock.json.
+      # node_modules that `npm ci` builds from package-lock.json. Skipped on
+      # a cache hit: the restore above already provides those bytes.
       - name: Install workspaces
+        if: steps.cache-node.outputs.cache-hit != 'true'
         run: npm ci
 
       - name: Workspace check
         run: npm run check
 
   # janua's pipe path has POSIX-only branches: a detached child leading its own
-  # process group, and negative-pid group kills. The Windows index job skips the
+  # process group, and negative-pid group kills. The Windows workspaces job skips the
   # descendant test, so this job runs the pipe test where that branch executes.
   # The upgrade tests run here too: they reach the POSIX branch of the npm command
   # line and the home/pointer/launcher rules, and use an injected installer, so
