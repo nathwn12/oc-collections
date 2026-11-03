@@ -70,6 +70,41 @@ test("renders labels and states when the section is open", async () => {
   expect(output).toContain("Error")
 })
 
+test("renders the failed row with the error colour", async () => {
+  const base = RGBA.fromInts(200, 200, 200)
+  const success = RGBA.fromInts(0, 255, 0)
+  const error = RGBA.fromInts(255, 0, 0)
+  const errorCtx = {
+    theme: {
+      text: {
+        base,
+        muted: base,
+        feedback: {
+          success: { base: success },
+          error: { base: error },
+        },
+      },
+    },
+    keymap: {
+      dispatch: () => {},
+    },
+  } as unknown as Plugin.Context
+  const items = [plugin("alpha", "active"), plugin("broken", "failed")]
+  const view = () => (
+    <SidebarPlugins context={errorCtx} items={items} open={true} onToggle={() => {}} />
+  )
+  const app = await testRender(() => view, { width: 44, height: 10 })
+  try {
+    await app.renderOnce()
+    const spans = app.captureSpans().lines.flatMap((line) => line.spans)
+    const errorSpans = spans.filter((span) => span.text.includes("Error"))
+    expect(errorSpans.length).toBeGreaterThan(0)
+    for (const span of errorSpans) expect(span.fg.equals(error)).toBe(true)
+  } finally {
+    app.renderer.destroy()
+  }
+})
+
 test("renders the collapsed summary", async () => {
   const output = await frame([plugin("a", "active"), plugin("b", "active"), plugin("c", "failed")], false)
   expect(output).toContain("Plugins (2 active, 1 error)")
@@ -239,7 +274,7 @@ test("setup loads the filtered list, subscribes, and disposes the slot plus subs
   expect(subscribed).toBe("plugin.updated")
   expect(claim?.append).toBe("sidebar.content")
   expect(view).toEqual({ key: "view", initial: { open: true } })
-  expect(store?.items.map((item) => item.id ?? item.source.path)).toEqual(["/plugins/a.ts", "broken", "zeta"])
+  expect(store?.items.map((item) => item.id ?? item.source.path)).toEqual(["broken", "/plugins/a.ts", "zeta"])
   cleanup?.()
   expect(unsubscribed).toBe(true)
   expect(slotDisposed).toBe(true)
