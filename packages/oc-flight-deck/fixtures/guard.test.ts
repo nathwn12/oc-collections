@@ -326,7 +326,9 @@ describe("guard bridge", () => {
   test("follows only session changes", async () => {
     const calls: string[] = [];
     const { host } = fakeHost();
-    const bridge = startGuardBridge(host, depsReturning(HEALTHY, calls), 50);
+    // Long poll interval so the 10/30 ms assertion windows below cannot catch
+    // a timer tick: only explicit follow() calls may add a fetch here.
+    const bridge = startGuardBridge(host, depsReturning(HEALTHY, calls), 60_000);
     bridge?.follow("ses_a");
     await sleep(30);
     const first = calls.length;
