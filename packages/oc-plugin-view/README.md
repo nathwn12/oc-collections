@@ -59,3 +59,11 @@ A collapsed section with three entries reads:
 - OpenCode 2.2.5 V2 CLI and TUI (`@opencode/plugin/tui` 2.2.5).
 - `@opentui/core` and `@opentui/solid` 0.8.0 or newer; `solid-js` 1.9.0 or newer.
 - TUI plus a no-op server entrypoint; the server entry carries `features.tui` from the package root and renders nothing.
+
+<!-- nathwn12 house footer: identical in every repo. Do not edit. -->
+<p align="center">
+  <a href="https://github.com/nathwn12"><img src="assets/signature.svg" width="96" alt="nathwn12" /></a>
+</p>
+<p align="center">
+  <sub>Built by <a href="https://github.com/nathwn12">nathwn12</a> · <a href="https://github.com/nathwn12?tab=repositories">All projects</a></sub>
+</p>

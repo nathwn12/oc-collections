@@ -283,3 +283,11 @@ driving a REPL, and naming a session.
 - Repository: https://github.com/nathwn12/oc-collections/tree/main/packages/janua
 - Changelog: [CHANGELOG.md](CHANGELOG.md)
 - License: [LICENSE](LICENSE) (MIT)
+
+<!-- nathwn12 house footer: identical in every repo. Do not edit. -->
+<p align="center">
+  <a href="https://github.com/nathwn12"><img src="assets/signature.svg" width="96" alt="nathwn12" /></a>
+</p>
+<p align="center">
+  <sub>Built by <a href="https://github.com/nathwn12">nathwn12</a> · <a href="https://github.com/nathwn12?tab=repositories">All projects</a></sub>
+</p>
