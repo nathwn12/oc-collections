@@ -19,6 +19,7 @@
     "postinstall": "node -e \"if(process.env.npm_config_global==='true'){console.error('puppet-mcp: global install refused - use npx puppet-mcp@7.0.1');process.exit(1)}\""
   },
   "files": [
+    "assets",
     "bin/",
     "engine-manifest.json",
     "LICENSE",
