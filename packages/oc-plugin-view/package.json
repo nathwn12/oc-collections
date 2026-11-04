@@ -34,6 +34,7 @@
     "README.md",
     "LICENSE",
     "CHANGELOG.md",
+    "assets",
     "!src/**/*.test.*"
   ],
   "engines": {

@@ -27,7 +27,8 @@
     "docs/ROADMAP.md",
     "README.md",
     "LICENSE",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "assets"
   ],
   "keywords": [
     "mcp",
