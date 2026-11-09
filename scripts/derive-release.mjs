@@ -219,7 +219,38 @@ function classify(commit) {
   if (record.breaking) record.bump = "major";
   else if (BUMP[record.type]) record.bump = BUMP[record.type];
   else record.ignored = true;
+  // `revert: <original subject>` names the same change the git shape names.
+  if (record.type === "revert") record.reverts = m[4];
   return record;
+}
+
+// A revert names a change it undoes. When that change is an EARLIER non-merge
+// commit in the same range and carried a hop, the pair cancels: the tree after
+// the revert is byte-identical to the tree before the original, so a release
+// derived from the pair would ship nothing while burning a version. Both
+// records become ignored (no bump on either side). The match is the exact
+// subject string, never approximate; a revert of a docs/chore/test subject
+// changes nothing because that subject had no hop to cancel; a revert naming a
+// subject outside the range (or a merge subject, which is not in the range)
+// stays the plain ignored revert it is today.
+function cancelRevertedHops(records) {
+  for (let i = 0; i < records.length; i += 1) {
+    const revert = records[i];
+    if (!revert.reverts) continue;
+    // `git log` lists newest first, so the reverted commit, if it is in the
+    // range, is OLDER than the revert: a higher index. A revert that predates
+    // the change it names cancels nothing.
+    const original = records
+      .slice(i + 1)
+      .find((r) => !r.reverts && r.subject === revert.reverts && r.bump !== null);
+    if (!original) continue;
+    original.bump = null;
+    original.ignored = true;
+    original.cancelledBy = revert.sha;
+    revert.bump = null;
+    revert.ignored = true;
+    revert.cancels = original.sha;
+  }
 }
 
 function deriveLevel(records) {
@@ -441,6 +472,7 @@ function deriveAll(opts = {}) {
     );
   }
   const records = raw.map(classify);
+  cancelRevertedHops(records);
   const level = deriveLevel(records);
   const derived = bumpVersion(base ? base.version : committed, level);
   // A tag already sitting on this commit is a claim, not a source of truth: it
@@ -479,6 +511,7 @@ function deriveAll(opts = {}) {
       bump: r.bump,
       ignored: r.ignored,
       breaking: r.breaking,
+      cancels: r.cancels ?? null,
     })),
     ignored: records.filter((r) => r.ignored).map((r) => ({ sha: r.sha, subject: r.subject, type: r.type })),
     changelog: {
@@ -684,25 +717,55 @@ function runCheck() {
     // A revert is a legitimate commit, not a malformed subject. Git writes its
     // own reverts as `Revert "<original subject>"` and the Conventional
     // Commits spec writes the same intent as `revert: <original subject>`;
-    // both are accepted, and neither carries a release hop of its own (the hop
-    // belongs to the change being reverted).
+    // both are accepted. When the named change is in the same range and
+    // carried a hop, the pair CANCELS: the tree after the revert has no net
+    // change, so history must derive no release from it. (Before this rule,
+    // the pair still derived 1.0.1 / 1.1.0 - a released hop for a reverted
+    // change, which is how v7.0.1..main derived 7.0.2 for a zero-delta tree.)
     expect(
       "revert-git-shape",
       "1.0.0",
       [{ subject: "fix(diff): emit the diff" }, { subject: 'Revert "fix(diff): emit the diff"' }],
-      { version: "1.0.1", level: "patch" },
+      { code: "no-release-type" },
     );
     expect(
       "revert-colon-shape",
       "1.0.0",
       [{ subject: "feat: a tool" }, { subject: "revert: feat: a tool" }],
-      { version: "1.1.0", level: "minor" },
+      { code: "no-release-type" },
     );
     expect("refuse-revert-only", "1.0.0", [{ subject: 'Revert "fix(diff): emit the diff"' }], { code: "no-release-type" });
     // The narrowness is the point: a subject that only LOOKS like a revert, or
     // one that reverts a non-conventional subject, is still refused.
     expect("refuse-revert-of-unconventional", "1.0.0", [{ subject: 'Revert "Fixed the thing"' }], { code: "non-conventional" });
     expect("refuse-revert-prose", "1.0.0", [{ subject: "Revert the diff change" }], { code: "non-conventional" });
+    // A revert of a MERGE subject names no conventional change and is not in
+    // the range at all (merges are filtered out): still refused.
+    expect("refuse-revert-of-merge-subject", "1.0.0", [{ subject: "Revert \"Merge branch 'side'\"" }], { code: "non-conventional" });
+    // Cancellation is exact-subject and in-range only: a revert naming a
+    // subject that is not in the range cancels nothing, so the surviving fix
+    // keeps its patch hop (this is the proof against blanket ignoring).
+    expect(
+      "revert-unrelated-subject",
+      "1.0.0",
+      [{ subject: "fix: a real bug" }, { subject: 'Revert "fix: some other bug"' }],
+      { version: "1.0.1", level: "patch" },
+    );
+    // ...and a revert older than the change it names cannot cancel it: the
+    // original still lands after the revert and still needs its release.
+    expect(
+      "revert-before-original",
+      "1.0.0",
+      [{ subject: 'Revert "fix: later bug"' }, { subject: "fix: later bug" }],
+      { version: "1.0.1", level: "patch" },
+    );
+    // A reverted docs commit had no hop to cancel; the fix beside it stands.
+    expect(
+      "revert-of-docs-changes-nothing",
+      "1.0.0",
+      [{ subject: "docs: notes" }, { subject: 'Revert "docs: notes"' }, { subject: "fix: a real bug" }],
+      { version: "1.0.1", level: "patch" },
+    );
 
     // The lane asserts the version, it never writes it: a tree whose manifests
     // were not bumped with its commits is refused, not repaired.
