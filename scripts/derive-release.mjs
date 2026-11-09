@@ -232,11 +232,15 @@ function classify(commit) {
 // subject string, never approximate; a revert of a docs/chore/test subject
 // changes nothing because that subject had no hop to cancel; a revert naming a
 // subject outside the range (or a merge subject, which is not in the range)
-// stays the plain ignored revert it is today.
+// stays the plain ignored revert it is today. A revert with a bump OF ITS OWN
+// (`revert!:` or a BREAKING CHANGE trailer) is exempt: it changes behavior by
+// itself, so it keeps its major hop and cancels nothing - a cancellation that
+// swallowed a breaking change would ship a breaking revert as no release.
 function cancelRevertedHops(records) {
   for (let i = 0; i < records.length; i += 1) {
     const revert = records[i];
     if (!revert.reverts) continue;
+    if (revert.bump !== null) continue;
     // `git log` lists newest first, so the reverted commit, if it is in the
     // range, is OLDER than the revert: a higher index. A revert that predates
     // the change it names cancels nothing.
@@ -735,6 +739,22 @@ function runCheck() {
       { code: "no-release-type" },
     );
     expect("refuse-revert-only", "1.0.0", [{ subject: 'Revert "fix(diff): emit the diff"' }], { code: "no-release-type" });
+    // A revert that carries its OWN breaking marker is not a cancellation: the
+    // revert changes behavior by itself (`revert!:` / a BREAKING CHANGE
+    // trailer), so it keeps its major hop and the original keeps its own. The
+    // dangerous shape was a cancellation that swallowed the breaking change.
+    expect(
+      "breaking-revert-keeps-major",
+      "1.0.0",
+      [{ subject: "fix: x" }, { subject: "revert!: fix: x" }],
+      { version: "2.0.0", level: "major" },
+    );
+    expect(
+      "breaking-revert-body-keeps-major",
+      "1.0.0",
+      [{ subject: "fix: x" }, { subject: 'Revert "fix: x"', body: "BREAKING CHANGE: the revert is the break" }],
+      { version: "2.0.0", level: "major" },
+    );
     // The narrowness is the point: a subject that only LOOKS like a revert, or
     // one that reverts a non-conventional subject, is still refused.
     expect("refuse-revert-of-unconventional", "1.0.0", [{ subject: 'Revert "Fixed the thing"' }], { code: "non-conventional" });
