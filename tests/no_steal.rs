@@ -492,8 +492,13 @@ fn live() -> bool {
 }
 
 /// Live read-only: `elements` and a window `screenshot` succeed on an
-/// EXISTING real window (never ours, never created here) while
-/// GetForegroundWindow stays the same. No activation, no restore, no input.
+/// EXISTING real window (never ours, never created here) without the tool
+/// taking the foreground. No activation, no restore, no input.
+///
+/// The foreground is asserted through `assert_foreground_held`: a window the
+/// TOOL answers for (its own process, the candidate target, that target's
+/// children) fails; a third party taking focus is logged and re-baselined, so
+/// the owner using the machine can no longer turn this check red.
 /// PrintWindow is refused by some windows (GPU-composited/XAML surfaces) and
 /// that is a valid typed `capture_unavailable`; the check walks a few
 /// candidates and requires at least one real success, reporting the refusal
@@ -532,7 +537,15 @@ fn live_read_only_target_capture_keeps_foreground() {
              (the capture contract is unproven)"
         );
     }
-    let fg_before = foregound_now();
+    let mut fg_baseline = foregound_now();
+    let tw = ToolWindows {
+        own_pid,
+        server_pid: s.child.id(),
+        targets: cands
+            .iter()
+            .filter_map(|w| w["hwnd"].as_i64())
+            .collect::<Vec<i64>>(),
+    };
     let cur_before = cursor_now();
     let mut refusals: Vec<String> = Vec::new();
     for (k, w) in cands.iter().enumerate() {
@@ -548,7 +561,7 @@ fn live_read_only_target_capture_keeps_foreground() {
             "elements must serve a target window, got: {el}"
         );
         if el_sc["foregroundUnchanged"].as_bool() != Some(true) {
-            assert_foreground_held(fg_before, "elements telemetry");
+            fg_baseline = assert_foreground_held(fg_baseline, &tw, "elements telemetry");
         }
         let shot = s.call(
             40 + k as i64,
@@ -561,17 +574,18 @@ fn live_read_only_target_capture_keeps_foreground() {
         }
         let shot_sc = shot["result"]["structuredContent"].clone();
         // The server-side boolean is a measurement too, but the foreground is
-        // the property this tool can violate, so it is asserted strictly.
+        // the property this tool can violate, so it is asserted strictly: a
+        // window the tool answers for fails, a third party re-baselines.
         if shot_sc["foregroundUnchanged"].as_bool() != Some(true) {
-            assert_foreground_held(fg_before, "window capture telemetry");
+            fg_baseline = assert_foreground_held(fg_baseline, &tw, "window capture telemetry");
         }
         // Pointer telemetry: reported with its delta, never a failure (see
         // `report_pointer`). The foreground below stays strict.
         let _ = shot_sc["cursorUnchanged"].as_bool();
         report_pointer(cur_before, "window capture");
-        assert_foreground_held(fg_before, "window capture");
+        fg_baseline = assert_foreground_held(fg_baseline, &tw, "window capture");
         println!(
-            "NO_STEAL_LIVE_OK hwnd={hwnd} exe={} title={:?} fg={fg_before}",
+            "NO_STEAL_LIVE_OK hwnd={hwnd} exe={} title={:?} fg={fg_baseline}",
             w["exe"].as_str().unwrap_or("?"),
             w["title"].as_str().unwrap_or("")
         );
@@ -591,6 +605,10 @@ fn live_read_only_target_capture_keeps_foreground() {
 extern "system" {
     fn GetForegroundWindow() -> *mut core::ffi::c_void;
     fn GetCursorPos(pt: *mut CursorPoint) -> i32;
+    fn GetWindowThreadProcessId(hwnd: *mut core::ffi::c_void, pid: *mut u32) -> u32;
+    fn GetClassNameW(hwnd: *mut core::ffi::c_void, buf: *mut u16, max: i32) -> i32;
+    fn GetWindowTextW(hwnd: *mut core::ffi::c_void, buf: *mut u16, max: i32) -> i32;
+    fn IsChild(parent: *mut core::ffi::c_void, child: *mut core::ffi::c_void) -> i32;
 }
 
 #[repr(C)]
@@ -612,25 +630,340 @@ fn cursor_now() -> (i32, i32) {
     }
 }
 
-/// The live desktop belongs to the owner: a pointer that keeps moving with no
-/// tool call in between is their activity (the repo's FG_EXTERNAL policy),
-/// reported and not attributed to the tool. A pointer that moved once and is
-/// then still is the tool's and fails.
-/// The live desktop belongs to the owner: a foreground handle that keeps
-/// moving with no tool call in between is their activity, reported and not
-/// attributed. A handle that changed once and is then still IS the tool's.
-/// The foreground handle is the property the tool CAN violate (activation),
-/// so it is asserted strictly: any change fails. There is no external-movement
-/// exemption here.
-fn assert_foreground_held(before: i64, what: &str) {
-    let after = foregound_now();
-    if before == 0 {
-        // No interactive session to protect (headless runner).
-        return;
+fn pid_of(hwnd: i64) -> Option<u32> {
+    if hwnd == 0 {
+        return None;
     }
+    let mut pid: u32 = 0;
+    unsafe { GetWindowThreadProcessId(hwnd as _, &mut pid) };
+    if pid == 0 {
+        None
+    } else {
+        Some(pid)
+    }
+}
+
+fn window_class(hwnd: i64) -> String {
+    let mut buf = [0u16; 256];
+    let n = unsafe { GetClassNameW(hwnd as _, buf.as_mut_ptr(), buf.len() as i32) };
+    String::from_utf16_lossy(&buf[..n.max(0) as usize])
+}
+
+fn window_text(hwnd: i64) -> String {
+    let mut buf = [0u16; 256];
+    let n = unsafe { GetWindowTextW(hwnd as _, buf.as_mut_ptr(), buf.len() as i32) };
+    String::from_utf16_lossy(&buf[..n.max(0) as usize])
+}
+
+// ------------------------------------------------- foreground ownership gate
+
+/// The decision core below restates the rule the burst gate already applies
+/// (`src/fixture.rs`: `FgOutcome` / `fg_outcome` / `FG_SAMPLES` /
+/// `assert_foreground_held_owned`, added in 7e90ded). It cannot be imported:
+/// this package is a binary (`src/main.rs`, no `lib` target), so an
+/// integration test has no `crate::fixture` to link against. The restatement
+/// is deliberately the MINIMUM the live check needs — the 5-line outcome
+/// matrix, the sample bound, and the observation loop. `src/fixture.rs` owns
+/// the canonical copy and its full matrix test; a change to the rule must land
+/// in both, and the matrix test below pins this copy.
+const FG_SAMPLES: usize = 5;
+const FG_SAMPLE_GAP: Duration = Duration::from_millis(20);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FgOutcome {
+    /// No foreground session before the op, or it vanished: nothing to
+    /// protect, so the gate skips (headless runner).
+    NoSession,
+    /// The window the op found: the tool held the field.
+    Held,
+    /// A window the tool answers for: it took the foreground. Fail.
+    HarnessSteal,
+    /// Somebody else's window: a third party took focus, so re-baseline
+    /// instead of blaming the tool.
+    External,
+}
+
+/// Classify one sample. `attributable` is the ownership oracle: attribution
+/// is what separates a tool defect from an environment event.
+fn fg_outcome(before: i64, after: i64, attributable: bool) -> FgOutcome {
+    if before == 0 || after == 0 {
+        FgOutcome::NoSession
+    } else if after == before {
+        FgOutcome::Held
+    } else if attributable {
+        FgOutcome::HarnessSteal
+    } else {
+        FgOutcome::External
+    }
+}
+
+/// The windows this live check must hold the tool answerable for.
+///
+/// The tool runs in its OWN process (`Session::spawn`), so unlike the burst
+/// fixtures a window it activates is not owned by this test's PID — the burst
+/// PID rule alone would call that a third party and let a real steal through.
+/// Attribution here is therefore the union of:
+///
+/// * windows of the server process under test (anything it created),
+/// * the candidate target the call was pointed at, and that target's
+///   descendants (a capture that raises its target lands exactly there),
+/// * windows of this test process (a sibling live test's window).
+///
+/// Everything else — the owner's apps, shell churn, another test binary — is a
+/// third party and is never blamed on the tool.
+struct ToolWindows {
+    own_pid: u32,
+    server_pid: u32,
+    targets: Vec<i64>,
+}
+
+impl ToolWindows {
+    fn is_tool(&self, hwnd: i64) -> bool {
+        if hwnd == 0 {
+            return false;
+        }
+        if let Some(pid) = pid_of(hwnd) {
+            if pid == self.own_pid || pid == self.server_pid {
+                return true;
+            }
+        }
+        self.targets
+            .iter()
+            .any(|t| *t != 0 && (*t == hwnd || unsafe { IsChild(*t as _, hwnd as _) } != 0))
+    }
+
+    /// One-line identity for the log: handle, pid, class, title, and whose it
+    /// is. Every mismatch logs both ends so the next flake is diagnosable from
+    /// the test output alone.
+    fn describe(&self, hwnd: i64) -> String {
+        if hwnd == 0 {
+            return "hwnd=0 (no foreground window)".to_string();
+        }
+        format!(
+            "hwnd={hwnd} (0x{hwnd:x}) pid={} class={:?} title={:?} owner={}",
+            pid_of(hwnd).map_or_else(|| "?".to_string(), |p| p.to_string()),
+            window_class(hwnd),
+            window_text(hwnd),
+            if self.is_tool(hwnd) {
+                "tool"
+            } else {
+                "third-party"
+            },
+        )
+    }
+}
+
+/// Assert the tool did not take the foreground across a live call: a window
+/// the tool answers for fails at once, a third-party focus change is logged
+/// and re-baselined.
+///
+/// Bound: [`FG_SAMPLES`] = 5 read-only samples 20 ms apart (the burst gate's
+/// bound), plus one final confirmation sample; the tool call is never re-run.
+/// Returns the settled baseline so the candidate loop carries one baseline
+/// instead of re-reporting an already-logged third-party change.
+fn assert_foreground_held(before: i64, tw: &ToolWindows, what: &str) -> i64 {
+    assert_foreground_held_with(before, tw, what, foregound_now)
+}
+
+/// The gate above with the sample source injected: `foregound_now` live, a
+/// scripted sequence in the test below. The seam exists so the decision loop
+/// (immediate fail on an attributable window, re-baseline on third-party
+/// churn, the sample bound) is provable WITHOUT activating anything — the
+/// same shape as `fixture::assert_foreground_held_with` in the burst tests.
+fn assert_foreground_held_with(
+    before: i64,
+    tw: &ToolWindows,
+    what: &str,
+    mut sample: impl FnMut() -> i64,
+) -> i64 {
+    if before == 0 {
+        println!("FG_SKIP: {what}: no foreground session (before=0); assertion skipped");
+        return 0;
+    }
+    let first = before;
+    let mut baseline = before;
+    let mut external = 0usize;
+    for attempt in 0..FG_SAMPLES {
+        let after = sample();
+        match fg_outcome(baseline, after, tw.is_tool(after)) {
+            FgOutcome::NoSession => {
+                println!(
+                    "FG_SKIP_SESSION: {what}: foreground session vanished mid-observation \
+                     (first={}); nothing left to protect",
+                    tw.describe(first)
+                );
+                return after;
+            }
+            FgOutcome::Held => {
+                println!(
+                    "FG_HELD: {what}: sample {attempt}/{FG_SAMPLES} unchanged on {}; \
+                     nothing attributable took the foreground",
+                    tw.describe(baseline)
+                );
+                return baseline;
+            }
+            FgOutcome::HarnessSteal => panic!(
+                "NO_STEAL_FAILED: {what}: the tool made an attributable window foreground \
+                 (sample {attempt}/{FG_SAMPLES}, first={}) — before={} after={}",
+                tw.describe(first),
+                tw.describe(baseline),
+                tw.describe(after),
+            ),
+            FgOutcome::External => {
+                external += 1;
+                println!(
+                    "FG_EXTERNAL: {what}: third-party focus change #{external} \
+                     (sample {attempt}/{FG_SAMPLES}); re-baselining, not attributed to the tool. \
+                     before={} after={}",
+                    tw.describe(baseline),
+                    tw.describe(after),
+                );
+                baseline = after;
+            }
+        }
+        if attempt + 1 < FG_SAMPLES {
+            std::thread::sleep(FG_SAMPLE_GAP);
+        }
+    }
+    let last = sample();
+    assert!(
+        !tw.is_tool(last),
+        "NO_STEAL_FAILED: {what}: attributable foreground after {FG_SAMPLES} samples \
+         ({external} third-party change(s)): first={} baseline={} last={}",
+        tw.describe(first),
+        tw.describe(baseline),
+        tw.describe(last),
+    );
+    println!(
+        "FG_EXTERNAL_SETTLED: {what}: {external} third-party change(s); final foreground is \
+         not attributable: first={} baseline={} last={}",
+        tw.describe(first),
+        tw.describe(baseline),
+        tw.describe(last),
+    );
+    last
+}
+
+fn scripted(samples: &[i64]) -> impl FnMut() -> i64 + '_ {
+    let mut i = 0usize;
+    move || {
+        let v = samples
+            .get(i)
+            .copied()
+            .unwrap_or_else(|| *samples.last().expect("non-empty script"));
+        i += 1;
+        v
+    }
+}
+
+fn panic_text(e: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(s) = e.downcast_ref::<String>() {
+        s.clone()
+    } else if let Some(s) = e.downcast_ref::<&str>() {
+        (*s).to_string()
+    } else {
+        String::new()
+    }
+}
+
+/// The classification the live check depends on, proven WITHOUT a desktop:
+/// scripted foreground samples drive the real decision loop, so no window is
+/// created, activated or touched.
+///
+/// This is the regression the old single-sample `assert_eq!` could not see:
+/// a third party taking focus must be logged and re-baselined, while a window
+/// the tool answers for — its process, the candidate target, a target child —
+/// must still fail the test, including after churn has moved the baseline.
+#[test]
+fn foreground_gate_classifies_by_tool_ownership_not_by_change() {
+    let tw = ToolWindows {
+        own_pid: 0x00aa_aaaa,
+        server_pid: 0x00bb_bbbb,
+        targets: vec![0x1000, 0x2000],
+    };
+    // Synthetic handles (no window behind them): pid_of yields None, so the
+    // target-set rule is what decides. Nothing is activated.
+    assert!(
+        tw.is_tool(0x1000),
+        "a candidate target is the tool's to answer for"
+    );
+    assert!(tw.is_tool(0x2000), "every candidate target counts");
+    assert!(!tw.is_tool(0x3000), "an unrelated handle is a third party");
+    assert!(!tw.is_tool(0), "no foreground window is nobody's");
+
+    // (a) The tool raises a target it answers for: immediate typed fail.
+    let e = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        assert_foreground_held_with(0x5000, &tw, "scripted tool steal", scripted(&[0x1000]));
+    }))
+    .expect_err("a foreground sample the tool answers for must fail");
+    let text = panic_text(e);
+    assert!(text.contains("NO_STEAL_FAILED"), "typed failure: {text}");
+    assert!(text.contains("owner=tool"), "the owner is named: {text}");
+
+    // (b) The owner switches app mid-check: logged, re-baselined, not failed.
+    // (This is the flake the old single-sample assert produced.)
+    let before = 0x5000;
+    let settled =
+        assert_foreground_held_with(before, &tw, "scripted churn", scripted(&[0x6000; 6]));
     assert_eq!(
-        after, before,
-        "{what}: GetForegroundWindow changed ({before} -> {after})"
+        settled, 0x6000,
+        "the third-party window becomes the baseline instead of failing"
+    );
+
+    // (c) Churn first, tool steal second: the re-baseline must not launder it.
+    let e = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        assert_foreground_held_with(
+            before,
+            &tw,
+            "scripted masked steal",
+            scripted(&[0x6000, 0x1000]),
+        );
+    }))
+    .expect_err("a tool window after third-party churn must still fail");
+    assert!(panic_text(e).contains("NO_STEAL_FAILED"));
+
+    // (d) Headless: no foreground session before the call skips, as in burst.
+    assert_eq!(
+        assert_foreground_held(0, &tw, "scripted headless"),
+        0,
+        "no session before the op means nothing to protect"
+    );
+
+    println!(
+        "NO_STEAL_FG_CLASSIFY_OK=owned-fails,third-party-rebaselines,no-laundering,headless-skips"
+    );
+}
+
+/// The restated gate is only safe while it matches the canonical one in
+/// `src/fixture.rs`. Pin the two numbers that decide how many chances an
+/// attributable activation gets, and the outcome matrix's arm order, so a
+/// drift in the canonical copy turns this test red instead of silently
+/// changing what the live check proves.
+#[test]
+fn foreground_gate_matches_the_canonical_burst_gate() {
+    let src = std::fs::read_to_string(src_dir().join("fixture.rs"))
+        .expect("src/fixture.rs must be readable")
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect::<String>();
+    for needle in [
+        format!("pubconstFG_SAMPLES:usize={FG_SAMPLES};"),
+        format!(
+            "FG_SAMPLE_GAP:std::time::Duration=std::time::Duration::from_millis({});",
+            FG_SAMPLE_GAP.as_millis()
+        ),
+        "pubfnfg_outcome(before:i64,after:i64,owned:bool)->FgOutcome".to_string(),
+        // Same arm order: no session, held, owned steal, external.
+        "ifbefore==0||after==0{FgOutcome::NoSession}elseifafter==before{FgOutcome::Held}elseifowned{FgOutcome::HarnessSteal}else{FgOutcome::External}".to_string(),
+    ] {
+        assert!(
+            src.contains(&needle),
+            "tests/no_steal.rs restates the burst foreground gate; src/fixture.rs no longer contains {needle:?} — update the copy or delete it"
+        );
+    }
+    println!(
+        "NO_STEAL_FG_CANONICAL_OK samples={FG_SAMPLES} gap_ms={} matrix=identical",
+        FG_SAMPLE_GAP.as_millis()
     );
 }
 
