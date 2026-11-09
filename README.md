@@ -29,7 +29,7 @@ The `gladius` and `puppet` MCP servers are not in this repo - they live in their
 
 ## Requirements
 
-Windows. Every package here targets Windows and none of them claims support elsewhere.
+Windows only for rea-shim (Windows x64) and oc-harness-setup (Windows 10/11), the two packages whose own requirements name Windows. janua names Windows, Linux and macOS; oc-bifrost and oc-flight-deck say any platform the host runs on; oc-talk and oc-plugin-view state no platform, so this page claims none for them.
 
 ## Development
 
