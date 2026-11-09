@@ -69,6 +69,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   immediately before the release is attached.
   `scripts/check-release-workflow.mjs` asserts that shape and runs as the
   lane's first step.
+- Refresh compatible locked dependencies, including crc32fast 1.5.4, flate2
+  1.1.11, itoa 1.0.19 and syn 3.0.10; no API or behaviour change.
 
 ## [6.1.4] - 2026-11-02
 
