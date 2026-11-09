@@ -10,6 +10,19 @@
   tracking latest is not safe. No runtime change - the package imports `Plugin`
   and nothing else from it, and the peer stays the range `>=2.1.1 <3`.
 
+- **The host floor rises to `@opencode/plugin` `2.2.6`** (`package.json`): the
+  peer moves from the range `>=2.1.1 <3` to `>=2.2.6 <3`, and the dev pin from
+  `2.2.5` to `2.2.6`. The old range claimed host versions this bridge is no
+  longer typechecked or tested against; `2.2.6` is the release it builds and
+  tests against now. The API it registers against is unchanged - `Plugin`,
+  `Plugin.define` and the setup context keep the `2.2.5` shape, and the
+  `dist/promise` declarations the bridge imports are byte-identical - so this is
+  a declared-floor change, not a behaviour change. A host still on
+  `2.1.1`-`2.2.5` now gets a peer warning instead of an unsupported pairing.
+- Docs follow the manifest: `README.md` states the floor it now requires
+  (`2.2.6 or newer`, was `2.x`) and `INSTALL.md`'s preflight asks for `2.2.6`
+  or newer rather than any `2.x`.
+
 ## [1.6.13] - 2026-10-29
 
 ### Changed

@@ -35,7 +35,7 @@ Add one entry to the `plugins` array in your `opencode.jsonc`, then restart Open
 
 ## Requirements
 
-OpenCode V2 (2.x) with Node 22 or later, on any platform the host runs on; the npm registry must be reachable for the first fetch.
+OpenCode V2 (2.2.6 or newer) with Node 22 or later, on any platform the host runs on; the npm registry must be reachable for the first fetch.
 
 ## Going deeper
 
