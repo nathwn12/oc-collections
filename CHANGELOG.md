@@ -37,11 +37,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `LICENSE` and `README.md` (the shipped README links to it), and the assemble
   step asserts all four files are in the stage before compressing, so a
   missing licence or notice fails the run instead of shipping.
-- Docs: the README states the real tool count, links `THIRD-PARTY-NOTICES.md`
-  and the notices file ships with it; both READMEs carry the house footer and
-  signature.
+- Docs: `docs/GUIDE.md:3` states the real tool count (seven); the README links
+  `THIRD-PARTY-NOTICES.md` and the notices file ships with it; both READMEs
+  carry the house footer and signature.
 
 ## [7.0.1] - 2026-11-03
+
+_Reconstructed after the fact from bd246f9: the v7.0.1 release shipped with no
+section in this file._
 
 ### Fixed
 - `diff` accepts its own identical result. Its `outputSchema` now allows
