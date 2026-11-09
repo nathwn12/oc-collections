@@ -523,6 +523,230 @@ pub fn pid_of_window(hwnd: i64) -> Option<u32> {
     }
 }
 
+/// Every window the test harness owns for one test body, and the ownership
+/// oracle the foreground gate asks.
+///
+/// Under `desktop()` only one live test runs at a time, so a window owned by
+/// this process is ours to answer for: an activation onto one of them IS the
+/// harness taking the foreground — the defect the no-steal gate guards. A
+/// window owned by anybody else cannot be attributed to us.
+#[derive(Debug, Default)]
+pub struct OwnedWindows {
+    tops: Vec<i64>,
+}
+
+impl OwnedWindows {
+    /// An empty set: only the owning-process rule applies.
+    pub fn new() -> Self {
+        OwnedWindows { tops: Vec::new() }
+    }
+
+    /// Register a top-level window (its descendants count as owned).
+    pub fn with_top(mut self, hwnd: i64) -> Self {
+        if hwnd != 0 {
+            self.tops.push(hwnd);
+        }
+        self
+    }
+
+    /// Register a fixture: its top-level plus the EDIT/EDIT/button children.
+    pub fn with_fixture(self, fx: &Fixture) -> Self {
+        self.with_top(fx.hwnd_i64())
+            .with_top(fx.edit() as i64)
+            .with_top(fx.edit_ro() as i64)
+            .with_top(fx.button() as i64)
+    }
+
+    /// The registered tops, in registration order (for logs).
+    pub fn tops(&self) -> &[i64] {
+        &self.tops
+    }
+
+    /// True when this process owns `hwnd`: a registered fixture top or one of
+    /// its descendants, or any window whose owning PID is this process.
+    pub fn owns(&self, hwnd: i64) -> bool {
+        if hwnd == 0 {
+            return false;
+        }
+        if self.tops.iter().any(|top| is_owned_window(*top, hwnd)) {
+            return true;
+        }
+        pid_of_window(hwnd) == Some(std::process::id())
+    }
+
+    /// One-line identity for logs and failure messages: handle (decimal and
+    /// hex), owning pid and module, class, title, liveness, and whether this
+    /// process owns it. Every foreground mismatch logs this for both ends so
+    /// the next flake is diagnosable from the test output alone.
+    pub fn describe(&self, hwnd: i64) -> String {
+        if hwnd == 0 {
+            return "hwnd=0 (no foreground window)".to_string();
+        }
+        let pid = pid_of_window(hwnd);
+        let exe = pid
+            .map(crate::exe_of_pid)
+            .unwrap_or_else(|| "unknown".to_string());
+        let (class, title, alive) = unsafe {
+            (
+                crate::win_class(hwnd as HWND),
+                crate::win_text(hwnd as HWND),
+                IsWindow(hwnd as HWND),
+            )
+        };
+        format!(
+            "hwnd={hwnd} (0x{hwnd:x}) pid={} exe={exe} class={class:?} title={title:?} alive={alive} owner={}",
+            pid.map_or_else(|| "?".to_string(), |p| p.to_string()),
+            if self.owns(hwnd) {
+                "harness"
+            } else {
+                "third-party"
+            },
+        )
+    }
+}
+
+/// Verdict for one foreground sample against one test's window set. Pure, so
+/// the whole matrix is unit-tested without live HWNDs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FgOutcome {
+    /// No foreground session before the op, or the session vanished: there is
+    /// nothing to protect, so the gate skips (headless CI).
+    NoSession,
+    /// The sample is the window the op found: the harness held the field.
+    Held,
+    /// The sample is a window THIS PROCESS owns: the harness took the
+    /// foreground. Fail, with no exemption.
+    HarnessSteal,
+    /// The sample is somebody else's window: a third party (owner activity,
+    /// shell churn, a parallel test binary) took the foreground. The harness
+    /// did not cause it, so it re-baselines instead of failing.
+    External,
+}
+
+/// Decide one foreground sample. `owned` is `OwnedWindows::owns(sample)`:
+/// ownership is what separates a tool defect from an environment event.
+pub fn fg_outcome(before: i64, after: i64, owned: bool) -> FgOutcome {
+    if before == 0 || after == 0 {
+        FgOutcome::NoSession
+    } else if after == before {
+        FgOutcome::Held
+    } else if owned {
+        FgOutcome::HarnessSteal
+    } else {
+        FgOutcome::External
+    }
+}
+
+/// How many foreground samples the post-op observation takes, and the gap
+/// between them. A harness activation is sticky (the activated window stays
+/// foreground until the next activation), so sample 0 already catches a real
+/// steal; the remaining samples exist to catch a steal that later churn would
+/// otherwise mask, and to widen the log while the desktop is busy. Sampling
+/// never turns a harness-owned foreground into a pass, and only runs on the
+/// mismatch path, so the happy path costs one sample.
+pub const FG_SAMPLES: usize = 5;
+const FG_SAMPLE_GAP: std::time::Duration = std::time::Duration::from_millis(20);
+
+/// Assert the harness did not take the foreground across an operation, and
+/// tell a harness steal apart from a third party taking focus:
+///
+/// 1. sample `GetForegroundWindow`; a harness-owned sample fails AT ONCE with
+///    both HWNDs and the new owner's module (the true defect: the tool
+///    activated one of its own windows);
+/// 2. a third-party sample is logged with both ends and becomes the fresh
+///    baseline — the harness is not answerable for another process's
+///    activation;
+/// 3. after `FG_SAMPLES` samples the last foreground must still not be ours.
+///
+/// The operation is NOT re-run: re-posting input would deliver it twice and
+/// corrupt the delivery counters the same test asserts on. Only the read-only
+/// observation repeats. No focus is manipulated and no window is touched
+/// outside the registered set.
+pub fn assert_foreground_held_owned(before: i64, owned: &OwnedWindows, what: &str) {
+    assert_foreground_held_with(before, owned, what, foreground_now);
+}
+
+/// The gate above, with the sample source injected: `foreground_now` live, a
+/// scripted sequence in the unit tests. The seam exists so the decision loop
+/// (immediate fail on a harness steal, re-baseline on third-party churn, the
+/// sample bound) is provable WITHOUT activating anything.
+fn assert_foreground_held_with(
+    before: i64,
+    owned: &OwnedWindows,
+    what: &str,
+    mut sample: impl FnMut() -> i64,
+) {
+    use std::time::Instant;
+    if before == 0 {
+        println!("FG_SKIP: {what}: no foreground session (before=0); assertion skipped");
+        return;
+    }
+    let first = before;
+    let mut baseline = before;
+    let mut external = 0usize;
+    let t_all = Instant::now();
+    for attempt in 0..FG_SAMPLES {
+        let after = sample();
+        match fg_outcome(baseline, after, owned.owns(after)) {
+            FgOutcome::NoSession => {
+                println!(
+                    "FG_SKIP_SESSION: {what}: foreground session vanished mid-observation \
+                     (first={} baseline={baseline} -> 0); nothing left to protect",
+                    owned.describe(first)
+                );
+                return;
+            }
+            FgOutcome::Held => {
+                println!(
+                    "FG_HELD: {what}: sample {attempt}/{FG_SAMPLES} unchanged on {} \
+                     (first={first}); harness took no foreground",
+                    owned.describe(baseline)
+                );
+                return;
+            }
+            FgOutcome::HarnessSteal => panic!(
+                "NO_STEAL_FAILED: {what}: the harness made its own window foreground \
+                 (sample {attempt}/{FG_SAMPLES}, first={first}) — before={} after={}",
+                owned.describe(baseline),
+                owned.describe(after),
+            ),
+            FgOutcome::External => {
+                external += 1;
+                println!(
+                    "FG_EXTERNAL: {what}: third-party focus change #{external} \
+                     (sample {attempt}/{FG_SAMPLES}); re-baselining, not attributed to the harness. \
+                     before={} after={}",
+                    owned.describe(baseline),
+                    owned.describe(after),
+                );
+                baseline = after;
+            }
+        }
+        if attempt + 1 < FG_SAMPLES {
+            std::thread::sleep(FG_SAMPLE_GAP);
+        }
+    }
+    // Final assertion against the fresh baseline: whatever the churn did, the
+    // foreground must still not be a window this process owns.
+    let last = sample();
+    assert!(
+        !owned.owns(last),
+        "NO_STEAL_FAILED: {what}: harness-owned foreground after {FG_SAMPLES} samples \
+         ({external} third-party change(s)): first={} baseline={} last={}",
+        owned.describe(first),
+        owned.describe(baseline),
+        owned.describe(last),
+    );
+    println!(
+        "FG_EXTERNAL_SETTLED: {what}: {external} third-party change(s) in {}ms, final \
+         foreground is not harness-owned: first={} baseline={} last={}",
+        t_all.elapsed().as_millis(),
+        owned.describe(first),
+        owned.describe(baseline),
+        owned.describe(last),
+    );
+}
+
 /// Enforce the foreground contract for a READ-ONLY or dry-run operation
 /// (zero-pixel `elements`, dry-run `set_value`): skip (no failure) when the
 /// environment provides no foreground session, or when the "before" window
@@ -590,6 +814,160 @@ impl Drop for Fixture {
 #[cfg(test)]
 mod self_tests {
     use super::*;
+
+    #[test]
+    fn foreground_outcome_matrix_separates_steal_from_third_party() {
+        // No session before or after: skip, never a verdict on the tool.
+        assert_eq!(fg_outcome(0, 0, false), FgOutcome::NoSession);
+        assert_eq!(fg_outcome(0, 12345, true), FgOutcome::NoSession);
+        assert_eq!(fg_outcome(7, 0, false), FgOutcome::NoSession);
+        // Same window: held, whoever owns it.
+        assert_eq!(fg_outcome(7, 7, false), FgOutcome::Held);
+        assert_eq!(fg_outcome(7, 7, true), FgOutcome::Held);
+        // A window this process owns that is not the baseline: the harness
+        // stole the foreground — the defect the gate exists for.
+        assert_eq!(fg_outcome(7, 9, true), FgOutcome::HarnessSteal);
+        // A window somebody else owns: an environment change, not the tool.
+        // This is the case the old single-sample assert misreported.
+        assert_eq!(fg_outcome(7, 9, false), FgOutcome::External);
+        println!("FG_OUTCOME_MATRIX_OK=skip,held,harness-steal,external");
+    }
+
+    #[test]
+    fn owned_windows_respond_for_fixture_and_children_only() {
+        let _g = desktop();
+        let fx = Fixture::new();
+        let owned = OwnedWindows::new().with_fixture(&fx);
+        let top = fx.hwnd_i64();
+        // The fixture top and its children are ours; a null handle never is.
+        assert!(owned.owns(top), "registered top must be owned");
+        assert!(owned.owns(fx.edit() as i64), "EDIT child must be owned");
+        assert!(owned.owns(fx.button() as i64), "BUTTON child must be owned");
+        assert!(!owned.owns(0), "null hwnd is never owned");
+        // An empty set still answers for this process by PID: an unregistered
+        // window of ours (a sibling fixture) is ours to answer for.
+        let bare = OwnedWindows::new();
+        assert!(
+            bare.owns(top),
+            "owning-process rule must cover our unregistered window"
+        );
+        assert_eq!(
+            owned.tops().len(),
+            4,
+            "top + EDIT + read-only EDIT + BUTTON"
+        );
+        // The log line carries the identity the next flake needs.
+        let d = owned.describe(top);
+        assert!(
+            d.contains("owner=harness") && d.contains("exe=") && d.contains("class="),
+            "describe must name the owner: {d}"
+        );
+        println!("FG_OWNED_SET_OK tops={} desc={d}", owned.tops().len());
+    }
+
+    /// A scripted stand-in for `GetForegroundWindow`: returns each sample in
+    /// order, then repeats the last one. Lets the gate's decision loop be
+    /// proven without activating a single window.
+    fn scripted(samples: &[i64]) -> impl FnMut() -> i64 + '_ {
+        let mut i = 0usize;
+        move || {
+            let v = samples
+                .get(i)
+                .copied()
+                .unwrap_or_else(|| *samples.last().expect("non-empty script"));
+            i += 1;
+            v
+        }
+    }
+
+    fn panic_text(e: Box<dyn std::any::Any + Send>) -> String {
+        if let Some(s) = e.downcast_ref::<String>() {
+            s.clone()
+        } else if let Some(s) = e.downcast_ref::<&str>() {
+            (*s).to_string()
+        } else {
+            String::new()
+        }
+    }
+
+    #[test]
+    fn gate_fails_on_a_harness_steal_and_never_launders_one_through_churn() {
+        let ours = 0x1111_i64;
+        let third = 0x2222_i64;
+        let owned = OwnedWindows::new().with_top(ours);
+        // (a) The harness itself becomes foreground: immediate, strict fail.
+        let e = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            assert_foreground_held_with(third, &owned, "scripted steal", scripted(&[ours]));
+        }))
+        .expect_err("a harness-owned foreground must fail the gate");
+        let text = panic_text(e);
+        assert!(text.contains("NO_STEAL_FAILED"), "typed failure: {text}");
+        assert!(
+            text.contains(&format!("hwnd={ours}")) && text.contains(&format!("hwnd={third}")),
+            "both ends named: {text}"
+        );
+        assert!(text.contains("owner=harness"), "owner named: {text}");
+        // (b) A third party takes focus FIRST and the harness steals second:
+        // the re-baseline must not launder the steal.
+        let e = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            assert_foreground_held_with(
+                0x3333,
+                &owned,
+                "scripted masked steal",
+                scripted(&[third, ours]),
+            );
+        }))
+        .expect_err("a steal after churn must still fail the gate");
+        assert!(panic_text(e).contains("NO_STEAL_FAILED"));
+        println!("FG_GATE_STEAL_FAILS_OK=cold,after-churn");
+    }
+
+    #[test]
+    fn gate_rebaselines_third_party_churn_instead_of_blaming_the_harness() {
+        let ours = 0x1111_i64;
+        let owned = OwnedWindows::new().with_top(ours);
+        // Nobody's window but ours exists on the desktop side of this script:
+        // repeated third-party churn is re-baselined, then the final sample
+        // must not be harness-owned. No window was activated to prove this.
+        assert_foreground_held_with(0x2222, &owned, "scripted churn", scripted(&[0x3333; 6]));
+        // A headless session (no foreground window before the op) skips.
+        assert_foreground_held_with(0, &owned, "scripted headless", scripted(&[0]));
+        println!("FG_GATE_CHURN_OK=rebaseline,headless-skip");
+    }
+
+    #[test]
+    fn gate_classifies_real_windows_without_touching_them() {
+        let _g = desktop();
+        let fx = Fixture::new();
+        let ours = fx.hwnd_i64();
+        let owned = OwnedWindows::new().with_fixture(&fx);
+        // Our own fixture handle, offered as a foreground sample, is a steal.
+        assert_eq!(
+            fg_outcome(0x2222, ours, owned.owns(ours)),
+            FgOutcome::HarnessSteal
+        );
+        // A real foreign top-level window — found by read-only enumeration and
+        // never activated or otherwise touched — is a third party, and its
+        // module lands in the log.
+        let foreign = crate::enum_windows()
+            .into_iter()
+            .map(|h| h as i64)
+            .find(|h| *h != 0 && !owned.owns(*h) && unsafe { IsWindow(*h as HWND) } != 0);
+        match foreign {
+            None => println!(
+                "FG_REAL_CLASSIFY_SKIP: no third-party top-level window exists on this desktop"
+            ),
+            Some(h) => {
+                assert_eq!(fg_outcome(ours, h, owned.owns(h)), FgOutcome::External);
+                let d = owned.describe(h);
+                assert!(
+                    d.contains("owner=third-party") && d.contains("exe="),
+                    "describe must name a third party and its module: {d}"
+                );
+                println!("FG_REAL_CLASSIFY_OK third={d}");
+            }
+        }
+    }
 
     #[test]
     fn fg_verdict_matrix_covers_skip_and_change() {

@@ -6545,18 +6545,17 @@ mod tests {
             .expect("structuredContent payload")
     }
 
-    /// The foreground handle is the property the tool CAN violate, so it is
-    /// asserted strictly: any change fails, with no external-activity
-    /// exemption.
-    fn assert_foreground_held(before: i64, what: &str) {
-        let after = crate::fixture::foreground_now();
-        if before == 0 {
-            return;
-        }
-        assert_eq!(
-            after, before,
-            "{what}: GetForegroundWindow changed ({before} -> {after})"
-        );
+    /// The foreground handle is the property the tool CAN violate, so a
+    /// harness-owned foreground fails strictly — with no exemption, and with
+    /// both HWNDs plus the new owner's module in the message. A foreground
+    /// change onto a window this process does NOT own is a third party taking
+    /// focus (owner activity, shell churn, a parallel test binary): the gate
+    /// re-baselines and samples again rather than blaming the tool, because
+    /// attributing another process's activation to the harness is a false
+    /// alarm, not evidence. See `fixture::assert_foreground_held_owned` for
+    /// the decision rule, the sample bound and the log lines.
+    fn assert_foreground_held(before: i64, owned: &crate::fixture::OwnedWindows, what: &str) {
+        crate::fixture::assert_foreground_held_owned(before, owned, what);
     }
 
     /// Pointer movement is TELEMETRY, never a failure. The tool cannot move
@@ -6706,6 +6705,7 @@ mod tests {
         crate::fixture::reset_swallowed_keys(fx.edit());
         crate::fixture::reset_swallowed_keys(fx.edit_ro());
         let fg_before = crate::fixture::foreground_now();
+        let owned = crate::fixture::OwnedWindows::new().with_fixture(&fx);
         let cur_before = cursor_now();
         let actions = vec![
             serde_json::json!({"type": "click", "x": 20, "y": 90}),
@@ -6777,7 +6777,7 @@ mod tests {
             "",
             "the guard swallows instead of inserting"
         );
-        assert_foreground_held(fg_before, "post-delivery burst");
+        assert_foreground_held(fg_before, &owned, "post-delivery burst");
         report_pointer(cur_before, "post-delivery burst");
         assert_eq!(
             payload["sendinput_calls"],
@@ -6925,6 +6925,7 @@ mod tests {
     fn live_gate_refuses_without_target_or_flags() {
         let _g = crate::fixture::desktop();
         let fg_before = crate::fixture::foreground_now();
+        let owned = crate::fixture::OwnedWindows::new();
         let cur_before = cursor_now();
         let actions = vec![
             serde_json::json!({"type": "click", "x": 5, "y": 5}),
@@ -6956,7 +6957,7 @@ mod tests {
         }
         assert_eq!(payload["sendinput_calls"], Value::from(0));
         assert_eq!(payload["events"], Value::from(0));
-        assert_foreground_held(fg_before, "gate refusal");
+        assert_foreground_held(fg_before, &owned, "gate refusal");
         report_pointer(cur_before, "gate refusal");
     }
 
@@ -7036,6 +7037,7 @@ mod tests {
         let hwnd = f.hwnd_i64();
         crate::fixture::reset_msg_counts();
         let fg_before = crate::fixture::foreground_now();
+        let owned = crate::fixture::OwnedWindows::new().with_top(hwnd);
         let cur_before = cursor_now();
         let actions = vec![
             serde_json::json!({"type": "click", "x": 4, "y": 6}),
@@ -7090,7 +7092,7 @@ mod tests {
             "a raw click reports delivery only: {results:?}"
         );
         assert_eq!(results[0]["effect"], Value::from("unverified"));
-        assert_foreground_held(fg_before, "message-only delivery");
+        assert_foreground_held(fg_before, &owned, "message-only delivery");
         report_pointer(cur_before, "message-only delivery");
     }
 
@@ -7147,6 +7149,7 @@ mod tests {
         // processed WM_PAINT yet and would read back all-black.
         force_paint(hwnd);
         let fg_before = crate::fixture::foreground_now();
+        let owned = crate::fixture::OwnedWindows::new().with_fixture(&fx);
         let out = do_burst(&DoArgs {
             target: Some(serde_json::json!({ "hwnd": hwnd })),
             ..DoArgs::new(&[serde_json::json!({"type": "key", "name": "F13", "verify": true})])
@@ -7159,7 +7162,7 @@ mod tests {
         assert_eq!(r["changed"], Value::from(0), "{r}");
         assert!(r["bbox"].is_null(), "no pixels changed, no box: {r}");
         assert_eq!(payload["sendinput_calls"], Value::from(0));
-        assert_foreground_held(fg_before, "verified posted key");
+        assert_foreground_held(fg_before, &owned, "verified posted key");
         println!("VERIFY_UNCHANGED_OK effect=unchanged changed=0");
     }
 
