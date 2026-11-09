@@ -50,6 +50,14 @@ import { fileURLToPath } from "node:url";
 const SELF_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 const CONVENTIONAL = /^([a-z]+)(?:\(([^()]*)\))?(!)?: (.+)$/;
+// Git writes its own revert subject as `Revert "<original subject>"`, which is
+// not `type(scope): description`. The Conventional Commits spec has a type for
+// exactly this intent (`revert: <original subject>`), so the shape is accepted
+// here - and ONLY when the quoted original is itself a known conventional
+// subject. `Revert the diff change` and `Revert "Fixed the thing"` stay
+// refusals: a revert commit is exempt from the shape only because it names a
+// commit that was not.
+const GIT_REVERT = /^Revert "(.+)"$/;
 const TYPES = new Set([
   "feat", "fix", "perf", "docs", "chore", "test", "build", "ci", "style", "refactor", "revert",
 ]);
@@ -176,8 +184,26 @@ function readCommits(root, base) {
 function classify(commit) {
   const body = commit.body ?? "";
   const breakingBody = /^BREAKING[ -]CHANGE:/m.test(body);
-  const m = CONVENTIONAL.exec(commit.subject);
   const record = { ...commit, breaking: breakingBody, bump: null, ignored: false };
+  // A git revert names a conventional subject it undoes. The revert carries no
+  // hop of its own: the hop belongs to the change being reverted, which is in
+  // the same range but already counted (or not) on its own merits.
+  const revert = GIT_REVERT.exec(commit.subject);
+  if (revert) {
+    const original = CONVENTIONAL.exec(revert[1]);
+    if (!original || !TYPES.has(original[1])) {
+      record.bad = true;
+      return record;
+    }
+    record.type = "revert";
+    record.scope = null;
+    record.bang = false;
+    record.reverts = revert[1];
+    if (record.breaking) record.bump = "major";
+    else record.ignored = true;
+    return record;
+  }
+  const m = CONVENTIONAL.exec(commit.subject);
   if (!m) {
     record.bad = true;
     return record;
@@ -654,6 +680,29 @@ function runCheck() {
     expect("refuse-only-chore", "1.0.0", [{ subject: "chore: deps" }, { subject: "docs: readme" }], { code: "no-release-type" });
     expect("refuse-non-conventional", "1.0.0", [{ subject: "Fixed the thing" }], { code: "non-conventional" });
     expect("refuse-unknown-type", "1.0.0", [{ subject: "wip: half a feature" }], { code: "non-conventional" });
+
+    // A revert is a legitimate commit, not a malformed subject. Git writes its
+    // own reverts as `Revert "<original subject>"` and the Conventional
+    // Commits spec writes the same intent as `revert: <original subject>`;
+    // both are accepted, and neither carries a release hop of its own (the hop
+    // belongs to the change being reverted).
+    expect(
+      "revert-git-shape",
+      "1.0.0",
+      [{ subject: "fix(diff): emit the diff" }, { subject: 'Revert "fix(diff): emit the diff"' }],
+      { version: "1.0.1", level: "patch" },
+    );
+    expect(
+      "revert-colon-shape",
+      "1.0.0",
+      [{ subject: "feat: a tool" }, { subject: "revert: feat: a tool" }],
+      { version: "1.1.0", level: "minor" },
+    );
+    expect("refuse-revert-only", "1.0.0", [{ subject: 'Revert "fix(diff): emit the diff"' }], { code: "no-release-type" });
+    // The narrowness is the point: a subject that only LOOKS like a revert, or
+    // one that reverts a non-conventional subject, is still refused.
+    expect("refuse-revert-of-unconventional", "1.0.0", [{ subject: 'Revert "Fixed the thing"' }], { code: "non-conventional" });
+    expect("refuse-revert-prose", "1.0.0", [{ subject: "Revert the diff change" }], { code: "non-conventional" });
 
     // The lane asserts the version, it never writes it: a tree whose manifests
     // were not bumped with its commits is refused, not repaired.

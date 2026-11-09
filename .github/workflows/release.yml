@@ -181,13 +181,22 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $tag = $env:RELEASE_TAG
           New-Item -ItemType Directory -Path dist -Force | Out-Null
-          # Runtime bundle: the server plus the licence + readme. The
+          # Runtime bundle: the server plus the licence, readme and
+          # third-party notices (README.md links to THIRD-PARTY-NOTICES.md,
+          # so the link must resolve inside the extracted bundle). The
           # launcher provisions this bundle from the GitHub Release on
           # first run (see npm/bin/puppet-mcp.js); no other bytes ride
           # the release.
           $stage = "dist\puppet-$tag-windows-x86_64"
           New-Item -ItemType Directory -Path $stage -Force | Out-Null
-          Copy-Item target\release\puppet.exe, LICENSE, README.md -Destination $stage
+          $bundleFiles = @('puppet.exe', 'LICENSE', 'README.md', 'THIRD-PARTY-NOTICES.md')
+          Copy-Item target\release\puppet.exe, LICENSE, README.md, THIRD-PARTY-NOTICES.md -Destination $stage
+          # Assert the stage rather than trust the copy: a bundle missing a
+          # licence or a notice is the class of defect this list exists to
+          # prevent, and it would otherwise ship silently.
+          foreach ($f in $bundleFiles) {
+            if (-not (Test-Path -LiteralPath (Join-Path $stage $f))) { throw "runtime bundle is missing $f" }
+          }
           Compress-Archive -Path "$stage\*" -DestinationPath "$stage.zip" -Force
           Remove-Item -LiteralPath $stage -Recurse -Force
           $zipHash = (Get-FileHash -Algorithm SHA256 -Path "$stage.zip").Hash.ToLowerInvariant()

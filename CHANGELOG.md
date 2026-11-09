@@ -72,6 +72,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Refresh compatible locked dependencies, including crc32fast 1.5.4, flate2
   1.1.11, itoa 1.0.19 and syn 3.0.10; no API or behaviour change.
 
+### Fixed
+- The release derivation accepts git's own revert subject. `Revert
+  "<conventional subject>"` and `revert: <conventional subject>` classify as
+  `revert` - no hop of their own, the hop belongs to the change being reverted
+  - instead of refusing the range as non-conventional; a revert of a
+  non-conventional subject and a plain `Revert the thing` are still refused.
+  `--check` covers both directions.
+- The runtime zip stages `THIRD-PARTY-NOTICES.md` beside `puppet.exe`,
+  `LICENSE` and `README.md` (the shipped README links to it), and the assemble
+  step asserts all four files are in the stage before compressing, so a
+  missing licence or notice fails the run instead of shipping.
+
 ## [6.1.4] - 2026-11-02
 
 ### Fixed
