@@ -8,7 +8,7 @@ Do not hand the human a wall of steps. Do them, then report: what you changed, w
 
 ## 0. Preflight (always)
 
-1. Confirm the host is OpenCode V2: `opencode --version` → expect `2.x`.
+1. Confirm the host is OpenCode V2 at the bridge's floor: `opencode --version` → expect `2.2.6` or newer.
 2. Locate the config in use: `opencode debug paths` → read the `config` line. **Never assume `~/.config/opencode`** — respect the reported path. If `OPENCODE_CONFIG_DIR` is set, that is the config root.
 3. Confirm you may write there. The global config directory is often owned by a stricter writer agent. If your write is denied, **hand the edit to that writer; never reword the path or route it through a shell**.
 
