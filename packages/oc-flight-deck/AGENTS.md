@@ -47,8 +47,7 @@ bun run compile
 
 ## Release
 
-- Releases are cut by pushing a tag `<package>@<version>` (e.g. `oc-flight-deck@0.20.2`); the `release` workflow triggers on `**@*`, then builds and publishes to the public registry.
-- `scripts/release-target.mjs` enforces the guard: the tag version must equal that package's manifest version and be strictly newer than every published version, and only the three allowlisted packages (bifrost, flight-deck, harness) are releasable. A `v<version>` tag does nothing — it does not match the trigger.
+- Releases run on a merge to `main`: `scripts/derive-release.mjs` derives the next `<package>@<version>` from the conventional commits since that package's highest tag, and the `release` workflow gates, publishes and tags it at the pushed commit. `scripts/release-target.mjs` enforces the guard: the derived version is strictly newer than every published version, and only the seven allowlisted packages (bifrost, janua, flight-deck, harness, plugin-view, talk, rea-shim) are releasable. A `v<version>` tag does nothing — the workflow does not trigger on tags.
 - `dist/` is committed so a clone can inspect the built entries, but the git-install route is gone; npm is the only install route. The `release` workflow rebuilds it (`bun run compile`) before publishing.
 - The changelog lives in `CHANGELOG.md` (Keep a Changelog, Semantic Versioning).
 - The registry is the only install route; there is no git-install track.

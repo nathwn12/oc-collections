@@ -51,7 +51,7 @@ npm run check -w oc-harness-setup
 
 ## Release
 
-- Releases are cut by pushing a tag `<package>@<version>` (e.g. `oc-harness-setup@0.4.4`); the `release` workflow triggers on `**@*`, requires the tag version to equal `package.json` and be strictly newer than every published version, and publishes npm over OIDC. Only the four allowlisted packages are releasable; a `v<version>` tag does nothing.
+- Releases run on a merge to `main` (e.g. a merge that ships `oc-harness-setup@0.4.4`): `scripts/derive-release.mjs` derives the next version from the conventional commits since the package's highest tag, the `release` workflow requires it to be strictly newer than every published version, publishes npm over OIDC and creates the tag at the pushed commit. Only the seven allowlisted packages are releasable; a `v<version>` tag does nothing.
 - Keep ONE GitHub release per repo, pinned to the current version. Update that release entry (tag, title, notes, assets) in place on each release; do not accumulate a release per version.
 - The tag history remains, and npm versions are immutable; `@latest` is the moving install pointer.
 - The changelog lives in `CHANGELOG.md`.

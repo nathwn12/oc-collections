@@ -85,7 +85,7 @@ npm run test        # node test runner over test/*.test.js
 ## Release
 
 - npm tracks `main` 1:1: every fix lands on `main` and ships as the next patch — there is no slow/stable track here.
-- In the monorepo, releases are cut by pushing the package tag `@nathwn12/oc-bifrost@<version>`; the root `release` workflow triggers on `**@*`, requires the tag version to equal `package.json` and be strictly newer than every published version, and publishes over OIDC. A `v<version>` tag does nothing.
+- In the monorepo, a merge to `main` derives and releases: `scripts/derive-release.mjs` bumps from the highest `@nathwn12/oc-bifrost@<version>` tag by the conventional commits since it, the `release` workflow requires the derived version to be strictly newer than every published version, publishes over OIDC, and creates the tag at the pushed commit. A `v<version>` tag does nothing.
 - The changelog lives in `CHANGELOG.md`.
 - `dist/` is build output and is not committed in the monorepo — regenerate it with `npm run compile`; `npm publish` runs `prepublishOnly` (`npm run check`), which compiles first.
 

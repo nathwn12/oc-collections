@@ -12,8 +12,9 @@ human act.
 ## Release lane
 
 `rea-shim` is released from the `nathwn12/oc-collections` monorepo, not from
-its original repo. The root `release` workflow triggers on `**@*` and
-publishes over OIDC with provenance. The lane has executed four runs, one
+its original repo. The root `release` workflow runs on a merge to `main`,
+derives the next version from the conventional commits since the package's
+highest tag, and publishes over OIDC with provenance. The lane has executed four runs, one
 package per run, every one publishing successfully over OIDC with provenance,
 so the trust is proven rather than assumed (see the monorepo root
 `MIGRATIONS.md`). One step is still unproven: the post-publish registry verify
