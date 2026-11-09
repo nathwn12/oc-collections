@@ -1,48 +1,155 @@
 # oc-stacked
 
-A three-rung agent stack for OpenCode: one CEO, one lead, a fresh employee per seam, and an auditor that wrote none of it.
+A three-rung agent stack for OpenCode: **one CEO, one lead, a fresh employee per seam, and an auditor that wrote none of it.**
+Local-first, zero MCP, five tools, no runtime dependencies.
 
-## The problem
+![oc-stacked](preview/readme-hero.png)
 
-One agent doing everything holds context it does not need, approves its own work, and forgets what it finished when the context compacts. Context is spent on coordination instead of the seam in front of it, and the green it reports is its own opinion. The result is the most expensive failure in agent work: a finished seam redone because nothing on disk remembered it.
+A static preview lives at [`preview/index.html`](preview/index.html). Open it in any browser; it needs no server and no network.
 
-## The shape
+---
 
-| Seat | Owns | May never |
+## Why this exists
+
+A single agent doing everything holds context it does not need, approves its own work, and forgets what it finished the moment context compacts. Two failures follow, and both are expensive:
+
+1. **The author's green is an opinion.** The same context writes the code, runs the check it chose, and declares victory.
+2. **Finished work gets redone.** After a compaction, nothing on disk says what was already landed, so a controller re-dispatches a completed sequence.
+
+oc-stacked answers both with structure rather than exhortation: **seats** with hard prohibitions, a **brief** that is a refused-if-incomplete contract on disk, a **check** bound to a specific git HEAD, and a **digest** derived from an append-only ledger.
+
+---
+
+## The four seats
+
+| Seat | Agent id | Owns | May never |
+|---|---|---|---|
+| **CEO** | `stacked-ceo` | direction, priority, spend, irreversible calls, the verdict on what ships | edit files, run a build, approve without evidence |
+| **LEAD** | `stacked-lead` | cutting seams, writing briefs, dispatching, reconciling, landing, the digest | take a seam it already dispatched, land on a worker's word alone |
+| **EMPLOYEE** | `stacked-employee` | one seam, one brief, one check, one report | merge, push a shared branch, widen scope, dispatch anyone |
+| **AUDIT** | `stacked-auditor` | the verdict on work it did not write | edit what it judges, accept the author's check as the verdict |
+
+The prohibitions are enforced, not suggested: the employee agent denies the `subagent` action outright, and the CEO and auditor agents deny `edit`.
+
+---
+
+## The loop
+
+| # | Step | What actually happens |
 |---|---|---|
-| **CEO** | direction, priority, spend, irreversible calls, the verdict on what ships | write code, run a build, approve without evidence |
-| **LEAD** | cutting seams, writing briefs, dispatching, reconciling, landing, the digest | take a seam it already dispatched, land on a worker's word alone |
-| **EMPLOYEE** | one seam, one brief, one check, one report | merge, push a shared branch, widen scope, dispatch anyone |
-| **AUDIT** | the verdict on work it did not write | edit the work it judges, accept the author's own check as the verdict |
+| 1 | **Intake** | The objective is restated in one sentence. Constraints, unknowns, and out-of-scope are named before anything is cut. |
+| 2 | **Rank** | The work is cut into seams and scored value × risk ÷ effort. At most three stay live; the rest are parked in the ledger with a reason. |
+| 3 | **Brief** | `brief` writes `.stack/briefs/<id>.md`. A brief missing **Out**, **Check**, or **Owns** is refused and nothing is written. |
+| 4 | **Dispatch** | One employee per seam. Ownership is proved disjoint first. The prompt carries a brief path and three fields, never session history. |
+| 5 | **Reconcile** | The report is read before chat. `scope` proves the diff stayed inside the brief. `check` is re-run by the lead. |
+| 6 | **Land** | `ready` gates it. One commit, plain words, the check output in the body. The seam is marked landed in the ledger. |
+| 7 | **Digest** | `.stack/digest.md` is rewritten from the ledger: **Needs you / New / In progress**, every row aged. |
+| 8 | **Audit** | A context that wrote none of the work gives `PASS` / `PASS WITH NOTES` / `FAIL`, with each reason named. |
 
-## What you get
+Rulings, not stalls. A running stack decides and records `RULING · what — why — cost if wrong`. Four things still stop it: an irreversible act, a security-sensitive act, a side effect outside the worktree that norms say you ask about, and a brief so broken every path is a guess.
 
-- **Five tools:** `ledger`, `brief`, `check`, `scope`, `ready`.
-- **Six skills:** `stacked`, `stacked-soul`, `stacked-ceo`, `stacked-lead`, `stacked-employee`, `stacked-audit`.
-- **Four agents:** `stacked-ceo`, `stacked-lead`, `stacked-employee`, `stacked-auditor`.
-- **Four slash commands:** `/stack`, `/stack-check`, `/stack-ready`, `/stack-digest`.
-- **State on disk:** `.stack/` holds the ledger, the digest, briefs, reports, and the last check bound to a HEAD.
-- **No infrastructure:** zero MCP servers, zero runtime dependencies, no network calls, no daemons. ESM, Node 20+, Windows-first.
+---
+
+## The five tools
+
+All local. Files and `git` only; no network call, no daemon, no MCP handshake.
+
+| Tool | Operations | What it does | The refusal |
+|---|---|---|---|
+| `ledger` | `log` `tail` `digest` | Append one stamped line; read the tail; rewrite the digest from the record. | Never edits. A correction is a new line. |
+| `brief` | `new` `list` `get` `status` | Write the seam contract, index it, move its state. | Missing Out, Check, or Owns: no file, no dispatch. |
+| `check` | `init` `run` `show` | Detect or run the repo's proving commands, bind the result to HEAD. | Reports `RED` on failure and marks a result stale when HEAD moved. |
+| `scope` | — | Compare every touched path with the brief's `Owns`. | Names every path that left the seam. |
+| `ready` | — | Gate a seam for landing. | `NO-GO` with one named reason per failure: no report, red check, stale check, dirty tree, out-of-scope path. |
+
+`check init` looks for the obvious manifests (`package.json` scripts, `pyproject.toml`, `go.mod`, `Cargo.toml`, a `Makefile` `test` target) and writes the four cheapest honest checks, so the first run is not an empty config. Until at least one check exists, readiness is `UNPROVEN`, not green.
+
+---
+
+## The skills
+
+Six, plus the soul. They are ordinary `SKILL.md` files with front matter; the plugin registers them natively at startup.
+
+| Skill id | Loads when |
+|---|---|
+| `stacked` | Always. It is also the injected bootstrap: which rung you are on and what it may not do. |
+| `stacked-soul` | The four laws. Registered from the single canonical [`SOUL.md`](SOUL.md) at the repo root, not a copy. |
+| `stacked-ceo` | The request is a decision, not a task, or someone asks "is this good?" |
+| `stacked-lead` | Work spans files, decisions, or more than one sitting. |
+| `stacked-employee` | You were dispatched a seam and have a brief path. |
+| `stacked-audit` | A seam is ready to land, or a branch needs a verdict from outside. |
+
+---
+
+## The commands
+
+| Command | Does |
+|---|---|
+| `/stack <objective>` | Enters the loop: restate, rank, brief the first seam. |
+| `/stack-check [name]` | Runs the proving checks and binds the result to HEAD. |
+| `/stack-ready <id>` | Gates a seam and restates every failing reason as an action. |
+| `/stack-digest` | Rewrites the digest and names the single next action. |
+
+---
+
+## State on disk
+
+Conversation memory does not survive compaction. `.stack/` does.
+
+```text
+.stack/
+  ledger.md            append-only, one stamped line per event
+  digest.md            derived: Needs you / New / In progress
+  briefs/<id>.md       the seam contract (Out, Check, Owns, tier, report shape)
+  reports/<id>.md      what was found and proved (Outcome, Evidence, Unverified, Scope, Lesson)
+  state/checks.json    the last real check, bound to a HEAD
+  config.json          this repo's checks and ownership
+```
+
+`config.json`, created on first use and seeded by `check init`:
+
+```json
+{
+  "checks": [
+    { "name": "unit", "command": "npm test", "timeout": 240000 },
+    { "name": "lint", "command": "npm run lint", "timeout": 60000 }
+  ],
+  "ownership": { "ignore": [".stack/**", "dist/**"] },
+  "dispatch": { "live": 4, "cap": 10 }
+}
+```
+
+`dispatch.live` is how many employees may run at once. `dispatch.cap` is the ceiling it may never exceed, matching the host's ten-subagent limit.
+
+---
 
 ## Install
+
+Windows-first, no admin rights, no per-file symlinks.
 
 ```powershell
 cd Q:\PROJECTS\PERSONAL\oc-stacked
 node scripts/install.mjs
 ```
 
-The installer junctions the repository into `%USERPROFILE%\.config\opencode\plugins\oc-stacked`, so edits here are live on the next restart with no copy step, and copies the four agents and four commands into the config directory. No admin rights, no per-file symlinks, and it does not rewrite your `opencode.jsonc`.
+The installer:
 
-Restart OpenCode so the plugin loads, then verify:
+1. Junctions the repository to `%USERPROFILE%\.config\opencode\plugins\oc-stacked`. Edits here are live after a restart; there is no copy step for the plugin.
+2. Copies the four agents into `%USERPROFILE%\.config\opencode\agents\`.
+3. Copies the four commands into `%USERPROFILE%\.config\opencode\commands\`.
+4. Runs the self-test and fails loudly if anything is wrong.
 
-```powershell
-node scripts/check.mjs
-```
-
-To wire it by hand instead, add the directory to `plugins` in `opencode.jsonc`:
+It does not rewrite your `opencode.jsonc`. To wire it by hand instead, add the directory:
 
 ```jsonc
 "plugins": ["Q:\\PROJECTS\\PERSONAL\\oc-stacked"]
+```
+
+Restart OpenCode, then prove it loaded:
+
+```powershell
+node scripts/check.mjs
+opencode run --print-logs "say OK" 2>&1 | Select-String "oc-stacked"
 ```
 
 Undo everything it added:
@@ -51,13 +158,19 @@ Undo everything it added:
 node scripts/install.mjs --remove
 ```
 
+---
+
 ## First run
 
-1. `/stack ship the retry budget for webhook delivery` — intake, restated in one sentence, cut into seams.
-2. The lead writes one brief per seam: Out, Check, Owns. A brief with a hole is refused, and nothing is written.
-3. Dispatch one employee per seam, at most `dispatch.live` at once; the prompt carries the brief path and three fields.
-4. `/stack-check` — the configured commands run and the result binds to the current HEAD.
-5. `/stack-ready retry-budget` — the gate answers in this exact shape:
+```text
+/stack stop the webhook delivery loop from retrying forever
+```
+
+1. The lead restates the objective, lists constraints and unknowns, and cuts seams.
+2. `brief` writes `.stack/briefs/retry-budget.md` with Out, Check, and Owns. If the check is not obvious, the lead proposes the cheapest honest one instead of inventing a green.
+3. An employee is dispatched with `Seam`, `Brief`, and the report path. It reads the brief, makes the smallest change, runs the check, and writes `.stack/reports/retry-budget.md`.
+4. `/stack-check` runs the configured commands and records the result against HEAD.
+5. `/stack-ready retry-budget` answers:
 
    ```text
    ## GO — seam retry-budget
@@ -68,51 +181,34 @@ node scripts/install.mjs --remove
    - pass · tree clean at 4f2c1ab on retry-budget
    ```
 
-6. `/stack-digest` — `.stack/digest.md` rewritten: Needs you / New / In progress, every row aged.
+6. `/stack-digest` rewrites the digest and names the next action.
 
-## The five tools
+---
 
-| Tool | What it does | Reach for it when |
-|---|---|---|
-| `ledger` | appends one stamped line, reads the tail, rewrites the digest from the record | an event happened worth remembering after compaction |
-| `brief` | writes a seam contract, lists seams, moves state, refuses an incomplete brief | before dispatching anyone |
-| `check` | runs the repo's proving commands, binds pass/fail to a HEAD, names a stale result | before you claim anything is green |
-| `scope` | lists touched paths, compares them with the brief's `Owns`, names what is out of bounds | before reporting a seam done |
-| `ready` | gates a seam: GO or NO-GO with each reason named | immediately before landing |
+## How the guarantees are actually kept
 
-## Configuration
+| Guarantee | Mechanism |
+|---|---|
+| A brief cannot be vague | `brief` validates Out, Check, and Owns and writes nothing when one is missing. |
+| Green means green *here* | `check` stores the HEAD; `ready` refuses a result from another HEAD and names both shas. |
+| No quiet scope creep | `scope` maps every changed path against `Owns`; `ready` fails on anything outside it. |
+| A worker cannot multiply | The employee agent's permissions deny `subagent`; the dispatch template forbids it. |
+| Verdicts are independent | The auditor runs the check itself and may not edit; its skill forbids fixing the code it judges. |
+| Nothing is lost to compaction | The ledger is append-only and the digest is derived from it, not hand-maintained. |
 
-`.stack/config.json`, created on first tool use:
-
-```json
-{
-  "checks": [
-    { "name": "unit", "command": "npm test", "timeout": 180000 },
-    { "name": "lint", "command": "npm run lint --silent", "timeout": 60000 }
-  ],
-  "ownership": { "ignore": [".stack/**", "dist/**"] },
-  "dispatch": { "live": 4, "cap": 10 }
-}
-```
-
-`checks` is the only green that counts: a name, a shell command, a timeout in milliseconds, an optional `cwd`. `ownership.ignore` lists paths `scope` and `ready` do not audit. `dispatch.live` is how many employees may run at once; `dispatch.cap` is the ceiling it may never exceed.
-
-## The rules the system enforces
-
-- A brief needs Out, Check, and Owns. `brief` refuses the rest and writes nothing.
-- A seam lands only on a green check at the HEAD being landed; a result from another head fails with both shas named.
-- Scope is audited. Every touched path must fall inside the brief's `Owns`, or it needs its own brief.
-- A worker never dispatches, never merges, and never pushes a shared branch.
-- A verdict comes from a context that wrote none of the work. The author's check is smoke.
+---
 
 ## Requirements and limits
 
-- OpenCode 2.0.4 or newer, verified on 2.2.6. A V1-compatible export is kept.
-- Node 20 or newer. No build step, no transpiler, no dependencies.
-- git is optional: without a repository, `scope` says it cannot audit and `ready` gates on brief, report, and checks only. It says so rather than assuming clean.
-- No GitHub coupling. Nothing reads or writes a PR, an issue, or a remote.
-- No model pinning by default. A brief records a tier (`cheap`, `standard`, `expert`); which model backs it is your call.
+- **OpenCode 2.0.4 or newer**, verified on 2.2.6. A V1-compatible export is kept for older hosts (skills and bootstrap; the tool domain does not exist there).
+- **Node 20 or newer.** No build step, no transpiler, no dependencies.
+- **git is optional.** Without a repository, `scope` says it cannot audit and `ready` gates on brief, report, and checks only. It says so rather than assuming clean.
+- **No model pinning.** A brief records a tier (`cheap`, `standard`, `expert`); which model backs it is your choice. Nothing inherits a surprise.
+- **No GitHub coupling.** Nothing reads or writes a remote, a PR, or an issue.
+- **No telemetry.** The only files written are inside the project's `.stack/` and the OpenCode config directory at install time.
+
+---
 
 ## License
 
-MIT. Lineage and inspiration: see SOURCES.md.
+MIT. Lineage and inspiration: [`SOURCES.md`](SOURCES.md).
