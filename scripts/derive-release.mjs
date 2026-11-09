@@ -106,6 +106,13 @@ const TYPES = {
 
 const LEVEL_RANK = { patch: 1, minor: 2, major: 3 }
 const SUBJECT_RE = /^([a-z]+)(?:\(([^()]*)\))?(!)?: (.+)$/
+// Git writes its own revert subject as `Revert "<original subject>"`, which is
+// not `type(scope): description`. The spec's own type for the same intent is
+// `revert: <original subject>`, so the shape is accepted here - and ONLY when
+// the quoted original is itself a known conventional subject. `Revert the diff
+// change` and `Revert "Fixed the thing"` stay refusals: a revert is exempt from
+// the shape only because it names a commit that was not.
+const GIT_REVERT_RE = /^Revert "(.+)"$/
 // Non-null so `---` and `-1` cannot pass as a version; leading zeros are not
 // semver and would produce a tag npm rejects.
 const VERSION_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
@@ -226,6 +233,27 @@ export function classify(commits) {
   for (const commit of commits) {
     const subject = String(commit.subject ?? "")
     const body = String(commit.body ?? "")
+    // A git revert names a conventional subject it undoes. The revert carries
+    // no hop of its own: the hop belongs to the change being reverted, which is
+    // in the same range and already counted (or not) on its own merits.
+    const gitRevert = GIT_REVERT_RE.exec(subject)
+    if (gitRevert) {
+      const original = SUBJECT_RE.exec(gitRevert[1])
+      if (!original || !(original[1] in TYPES)) {
+        rejected.push({ ...commit, reason: `revert of a non-conventional subject ("${gitRevert[1]}")` })
+        continue
+      }
+      ignored.push({
+        sha: commit.sha,
+        subject,
+        type: "revert",
+        scope: null,
+        breaking: /BREAKING[- ]CHANGE/.test(body),
+        level: "ignore",
+        reverts: gitRevert[1],
+      })
+      continue
+    }
     const match = SUBJECT_RE.exec(subject)
     if (!match) {
       rejected.push({ ...commit, reason: "not a conventional commit subject (`type(scope)!: description`)" })
@@ -761,6 +789,58 @@ const FIXTURES = [
     changelog: FIXTURE_CHANGELOG,
     expect: { ok: false, codes: ["NON_CONVENTIONAL"], rejected: 1 },
   },
+  // A revert is a legitimate commit, not a malformed subject. Git writes its
+  // own as `Revert "<original subject>"`; the Conventional Commits type for the
+  // same intent is `revert: <original subject>`. Both are accepted, and neither
+  // carries a hop of its own: the hop belongs to the change being reverted.
+  {
+    name: "accept-git-revert-of-conventional",
+    baseVersion: "1.2.3",
+    baseSource: "tag",
+    commits: [
+      { sha: "v1", subject: "feat: add a reader" },
+      { sha: "v2", subject: 'Revert "feat: add a reader"' },
+    ],
+    manifestVersion: "1.3.0",
+    changelog: FIXTURE_CHANGELOG,
+    expect: { ok: true, level: "minor", version: "1.3.0", considered: 1, ignored: 1, rejected: 0 },
+  },
+  {
+    name: "accept-revert-type",
+    baseVersion: "1.2.3",
+    baseSource: "tag",
+    commits: [{ sha: "v3", subject: "revert: fix(pkg): stop losing the tail" }],
+    manifestVersion: "1.2.3",
+    changelog: FIXTURE_CHANGELOG,
+    expect: { ok: false, codes: ["NO_RELEASABLE"], ignored: 1, rejected: 0 },
+  },
+  {
+    name: "refuse-git-revert-of-unconventional",
+    baseVersion: "1.2.3",
+    baseSource: "tag",
+    commits: [{ sha: "v4", subject: 'Revert "Fixed the thing"' }],
+    manifestVersion: "1.2.3",
+    changelog: FIXTURE_CHANGELOG,
+    expect: { ok: false, codes: ["NON_CONVENTIONAL"], rejected: 1 },
+  },
+  {
+    name: "refuse-git-revert-without-quotes",
+    baseVersion: "1.2.3",
+    baseSource: "tag",
+    commits: [{ sha: "v5", subject: "Revert the diff change" }],
+    manifestVersion: "1.2.3",
+    changelog: FIXTURE_CHANGELOG,
+    expect: { ok: false, codes: ["NON_CONVENTIONAL"], rejected: 1 },
+  },
+  {
+    name: "refuse-git-revert-of-unknown-type",
+    baseVersion: "1.2.3",
+    baseSource: "tag",
+    commits: [{ sha: "v6", subject: 'Revert "feats: add a reader"' }],
+    manifestVersion: "1.2.3",
+    changelog: FIXTURE_CHANGELOG,
+    expect: { ok: false, codes: ["NON_CONVENTIONAL"], rejected: 1 },
+  },
   {
     name: "refuse-manifest-mismatch",
     baseVersion: "1.2.3",
@@ -999,6 +1079,7 @@ const FIXTURE_PACKAGES = [
   { dir: "janua", name: "@nathwn12/janua", scoped: true },
   { dir: "oc-flight-deck", name: "oc-flight-deck", scoped: false },
   { dir: "oc-harness-setup", name: "oc-harness-setup", scoped: false },
+  { dir: "oc-plugin-view", name: "oc-plugin-view", scoped: false },
   { dir: "oc-talk", name: "oc-talk", scoped: false },
   { dir: "rea-shim", name: "rea-shim", scoped: false },
 ]
@@ -1025,7 +1106,7 @@ function writeFixtureFile(root, rel, content) {
 }
 
 /**
- * One throwaway repository: the six manifests, a root lockfile carrying every
+ * One throwaway repository: every fixture package's manifest, a root lockfile carrying every
  * package's version cell, one tag per package at the base, then `commits`.
  * The caller removes the returned directory.
  */
@@ -1104,9 +1185,17 @@ const GIT_CASES = [
     ],
     expect: {},
   },
+  {
+    name: "git-accepts-a-git-revert-subject",
+    commits: [
+      { subject: "feat(janua): add pty_kill", files: { "packages/janua/index.js": "export const name = 2\n" } },
+      { subject: 'Revert "feat(janua): add pty_kill"', files: { "packages/janua/index.js": "export const name = 3\n" } },
+    ],
+    expect: { "@nathwn12/janua": "0.2.0" },
+  },
 ]
 
-/** Derive all six packages over one fixture repo and report every package that
+/** Derive every fixture package over one fixture repo and report every package that
  *  disagrees with the expected version (`null` = derives nothing). */
 function runGitCase(fixture) {
   const problems = []
