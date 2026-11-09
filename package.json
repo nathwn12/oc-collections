@@ -1,0 +1,40 @@
+{
+  "name": "oc-stacked",
+  "version": "0.1.0",
+  "description": "A three-rung agent stack for OpenCode: one CEO, one lead, a pile of employees. Local-first, zero MCP, Windows-native.",
+  "type": "module",
+  "license": "MIT",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "files": [
+    "index.js",
+    "lib",
+    "skills",
+    "agents",
+    "commands",
+    "scripts",
+    "SOUL.md",
+    "SOURCES.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "check": "node scripts/check.mjs",
+    "install:local": "node scripts/install.mjs",
+    "uninstall:local": "node scripts/install.mjs --remove"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "agents",
+    "orchestration",
+    "subagents",
+    "skills"
+  ],
+  "private": true
+}

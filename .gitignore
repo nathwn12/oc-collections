@@ -1,0 +1,15 @@
+# Node
+node_modules/
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# The stack's own runtime state is local, except the digest and ledger which
+# teams may choose to commit. Ignore the noisy half by default.
+.stack/state/
+.stack/plugin.log
+
+# Editor
+.vscode/
+.idea/
+*.swp
