@@ -424,6 +424,34 @@ await checkAsync('brief allows a neighbour in the same folder on another file', 
 
 fs.rmSync(swarmDir, { recursive: true, force: true });
 
+await checkAsync('marking a seam landed without a GO is refused', async () => {
+  await run('brief', {
+    op: 'new',
+    title: 'no gate yet',
+    out: 'something nobody proved',
+    check: 'node -e "process.exit(0)"',
+    owns: ['notes/**'],
+    files: ['notes/plan.md'],
+  });
+  const out = await run('brief', { op: 'status', id: 'no-gate-yet', status: 'landed' });
+  assert(/Refused/.test(out), 'a seam landed with no gate at all');
+  assert(/no gate has run|cannot be marked landed/i.test(out), 'the reason was not named');
+  const index = JSON.parse(fs.readFileSync(path.join(dir, '.stack', 'state', 'briefs.json'), 'utf8'));
+  assert(index.find((b) => b.id === 'no-gate-yet').status === 'briefed', 'the status changed anyway');
+  return 'status unchanged';
+});
+
+await checkAsync('landing after a NO-GO is refused, and force records why', async () => {
+  const refused = await run('brief', { op: 'status', id: 'retry-budget', status: 'landed' });
+  assert(/Refused/.test(refused), 'a NO-GO seam was marked landed');
+  assert(/RED/.test(refused), 'the last verdict was not quoted');
+  const forced = await run('brief', { op: 'status', id: 'retry-budget', status: 'landed', force: true });
+  assert(/landed/.test(forced), 'force did not work');
+  const tail = await run('ledger', { op: 'tail', limit: 6 });
+  assert(/without a GO/.test(tail), 'the forced landing left no ruling in the ledger');
+  return 'refused, then forced with a ruling';
+});
+
 // ---------------------------------------------------------------- agents, commands, provenance
 const agentFiles = fs.readdirSync(path.join(repo, 'agents')).filter((f) => f.endsWith('.md'));
 
