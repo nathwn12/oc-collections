@@ -82,8 +82,8 @@ check('plugin keeps a V1 server export', () => {
 // ---------------------------------------------------------------- skills
 const skills = readSkills();
 
-check('six skills register', () => {
-  assert(skills.length === 6, `expected 6, got ${skills.length}: ${skills.map((s) => s.id).join(', ')}`);
+check('twelve skills register', () => {
+  assert(skills.length === 12, `expected 12, got ${skills.length}: ${skills.map((s) => s.id).join(', ')}`);
   return skills.map((s) => s.id).join(', ');
 });
 
@@ -127,9 +127,13 @@ check('bootstrap is cached, marked, and small', () => {
 const dir = tmpRepo();
 const tools = toolDefinitions({ dir });
 
-check('five tools are defined', () => {
-  assert(tools.length === 5, `expected 5, got ${tools.length}`);
-  return tools.map((t) => t.name).join(', ');
+check('six tools are defined', () => {
+  assert(tools.length === 6, `expected 6, got ${tools.length}`);
+  const names = tools.map((t) => t.name);
+  for (const required of ['ledger', 'brief', 'swarm', 'check', 'scope', 'ready']) {
+    assert(names.includes(required), `missing tool: ${required}`);
+  }
+  return names.join(', ');
 });
 
 check('every tool declares a valid, self-consistent input schema', () => {
@@ -319,6 +323,106 @@ await checkAsync('check refuses to claim green when HEAD moved after the run', a
   assert(/Re-run at the head|HEAD is/i.test(out), 'staleness was not named');
   return 'stale check refused';
 });
+
+// ---------------------------------------------------------------- swarm
+const swarmDir = tmpRepo();
+const swarmTools = toolDefinitions({ dir: swarmDir });
+const runSwarm = async (input) => {
+  const result = await swarmTools.find((t) => t.name === 'swarm').execute(input, {});
+  return typeof result === 'string' ? result : result?.content;
+};
+const seam = (id, file, extra = {}) => ({
+  id,
+  title: id,
+  out: `${id} is done`,
+  check: 'node -e "process.exit(0)"',
+  files: [file],
+  ...extra,
+});
+
+await checkAsync('swarm refuses a single seam as fan-out of one', async () => {
+  const out = await runSwarm({ seams: [seam('a', 'src/a.ts')] });
+  assert(/Refused/.test(out), 'one seam was accepted as a swarm');
+  return 'two is the floor';
+});
+
+await checkAsync('swarm refuses eleven seams at the hard ceiling', async () => {
+  const seams = Array.from({ length: 11 }, (_, i) => seam(`s${i}`, `src/f${i}.ts`));
+  const out = await runSwarm({ seams });
+  assert(/Refused/.test(out), 'eleven seams were accepted');
+  assert(/ceiling of 10/.test(out), 'the ceiling was not named');
+  return 'ten is the ceiling';
+});
+
+await checkAsync('swarm refuses two seams that share one file', async () => {
+  const out = await runSwarm({
+    seams: [seam('alpha', 'src/auth/session.ts'), seam('beta', 'src/auth/session.ts')],
+  });
+  assert(/Refused/.test(out), 'a shared file was accepted');
+  assert(/session\.ts/.test(out), 'the shared file was not named');
+  const index = fs.existsSync(path.join(swarmDir, '.stack', 'state', 'briefs.json'))
+    ? JSON.parse(fs.readFileSync(path.join(swarmDir, '.stack', 'state', 'briefs.json'), 'utf8'))
+    : [];
+  assert(index.length === 0, 'a refused swarm still wrote briefs');
+  return 'none written';
+});
+
+await checkAsync('swarm writes four disjoint briefs with a dispatch prompt each', async () => {
+  const out = await runSwarm({
+    why: 'four independent surfaces',
+    seams: [
+      seam('auth-form', 'src/auth/form.tsx'),
+      seam('auth-store', 'src/auth/store.ts'),
+      seam('billing-api', 'src/billing/api.ts'),
+      seam('docs', 'docs/auth.md'),
+    ],
+  });
+  assert(/Swarm of 4/.test(out), `unexpected: ${out.slice(0, 140)}`);
+  assert((out.match(/Seam: /g) || []).length === 4, 'not one dispatch prompt per seam');
+  const index = JSON.parse(fs.readFileSync(path.join(swarmDir, '.stack', 'state', 'briefs.json'), 'utf8'));
+  assert(index.length === 4, `index has ${index.length} seams`);
+  for (const b of index) assert(b.files.length === 1, `${b.id} lost its file list`);
+  return '4 seams, same folder, no shared file';
+});
+
+await checkAsync('brief refuses a file a live swarm seam already owns', async () => {
+  const briefTool = swarmTools.find((t) => t.name === 'brief');
+  const result = await briefTool.execute(
+    {
+      op: 'new',
+      title: 'late arrival',
+      out: 'one more thing',
+      check: 'node -e "process.exit(0)"',
+      owns: ['src/auth/**'],
+      files: ['src/auth/store.ts'],
+    },
+    {},
+  );
+  const out = typeof result === 'string' ? result : result.content;
+  assert(/Refused/.test(out), 'a colliding brief was accepted');
+  assert(/auth-store/.test(out), 'the colliding seam was not named');
+  return 'collision named';
+});
+
+await checkAsync('brief allows a neighbour in the same folder on another file', async () => {
+  const briefTool = swarmTools.find((t) => t.name === 'brief');
+  const result = await briefTool.execute(
+    {
+      op: 'new',
+      title: 'auth guard',
+      out: 'a guard in the same folder',
+      check: 'node -e "process.exit(0)"',
+      owns: ['src/auth/**'],
+      files: ['src/auth/guard.ts'],
+    },
+    {},
+  );
+  const out = typeof result === 'string' ? result : result.content;
+  assert(/Brief written/.test(out), `a same-folder neighbour was refused: ${out.slice(0, 160)}`);
+  return 'folder is not the boundary, the file is';
+});
+
+fs.rmSync(swarmDir, { recursive: true, force: true });
 
 // ---------------------------------------------------------------- agents, commands, provenance
 const agentFiles = fs.readdirSync(path.join(repo, 'agents')).filter((f) => f.endsWith('.md'));

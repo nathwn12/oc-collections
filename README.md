@@ -1,7 +1,7 @@
 # oc-stacked
 
 A three-rung agent stack for OpenCode: **one CEO, one lead, a fresh employee per seam, and an auditor that wrote none of it.**
-Local-first, zero MCP, five tools, no runtime dependencies.
+Local-first, zero MCP, six tools, no runtime dependencies.
 
 ![oc-stacked](preview/readme-hero.png)
 
@@ -38,9 +38,9 @@ The prohibitions are enforced, not suggested: the employee agent denies the `sub
 | # | Step | What actually happens |
 |---|---|---|
 | 1 | **Intake** | The objective is restated in one sentence. Constraints, unknowns, and out-of-scope are named before anything is cut. |
-| 2 | **Rank** | The work is cut into seams and scored value × risk ÷ effort. At most three stay live; the rest are parked in the ledger with a reason. |
+| 2 | **Rank** | The work is cut into seams and scored value × risk ÷ effort. Every genuinely disjoint seam stays live, up to ten; the rest are parked in the ledger with a reason. |
 | 3 | **Brief** | `brief` writes `.stack/briefs/<id>.md`. A brief missing **Out**, **Check**, or **Owns** is refused and nothing is written. |
-| 4 | **Dispatch** | One employee per seam. Ownership is proved disjoint first. The prompt carries a brief path and three fields, never session history. |
+| 4 | **Dispatch** | One employee per seam, all dispatched in one response. Ownership is proved disjoint on exact files first; `swarm` refuses a shared file. The prompt carries a brief path and three fields, never session history. |
 | 5 | **Reconcile** | The report is read before chat. `scope` proves the diff stayed inside the brief. `check` is re-run by the lead. |
 | 6 | **Land** | `ready` gates it. One commit, plain words, the check output in the body. The seam is marked landed in the ledger. |
 | 7 | **Digest** | `.stack/digest.md` is rewritten from the ledger: **Needs you / New / In progress**, every row aged. |
@@ -50,14 +50,15 @@ Rulings, not stalls. A running stack decides and records `RULING · what — why
 
 ---
 
-## The five tools
+## The six tools
 
 All local. Files and `git` only; no network call, no daemon, no MCP handshake.
 
 | Tool | Operations | What it does | The refusal |
 |---|---|---|---|
 | `ledger` | `log` `tail` `digest` | Append one stamped line; read the tail; rewrite the digest from the record. | Never edits. A correction is a new line. |
-| `brief` | `new` `list` `get` `status` | Write the seam contract, index it, move its state. | Missing Out, Check, or Owns: no file, no dispatch. |
+| `brief` | `new` `list` `get` `status` | Write one seam contract, index it, move its state. | Missing Out, Check, or Owns: no file, no dispatch. |
+| `swarm` | one call | Write 2 to 10 briefs atomically; return one dispatch prompt per employee. | Two seams naming one file, a duplicate id, a hole, or an eleventh seam: nothing is written. |
 | `check` | `init` `run` `show` | Detect or run the repo's proving commands, bind the result to HEAD. | Reports `RED` on failure and marks a result stale when HEAD moved. |
 | `scope` | — | Compare every touched path with the brief's `Owns`. | Names every path that left the seam. |
 | `ready` | — | Gate a seam for landing. | `NO-GO` with one named reason per failure: no report, red check, stale check, dirty tree, out-of-scope path. |
@@ -68,7 +69,7 @@ All local. Files and `git` only; no network call, no daemon, no MCP handshake.
 
 ## The skills
 
-Six, plus the soul. They are ordinary `SKILL.md` files with front matter; the plugin registers them natively at startup.
+Twelve. They are ordinary `SKILL.md` files with front matter; the plugin registers them natively at startup. Six are seats and discipline lenses, six are the shelf you pull when the moment matches.
 
 | Skill id | Loads when |
 |---|---|
@@ -78,6 +79,12 @@ Six, plus the soul. They are ordinary `SKILL.md` files with front matter; the pl
 | `stacked-lead` | Work spans files, decisions, or more than one sitting. |
 | `stacked-employee` | You were dispatched a seam and have a brief path. |
 | `stacked-audit` | A seam is ready to land, or a branch needs a verdict from outside. |
+| `stacked-plan` | The design is not obvious, or the ask is a feature. |
+| `stacked-swarm` | More than one seam can run at once. |
+| `stacked-debug` | Something throws, hangs, slows, or lies. |
+| `stacked-tdd` | Behaviour changes and a test surface exists. |
+| `stacked-review` | You are asking for, receiving, or looping on a review. |
+| `stacked-ship` | The seam is ready to commit, close, or release. |
 
 ---
 
@@ -115,11 +122,11 @@ Conversation memory does not survive compaction. `.stack/` does.
     { "name": "lint", "command": "npm run lint", "timeout": 60000 }
   ],
   "ownership": { "ignore": [".stack/**", "dist/**"] },
-  "dispatch": { "live": 4, "cap": 10 }
+  "dispatch": { "live": 10, "cap": 10 }
 }
 ```
 
-`dispatch.live` is how many employees may run at once. `dispatch.cap` is the ceiling it may never exceed, matching the host's ten-subagent limit.
+`dispatch.live` is how many employees may run at once. `dispatch.cap` is the ceiling it may never exceed, matching the host's ten-subagent limit; `swarm` refuses an eleventh seam regardless of config.
 
 ---
 
@@ -192,6 +199,7 @@ node scripts/install.mjs --remove
 | A brief cannot be vague | `brief` validates Out, Check, and Owns and writes nothing when one is missing. |
 | Green means green *here* | `check` stores the HEAD; `ready` refuses a result from another HEAD and names both shas. |
 | No quiet scope creep | `scope` maps every changed path against `Owns`; `ready` fails on anything outside it. |
+| No two workers touch one file | `swarm` and `brief` compare exact `files` across every live seam and refuse a collision; same folder is allowed, same file is not. |
 | A worker cannot multiply | The employee agent's permissions deny `subagent`; the dispatch template forbids it. |
 | Verdicts are independent | The auditor runs the check itself and may not edit; its skill forbids fixing the code it judges. |
 | Nothing is lost to compaction | The ledger is append-only and the digest is derived from it, not hand-maintained. |

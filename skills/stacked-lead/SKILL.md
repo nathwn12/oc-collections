@@ -38,7 +38,7 @@ Cut the objective into **seams**: units of work with one owner, one check, and a
 
 A seam is too big when you cannot name its check. A seam is too small when its overhead — brief, dispatch, report, reconcile — costs more than the edit. Merge those.
 
-Score each seam: **value × risk ÷ effort**, roughly. Then keep at most three live. Everything else is `PARKED` in the ledger with the reason it is not now.
+Score each seam: **value × risk ÷ effort**, roughly. Then keep live every seam that is genuinely disjoint, up to ten, and park the rest in the ledger with the reason it is not now. Ten is the host's ceiling, not a target: a worker you cannot reconcile is work you cannot land.
 
 Choose the order so that the first landing makes the rest easier or proves them unnecessary. A seam that might delete two other seams goes first.
 
@@ -51,15 +51,18 @@ Every dispatch carries a brief. Use the `brief` tool (`op=new`); it refuses OUT,
 | **Out** | What leaves the room. One sentence a stranger understands. |
 | **Check** | The command that proves it, which can go red. |
 | **Owns** | The globs this seam may touch. Everything else is out of bounds. |
+| **Files** | The exact paths this worker may edit. Disjointness is proved here, not on intent. |
 | **Do not touch** | Other live seams' files, plus anything the ask excludes. |
 | **Read first** | The specific files, by path. Never paste their contents. |
 | **Tier** | `cheap` when the plan text is complete, `standard` for multi-file work, `expert` when design is the work. |
 
-Prove seams are disjoint **before** dispatch: no two live briefs may own the same path. If they overlap, either merge them or draw the boundary now. Overlap discovered at merge time is a rewrite.
+Prove seams are disjoint **before** dispatch. Same branch is fine. Same folder is fine. Same package is fine. **Same file is one seam with two owners**, and that is a merge conflict with extra steps. If two briefs name one file, either merge them or move the boundary now; overlap discovered at merge time is a rewrite.
 
 ### 4. Dispatch
 
-One employee per seam. The dispatch prompt contains exactly four things:
+One employee per seam. With more than one seam, use `swarm`: it validates ids, checks, exact files, and cross-seam collisions, writes every brief in one call, and hands back a dispatch line per employee. If it refuses, fix the seam; do not hand-write around it.
+
+The dispatch prompt contains exactly four things:
 
 ```text
 Seam: <id>
@@ -70,11 +73,17 @@ Report: .stack/reports/<id>.md — then return one paragraph: outcome, commits, 
 
 Nothing else. Not the session history, not prior-task summaries, not the plan for the other seams. Pasted history is the quiet way a dispatch becomes expensive: every pasted byte is re-read on every later turn of that worker.
 
-**Tiering.** Set the model, not just the words. Cheapest that can finish: transcription from a complete spec, single-file mechanical fixes. Mid tier for anything reading prose descriptions or reviewing. Most capable for a seam whose value *is* the design. Turn count beats token price — the cheapest model often takes twice the turns and costs more.
+Dispatch every ready seam **in one response** so they run concurrently. **Tiering.** Set the model, not just the words: cheapest that can finish for transcription from a complete spec, mid tier for prose descriptions and reviews, most capable where the design *is* the value. Turn count beats token price.
 
-**Live limit.** `dispatch.live` from `.stack/config.json` (default 4, hard cap 10). More parallel seams than you can reconcile is how a stack produces four half-verified changes instead of one landed one.
+**Ten is the ceiling.** Never eleven, and never more than you can reconcile. If the work needs more, run two waves: dispatch ten, land them, then dispatch the rest against the new base.
 
-**Never** dispatch two employees into overlapping paths. **Never** let a worker dispatch anyone: the dispatch template says so, and a worker-spawned reviewer is a defect, not extra rigour.
+**Never** dispatch two employees into the same file. **Never** let a worker dispatch anyone: the dispatch template says so, and a worker-spawned reviewer is a defect, not extra rigour.
+
+### 4b. Reconcile a swarm
+
+Cheapest check first, per seam: `scope`, then `check`, then the diff, then `ready`. Land in risk order, not completion order — the seam that changes a shared interface goes first.
+
+One worker red does not stop the others. One worker out of scope stops *that* worker, not the wave; log a `RULING` and let the rest finish. Two identical failures ends that seam, not the swarm.
 
 ### 5. Reconcile
 
@@ -116,6 +125,12 @@ Rewrite `.stack/digest.md` every turn with `ledger op=digest`. Three sections, a
 3. **In progress** — every live seam, what it owns, its state, how long since it last moved.
 
 Ages are the point. A seam with no movement for six hours is your next action, not the CEO's problem.
+
+## Act, do not ask
+
+A reversible decision inside the working tree is yours. Pick, say which you picked in one line, and keep moving. Do not spend a turn asking whether to plan, whether to use a worktree, or which of two equal names to choose.
+
+Write `RULING · <what> — <why> — <cost if wrong>` to the ledger and proceed. The cost of a wrong reversible ruling is visible rework; the cost of a stalled stack is the whole session. Only the four stop conditions in `stacked` are gates.
 
 ## Working alongside the CEO
 

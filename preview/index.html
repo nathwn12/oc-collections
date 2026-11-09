@@ -133,7 +133,7 @@
   .step p { margin: 0; font-size: 13.5px; color: var(--muted); line-height: 1.5; }
 
   /* ---------- tools ---------- */
-  .tools { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; }
+  .tools { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
   .tool {
     border: 1px solid var(--line); border-radius: 12px; padding: 18px; background: var(--ink-2);
     display: flex; flex-direction: column; gap: 10px; min-height: 190px;
@@ -231,7 +231,7 @@
     </p>
     <div class="install">
       <div class="cmd"><span class="sigil">›</span><span>node scripts/install.mjs</span><span class="dim"># junction, restart, done</span></div>
-      <div class="pill"><span class="dot"></span>26 / 26 self-tests green</div>
+      <div class="pill"><span class="dot"></span>32 / 32 self-tests green</div>
     </div>
   </header>
 
@@ -282,11 +282,12 @@
   </section>
 
   <section id="tools">
-    <div class="sec-head"><span class="sec-num">03</span><h2>Five tools, no infrastructure</h2></div>
+    <div class="sec-head"><span class="sec-num">03</span><h2>Six tools, no infrastructure</h2></div>
     <p class="sec-sub">Local files and git. No MCP handshake, no daemon, no network call, no dependencies. Each tool can refuse, which is the point.</p>
     <div class="tools">
       <div class="tool"><span class="tname">ledger</span><p>Appends one stamped line. Reads the tail. Rewrites the digest from the record instead of from memory.</p><span class="verb">append-only</span></div>
       <div class="tool"><span class="tname">brief</span><p>Writes a seam contract. Refuses a brief missing Out, Check, or Owns, and writes nothing.</p><span class="verb">refuses</span></div>
+      <div class="tool"><span class="tname">swarm</span><p>Takes two to ten seams, proves their exact files are disjoint, writes every brief in one call, returns one dispatch prompt each.</p><span class="verb">refuses overlap</span></div>
       <div class="tool"><span class="tname">check</span><p>Runs the repo's proving commands and binds pass or fail to a specific HEAD.</p><span class="verb">binds</span></div>
       <div class="tool"><span class="tname">scope</span><p>Compares every touched path with the brief's Owns list and names what left the seam.</p><span class="verb">audits</span></div>
       <div class="tool"><span class="tname">ready</span><p>The landing gate. GO or NO-GO, with every failing reason named in a sentence you can act on.</p><span class="verb">gates</span></div>
@@ -300,6 +301,7 @@
       <div class="refuse"><span class="x">✕</span><div><b>A brief with a hole</b><span>No Out, no Check, or no Owns means no file, no dispatch, no work.</span></div></div>
       <div class="refuse"><span class="x">✕</span><div><b>Green from another head</b><span>A check that ran before HEAD moved is stale, and the gate says which two shas disagree.</span></div></div>
       <div class="refuse"><span class="x">✕</span><div><b>A seam with no report</b><span>Outcome, Evidence, Unverified, Scope, Lesson. The report is not optional paperwork.</span></div></div>
+      <div class="refuse"><span class="x">✕</span><div><b>Two workers, one file</b><span>Same branch, same folder, same package are all fine. Same file is one seam with two owners, so the swarm refuses it.</span></div></div>
       <div class="refuse"><span class="x">✕</span><div><b>A quiet widening</b><span>Any path outside Owns is named. It needs its own brief or a line explaining why it belongs.</span></div></div>
       <div class="refuse"><span class="x">✕</span><div><b>A worker who delegates</b><span>The employee agent denies the subagent action outright. One seat, one writer.</span></div></div>
       <div class="refuse"><span class="x">✕</span><div><b>The author's own verdict</b><span>A verdict comes from a context that wrote none of the work. Otherwise it is smoke, and marked as such.</span></div></div>
