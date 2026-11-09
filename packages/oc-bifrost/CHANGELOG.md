@@ -4,11 +4,11 @@
 
 ### Changed
 
-- **The dev pin moves to `@opencode/plugin` `2.2.1` -> `2.2.2`**
-  (`package.json`). The pin stays exact rather than a caret or `latest` on
-  purpose: `2.2.3` requires `@opentui` `>=0.8.0` and breaks TUI plugins, so
-  tracking latest is not safe. No runtime change - the package imports `Plugin`
-  and nothing else from it, and the peer stays the range `>=2.1.1 <3`.
+- **The dev pin moved to `@opencode/plugin` `2.2.1` -> `2.2.2`, then to
+  `2.2.6` in the entry below** (`package.json`). The pin stays exact rather
+  than a caret or `latest` on purpose: it is the one SDK the types and the build
+  read. No runtime change - the package imports `Plugin` and nothing else from
+  it - and the peer floor this section ends on is `>=2.2.6 <3`.
 
 - **The host floor rises to `@opencode/plugin` `2.2.6`** (`package.json`): the
   peer moves from the range `>=2.1.1 <3` to `>=2.2.6 <3`, and the dev pin from
