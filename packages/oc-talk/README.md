@@ -7,7 +7,7 @@ Gives an agent thirteen tools to run the session lifecycle and hold a two-way co
 The package is published on npm as `oc-talk`, and OpenCode installs it from the registry: add it to the `plugins` array in your `opencode.jsonc`.
 
 ```json
-{ "plugins": ["oc-talk@0.1.8"] }
+{ "plugins": ["oc-talk@0.2.2"] }
 ```
 
 Restart OpenCode. The plugin registers its thirteen tools when the session starts, and uses the same `opencode` binary that is running it.

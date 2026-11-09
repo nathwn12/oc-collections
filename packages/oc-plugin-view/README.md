@@ -14,7 +14,7 @@ List this package before any other sidebar TUI plugin such as `oc-flight-deck` t
 
 ```jsonc
 {
-  "plugins": ["oc-plugin-view", "oc-flight-deck@0.21.1"]
+  "plugins": ["oc-plugin-view", "oc-flight-deck@0.21.3"]
 }
 ```
 
