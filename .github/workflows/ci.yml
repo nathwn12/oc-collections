@@ -8,6 +8,8 @@
 # `build` is the required check — do not rename.
 name: ci
 on:
+  push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 permissions:

@@ -8,6 +8,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- A payload-vs-schema conformance gate: one `tools/call` per listed tool, each
+  `structuredContent` validated against that tool's own declared
+  `outputSchema` (`scripts/conformance-check.mjs` over
+  `tests/envelope_truth.rs`), so a payload that violates its own schema fails
+  the build instead of shipping. `ci.yml` runs the same conformance binary.
+
+### Changed
+- Refresh compatible locked dependencies, including crc32fast 1.5.4, flate2
+  1.1.11, itoa 1.0.19 and syn 3.0.10; no API or behaviour change.
+
+### Fixed
+- The npm package stage carries `npm/assets` (the README's
+  `assets/signature.svg`) and the repo-root `THIRD-PARTY-NOTICES.md`, then
+  asserts every staged file and every local path the staged README references
+  before packing, so the published tarball cannot show a broken image or ship
+  without its notices.
+- `ci.yml` also runs on every push to `main`, not only on `pull_request` and
+  `workflow_dispatch`: the linear direct-to-main history was previously
+  untested by CI.
+- The release derivation accepts git's own revert subject. `Revert
+  "<conventional subject>"` and `revert: <conventional subject>` classify as
+  `revert` - no hop of their own, the hop belongs to the change being reverted
+  - instead of refusing the range as non-conventional; a revert of a
+  non-conventional subject and a plain `Revert the thing` are still refused.
+  `--check` covers both directions.
+- The runtime zip stages `THIRD-PARTY-NOTICES.md` beside `puppet.exe`,
+  `LICENSE` and `README.md` (the shipped README links to it), and the assemble
+  step asserts all four files are in the stage before compressing, so a
+  missing licence or notice fails the run instead of shipping.
+- Docs: the README states the real tool count, links `THIRD-PARTY-NOTICES.md`
+  and the notices file ships with it; both READMEs carry the house footer and
+  signature.
+
+## [7.0.1] - 2026-11-03
+
+### Fixed
+- `diff` accepts its own identical result. Its `outputSchema` now allows
+  `bbox:null` (and no `diff_out`) instead of declaring the unchanged case
+  impossible, and a unit test proves the payload validates against the schema
+  the tool advertises.
+
+## [7.0.0] - 2026-11-03
+
+### Added
 - `screenshot` gains `out`: an optional absolute path. The exact returned
   bytes are also written to disk (parent dirs created) and the payload gains
   `out:{path,bytes,fmt}`. PNG when `out` is set and `fmt` is omitted (a diff
@@ -32,7 +76,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `{delivered:"posted", effect:"changed"|"unchanged", changed, bbox}`;
   `unchanged` is a result, not an error.
 
-### Changed
+### Changed (breaking)
 - Background-only policy, absolute: `SendInput` is never called (the
   escalation path is deleted — `src/gate.rs` holds no injection API at all),
   so `delivery:"sendinput"` and `allow_foreground:true` return a typed
@@ -53,6 +97,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `sendinput_calls` / `sendinput_ms` are always 0 (fields kept for envelope
   compatibility); `docs/GUIDE.md` documents the posted-only surface and the
   six refusal codes.
+
+### Changed
 - The release lane derives its version from history instead of taking a typed
   one. `scripts/derive-release.mjs` walks the non-merge commits since the
   highest `vX.Y.Z` tag (`fix`/`perf` → patch, `feat` → minor, `!` or
@@ -69,20 +115,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   immediately before the release is attached.
   `scripts/check-release-workflow.mjs` asserts that shape and runs as the
   lane's first step.
-- Refresh compatible locked dependencies, including crc32fast 1.5.4, flate2
-  1.1.11, itoa 1.0.19 and syn 3.0.10; no API or behaviour change.
-
-### Fixed
-- The release derivation accepts git's own revert subject. `Revert
-  "<conventional subject>"` and `revert: <conventional subject>` classify as
-  `revert` - no hop of their own, the hop belongs to the change being reverted
-  - instead of refusing the range as non-conventional; a revert of a
-  non-conventional subject and a plain `Revert the thing` are still refused.
-  `--check` covers both directions.
-- The runtime zip stages `THIRD-PARTY-NOTICES.md` beside `puppet.exe`,
-  `LICENSE` and `README.md` (the shipped README links to it), and the assemble
-  step asserts all four files are in the stage before compressing, so a
-  missing licence or notice fails the run instead of shipping.
+- The README was rewritten to the house standard and states plainly that the
+  project is experimental: interfaces may change and a release can break the
+  one before it.
 
 ## [6.1.4] - 2026-11-02
 

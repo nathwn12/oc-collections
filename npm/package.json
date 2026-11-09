@@ -23,6 +23,7 @@
     "bin/",
     "engine-manifest.json",
     "LICENSE",
-    "README.md"
+    "README.md",
+    "THIRD-PARTY-NOTICES.md"
   ]
 }

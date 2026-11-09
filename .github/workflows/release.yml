@@ -258,11 +258,29 @@ jobs:
           if ((Get-Content npm/engine-manifest.json -Raw) -match 'RELEASE_WORKFLOW_FILLS_THIS') { throw 'refusing to stage npm package with placeholder hashes' }
           New-Item -ItemType Directory -Path npm-stage -Force | Out-Null
           Copy-Item npm/bin npm-stage/bin -Recurse -Force
-          Copy-Item npm/package.json, npm/engine-manifest.json, npm/LICENSE, npm/README.md npm-stage/ -Force
+          # npm/README.md embeds assets/signature.svg and links
+          # THIRD-PARTY-NOTICES.md, so both ride the tarball: a published
+          # README that references a file the tarball does not contain is the
+          # exact defect this stage list exists to prevent.
+          Copy-Item npm/assets npm-stage/assets -Recurse -Force
+          Copy-Item npm/package.json, npm/engine-manifest.json, npm/LICENSE, npm/README.md, THIRD-PARTY-NOTICES.md npm-stage/ -Force
+          $stageFiles = @('package.json', 'engine-manifest.json', 'LICENSE', 'README.md', 'THIRD-PARTY-NOTICES.md', 'assets\signature.svg', 'bin\puppet-mcp.js')
+          foreach ($f in $stageFiles) {
+            if (-not (Test-Path -LiteralPath (Join-Path npm-stage $f))) { throw "npm package stage is missing $f" }
+          }
+          # Assert the other direction too: every local path the staged README
+          # references must exist in the stage, so a new image or link cannot
+          # ship dead. Absolute URLs and anchors are not local paths.
+          $readme = Get-Content -LiteralPath npm-stage/README.md -Raw
+          foreach ($m in [regex]::Matches($readme, '(?:src|href)="([^"]+)"|\]\(([^)\s]+)\)')) {
+            $rel = if ($m.Groups[1].Success) { $m.Groups[1].Value } else { $m.Groups[2].Value }
+            if ($rel -match '^(?:[a-z][a-z0-9+.-]*:|//|#)') { continue }
+            if (-not (Test-Path -LiteralPath (Join-Path npm-stage $rel))) { throw "npm README references $rel, which the stage does not contain" }
+          }
           $a = (Get-FileHash -Algorithm SHA256 -LiteralPath npm/engine-manifest.json).Hash
           $b = (Get-FileHash -Algorithm SHA256 -LiteralPath npm-stage/engine-manifest.json).Hash
           if ($a -ne $b) { throw 'staged manifest differs from the filled manifest' }
-          Write-Host "npm package staged with filled manifest $a"
+          Write-Host "npm package staged with $($stageFiles.Count) files and filled manifest $a"
       # Pre-publish clean room: install the staged package like a stranger
       # (scrubbed profile, empty caches) and prove the engine provisions and
       # the server boots. Same build job, blocking: any FAIL fails the build,

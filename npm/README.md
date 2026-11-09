@@ -64,7 +64,8 @@ https://www.npmjs.com/package/puppet-mcp
 
 ## License
 
-MIT — see LICENSE.
+MIT - see LICENSE. Bundled third-party attributions:
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 <!-- nathwn12 house footer: identical in every repo. Do not edit. -->
 <p align="center">
