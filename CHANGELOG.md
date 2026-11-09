@@ -33,6 +33,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - instead of refusing the range as non-conventional; a revert of a
   non-conventional subject and a plain `Revert the thing` are still refused.
   `--check` covers both directions.
+- The release derivation cancels the hop of a change that a later revert in the
+  same range undoes, because the tree after the revert is byte-identical to the
+  tree before the original: a released hop can no longer be burned on a
+  zero-delta range. A revert that carries its own `!` or `BREAKING CHANGE:`
+  marker keeps its major hop and cancels nothing, so a breaking revert is never
+  shipped as no release.
+- The burst foreground gate tells a third party's focus change from a harness
+  steal: it captures the harness-owned window set before the operation, fails
+  at once on a foreground window this process owns, and re-baselines on
+  somebody else's window instead of blaming the tool. The no-steal property is
+  unchanged, and the tests prove the immediate fail, the fail after churn, and
+  the re-baseline decision paths.
 - The runtime zip stages `THIRD-PARTY-NOTICES.md` beside `puppet.exe`,
   `LICENSE` and `README.md` (the shipped README links to it), and the assemble
   step asserts all four files are in the stage before compressing, so a
