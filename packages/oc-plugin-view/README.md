@@ -56,7 +56,7 @@ A collapsed section with three entries reads:
 
 ## Compatibility
 
-- OpenCode 2.2.5 V2 CLI and TUI (`@opencode/plugin/tui` 2.2.5).
+- OpenCode 2.2.6 V2 CLI and TUI (`@opencode/plugin/tui` 2.2.6).
 - `@opentui/core` and `@opentui/solid` 0.8.0 or newer; `solid-js` 1.9.0 or newer.
 - TUI plus a no-op server entrypoint; the server entry carries `features.tui` from the package root and renders nothing.
 
