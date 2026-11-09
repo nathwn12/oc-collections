@@ -53,8 +53,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `sendinput_calls` / `sendinput_ms` are always 0 (fields kept for envelope
   compatibility); `docs/GUIDE.md` documents the posted-only surface and the
   six refusal codes.
-
-### Changed
 - The release lane derives its version from history instead of taking a typed
   one. `scripts/derive-release.mjs` walks the non-merge commits since the
   highest `vX.Y.Z` tag (`fix`/`perf` → patch, `feat` → minor, `!` or

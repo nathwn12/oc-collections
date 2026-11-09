@@ -1,6 +1,6 @@
 # puppet guide
 
-Depth for the six tools: how a call is provisioned and locked, every option, every
+Depth for the seven tools: how a call is provisioned and locked, every option, every
 argument and return shape, the `do` burst, and what the desktop refuses to give up.
 
 For install, see [the README](../README.md).
@@ -146,8 +146,15 @@ gets `-32603 Server busy` immediately — it is refused, not queued.
 | `PUPPET_MCP_ALLOW_NON_WINDOWS` | unset | `1` bypasses the Windows-only **launcher** gate for diagnostics. The server still runs on Windows x64 only. |
 | `LOCALAPPDATA` | set by Windows | Cache root. Unset means the cache directory cannot resolve and the launcher fails with a fixable message. |
 | `PUPPET_LIVE_DESKTOP` | unset | `1` enables the live-gated integration tests (`hidden_desktop`, `clipboard`, `timeout_bound`, and the live halves of the element tests). Development only; the suite skips them cleanly without it. |
+| `PUPPET_LIVE_VISIBLE` | unset | `1` also runs the one test that maximizes a real window (`src/winop.rs`); it is a separate opt-in so a headed box is never flashed. Development only. |
 | `PUPPET_UIA_TIMEOUT_MS` | `5000` | Deadline for one bounded UIA operation (`elements` walk, `invoke`/`set_value` activation). Clamped to `50..120000`. Exceeding it returns `uia_timeout`. |
 | `PUPPET_CAPTURE_TIMEOUT_MS` | `10000` | Deadline for one `PrintWindow` capture. Clamped to `50..120000`. Exceeding it returns `capture_timeout`. |
+
+Test-only knobs, never needed to use the server: `PUPPET_TEST_BURST_BUDGET_MS` can
+only shorten the `do` budget (clamped to 500 ms..300 s, `src/burst.rs`), and
+`PUPPET_TEST_STALL_UIA_MS` / `PUPPET_TEST_STALL_CAPTURE_MS` simulate a stalled
+provider once per process (`src/deadline.rs`). `PUPPET_GIT_SHA` / `PUPPET_GIT_DIRTY`
+in `--version` output are injected by `build.rs` at compile time, not read at run time.
 
 Tool-level defaults live with each tool below.
 

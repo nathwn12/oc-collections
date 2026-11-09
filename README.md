@@ -63,6 +63,7 @@ team. If it breaks, open an issue with the command you ran and what you saw.
 - [Guide](docs/GUIDE.md)
 - [Releases](https://github.com/nathwn12/puppet/releases)
 - [MIT](LICENSE)
+- [Third-party notices](THIRD-PARTY-NOTICES.md)
 
 <!-- nathwn12 house footer: identical in every repo. Do not edit. -->
 <p align="center">
