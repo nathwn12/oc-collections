@@ -1,0 +1,49 @@
+# nathwn12 house CI — stack: rust (copy to .github/workflows/ci.yml)
+name: ci
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+  actions: write
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: windows-latest
+    # Merge gate: static checks only — everything here must be provable from
+    # a clean checkout with no owned browser and no release build. The
+    # runtime suite (browser provision, release build, tests, end-to-end)
+    # lives in release.yml and runs there before publishing, so it is
+    # deliberately not duplicated on every PR.
+    steps:
+      # Action majors were verified against the GitHub Releases API on 2026-10-17:
+      # actions/checkout v7 (latest v7.0.1, published 2026-07-20) — the same
+      # major the repo's other workflows already use. v4 is Node-20 and the
+      # runner annotates its deprecation.
+      - uses: actions/checkout@v7
+      # Pinned to the crate MSRV (1.88.0, same as rust-toolchain.toml and the
+      # release workflow), with the fmt + clippy components the gates need.
+      - uses: dtolnay/rust-toolchain@1.88.0
+        with:
+          components: rustfmt, clippy
+      # Cargo registry + build cache (keyed on the lockfile): keeps the
+      # typical run inside the <5 min budget.
+      - name: restore cargo cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-1.88.0-${{ hashFiles('Cargo.lock') }}
+      # Gates (cheapest first). Formatting, lint at deny-warnings, then a
+      # debug-profile compile so a link/codegen break still fails the merge
+      # without paying for a release build.
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo build --locked

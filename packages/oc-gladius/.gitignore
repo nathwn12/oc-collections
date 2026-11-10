@@ -1,0 +1,18 @@
+/target
+/bin
+/gladius-bench-refs
+/real-world
+/gauntlet
+__pycache__/
+*.old-*
+*.pyc
+
+# secrets hardening (never commit credentials)
+*.env
+.env.local
+.env.*
+*.pem
+*.key
+*.p12
+credentials*
+*.secret
