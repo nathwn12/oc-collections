@@ -22,8 +22,7 @@ import { fileURLToPath } from "node:url"
 // not admitted here cannot be tagged or dispatched. Admitting one is a one-line
 // change here; the dispatch choice list in .github/workflows/release.yml must
 // match.
-export const ALLOWED = [
-  "@nathwn12/oc-bifrost",
+export const ALLOWED = [  "@nathwn12/oc-bifrost",
   "@nathwn12/janua",
   "oc-flight-deck",
   "oc-gladius",
@@ -33,6 +32,12 @@ export const ALLOWED = [
   "oc-talk",
   "rea-shim",
 ]
+
+// Private packages: versioned, changelogged and tagged by the private lane, and
+// deliberately absent from ALLOWED so the public batch never derives them. They
+// are resolvable so `--package <name>` works, but they must never appear in the
+// publish matrix - the private workflow has no id-token, so it cannot publish.
+export const PRIVATE = ["oc-stacked", "oc-graphify"]
 
 const ROOT = path.resolve(import.meta.dirname, "..")
 
@@ -94,8 +99,8 @@ export function compareVersions(a, b) {
 }
 
 export function resolvePackage(name, root = ROOT) {
-  if (!ALLOWED.includes(name)) {
-    throw new Error(`"${name}" is not a releasable package; allowed: ${ALLOWED.join(", ")}`)
+  if (!ALLOWED.includes(name) && !PRIVATE.includes(name)) {
+    throw new Error(`"${name}" is not a releasable package; allowed: ${[...ALLOWED, ...PRIVATE].join(", ")}`)
   }
   // Resolve by the manifest's name, not by the directory: a scoped package's
   // directory is packages/<unscoped-name> (e.g. packages/oc-bifrost).
@@ -114,15 +119,14 @@ export function resolvePackage(name, root = ROOT) {
   if (!found) throw new Error(`no workspace package named "${name}" under packages/`)
   const { dir, pkg } = found
   if (typeof pkg.version !== "string" || pkg.version.length === 0) throw new Error(`${name} has no version`)
-  if (pkg.private === true) {
-    throw new Error(
-      `${name} is marked private: true and cannot be published; drop the private flag only after a recorded owner ruling`,
-    )
-  }
-  if (name.startsWith("@") && pkg.publishConfig?.access !== "public") {
+  // A private package can still be released - versioned, changelogged and
+  // tagged - it just has no registry step. The workflow reads `publish` from
+  // the matrix and skips the publish and the registry verify for it.
+  const isPrivate = pkg.private === true
+  if (!isPrivate && name.startsWith("@") && pkg.publishConfig?.access !== "public") {
     throw new Error(`${name} is scoped and lacks publishConfig.access: public`)
   }
-  return { name, version: pkg.version, dir }
+  return { name, version: pkg.version, dir, private: isPrivate }
 }
 
 /** Fail unless the target is strictly newer than every listed published version. */
