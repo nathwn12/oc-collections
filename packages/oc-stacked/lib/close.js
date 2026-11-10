@@ -99,12 +99,28 @@ function unpushed(dir) {
 }
 
 /**
+ * The ids a ledger line actually names: whole tokens, split on anything that
+ * cannot appear in a seam id. An AUDIT for `close` must not satisfy
+ * `close-ceremony`, and a substring match would let it.
+ */
+const idsNamed = (text) =>
+  String(text)
+    .toLowerCase()
+    .split(/[^a-z0-9._-]+/)
+    .filter(Boolean);
+
+/**
  * The open tickets, read without changing anything. The close refuses on a
  * blocker and never on a note: an unpushed commit, a junk file and a missing
  * lesson are all said out loud, and none of them stops the ceremony the owner
  * asked for.
+ *
+ * `atlas: false` skips the atlas command entirely. The idle gate calls this on
+ * every pause, and the atlas is a maintain run measured in minutes, so a
+ * preflight that reads only files is the one the loop can afford. The ceremony
+ * itself pays for the atlas exactly once.
  */
-export async function preflight(dir, { lesson = '' } = {}) {
+export async function preflight(dir, { lesson = '', atlas: runAtlas = true } = {}) {
   const blockers = [];
   const notes = [];
   const rows = [];
@@ -123,12 +139,15 @@ export async function preflight(dir, { lesson = '' } = {}) {
     blockers.push(`\`${PATHS.briefsIndex}\` is not a list of briefs, so no seam can be checked.`);
   } else {
     const briefs = index.value;
-    const audits = ledgerEntries(dir, Number.MAX_SAFE_INTEGER).filter((e) => e.kind === 'AUDIT');
+    const audited = new Set();
+    for (const entry of ledgerEntries(dir, Number.MAX_SAFE_INTEGER)) {
+      if (entry.kind === 'AUDIT') for (const id of idsNamed(entry.text)) audited.add(id);
+    }
     for (const brief of briefs) {
       if (brief.status !== 'landed' && brief.status !== 'killed') {
         blockers.push(`seam ${brief.id} is ${brief.status || 'briefed'}, not landed or killed.`);
         rows.push(['seam', `${brief.id} — ${brief.status || 'briefed'}`, 'land it behind a GO, or kill it']);
-      } else if (brief.status === 'landed' && !audits.some((a) => a.text.includes(brief.id))) {
+      } else if (brief.status === 'landed' && !audited.has(String(brief.id).toLowerCase())) {
         blockers.push(`seam ${brief.id} landed with no AUDIT line naming it.`);
         rows.push(['seam', `${brief.id} — landed, unaudited`, 'record an AUDIT line naming it']);
       }
@@ -161,7 +180,10 @@ export async function preflight(dir, { lesson = '' } = {}) {
   const atlasCfg = cfg && typeof cfg.atlas === 'object' ? cfg.atlas : null;
   let atlas = { status: 'not configured', code: null, ms: 0 };
   if (atlasCfg && str(atlasCfg.command)) {
-    if (process.env.OC_STACKED_NO_EXEC === '1') {
+    if (!runAtlas) {
+      atlas = { status: 'not run', code: null, ms: 0 };
+      notes.push(`atlas — not run in a preflight; the ceremony runs it once`);
+    } else if (process.env.OC_STACKED_NO_EXEC === '1') {
       atlas = { status: 'not run', code: null, ms: 0 };
       blockers.push('execution is disabled by OC_STACKED_NO_EXEC=1, so neither the checks nor the atlas can prove anything.');
     } else {
@@ -250,7 +272,7 @@ export async function runClose(dir, { lesson } = {}) {
   };
 
   // The owner's order: open tickets first, and no ceremony over one of them.
-  const pre = await preflight(dir, { lesson: said });
+  const pre = await preflight(dir, { lesson: said, atlas: true });
   if (pre.blockers.length) {
     return { ...red(pre.blockers, []), preflight: pre };
   }
@@ -305,7 +327,7 @@ export async function runClose(dir, { lesson } = {}) {
     // The tested tree. The preflight refuses while anything outside .stack is
     // dirty, so this is the empty snapshot the checks above actually covered.
     tree: pre.dirty,
-    criteria: { status: 'pass', reasons: pre.blockers },
+    criteria: [{ id: 'preflight', status: 'pass', evidence: [] }],
     lesson: said,
     checks: {
       at: record.at,

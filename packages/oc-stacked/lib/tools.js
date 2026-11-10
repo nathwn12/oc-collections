@@ -1188,6 +1188,13 @@ function cleanTool(dir) {
 
 // ---------------------------------------------------------------- close
 
+/** A receipt's criteria in one cell: `preflight: pass`, or the absence named. */
+function criteriaText(criteria) {
+  return Array.isArray(criteria) && criteria.length
+    ? criteria.map((c) => `${c.id || '?'}: ${c.status || '?'}`).join(', ')
+    : 'not recorded';
+}
+
 /** The receipt, and the one line that decides whether `[done]` is legitimate. */
 function describeClose(dir) {
   const read = readClose(dir);
@@ -1211,7 +1218,7 @@ function describeClose(dir) {
       ['branch', receipt.branch || 'detached'],
       ['checks', `${results.filter((r) => r.ok).length}/${results.length} green at ${shortSha(receipt.checks?.head)}`],
       ['atlas', `${receipt.atlas?.status || 'not configured'}${typeof receipt.atlas?.code === 'number' ? ` (exit ${receipt.atlas.code})` : ''}`],
-      ['criteria', receipt.criteria?.status || 'not recorded'],
+      ['criteria', criteriaText(receipt.criteria)],
       ['tree', (receipt.tree || []).length ? (receipt.tree || []).join(', ') : 'clean outside .stack'],
       ['sweep', `${(receipt.sweep?.removed || []).length} removed, ${(receipt.sweep?.kept || []).length} kept`],
       ['junk', (receipt.junk || []).length ? (receipt.junk || []).join(', ') : 'none'],
@@ -1246,7 +1253,7 @@ function closeTool(dir) {
       ensureStack(dir);
       const op = str(input.op) || 'run';
       if (op === 'preflight') {
-        const pre = await preflight(dir, { lesson: str(input.lesson) });
+        const pre = await preflight(dir, { lesson: str(input.lesson), atlas: false });
         return ok(pre.text);
       }
       if (op === 'show') return ok(describeClose(dir));
