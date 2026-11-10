@@ -171,14 +171,16 @@ async function ensureProjectStack(dir) {
 // ---------------------------------------------------------------- live status
 //
 // The title is the status the owner reads: [active] while a turn runs, [parked]
-// when it ends unsealed, [done] only on a GO receipt for this HEAD. One engine
-// drives every transition - the renamed title, the prompt's plain English, tool
+// when it ends unsealed, [done] only after the sealed report. One engine drives
+// every transition - the renamed title, the prompt's plain English, tool
 // activity, execution events and idle - so no path can disagree with another.
 //
-// Precedence, everywhere: a valid close receipt wins; then a parked override;
-// then active while working, parked at rest. Every path filters to a top-level
-// session living in this project, and every failure is contained by note()
-// except the rename refusal, which is the gate itself.
+// Precedence, everywhere: a parked override; then active while working, parked
+// at rest. [done] has exactly one writer: the idle gate, once the receipt exists
+// and the final message carries the seal report. A receipt alone is never
+// enough, and a title that arrives claiming [done] is never accepted.
+// Every path filters to a top-level session living in this project, and every
+// failure is contained by note() except the rename refusal, which is the gate.
 
 const STATUS_PATH = '.stack/state/status.json';
 const INTENT_PATH = '.stack/state/close-intent.json';
@@ -372,12 +374,16 @@ async function liveSession(ctx, sessionID, dir) {
   return record;
 }
 
-/** Receipt, then a parked override, then the activity the caller reports. */
+/** Receipt, then a parked override, then the activity the caller reports.
+ *  Never `done`: only the idle gate may write that, after the sealed report. */
 function targetStatus(dir, sessionID, activity) {
-  if (closeState(dir).length === 0) return 'done';
   if (overrideOf(dir, sessionID) === 'parked') return 'parked';
   return activity === 'working' ? 'active' : 'parked';
 }
+
+/** The exact [done] title this plugin last wrote, per session, so its own
+ *  rename echo is recognised and a foreign [done] is not. */
+const recentDone = new Map();
 
 /** Write the computed prefix, and never write when it is already there. */
 async function applyTitle(ctx, dir, sessionID, status, record = null) {
@@ -390,6 +396,10 @@ async function applyTitle(ctx, dir, sessionID, status, record = null) {
   if (!stripStatus(current)) return false;
   const next = withStatus(current, status);
   if (next === current) return false;
+  if (status === 'done') {
+    if (recentDone.size > 512) recentDone.clear();
+    recentDone.set(sessionID, next);
+  }
   await ctx.session.update({ sessionID, title: next });
   if (status === 'done') setOverride(dir, sessionID, null);
   return true;
@@ -437,6 +447,7 @@ async function nudgeMissingClose(ctx, dir, sessionID) {
 function forgetSession(dir, sessionID) {
   setOverride(dir, sessionID, null);
   clearIntent(dir, sessionID);
+  recentDone.delete(sessionID);
   for (const key of [...nudged]) {
     if (key.startsWith(`${sessionID}:`)) nudged.delete(key);
   }
@@ -474,17 +485,18 @@ async function onTitleEvent(ctx, dir, event) {
     const title = typeof data.title === 'string' ? data.title : record.title;
     const claimed = statusOf(title);
     if (typeof data.title === 'string' && data.title) record.title = data.title;
-    const valid = closeState(dir).length === 0;
-    if (claimed === 'done' && !valid) {
-      // The gate already refused the tool; a rename from any other surface
-      // lands here. Park it and say once what is missing.
+    if (claimed === 'done') {
+      // The plugin's own write echoes back here; anything else claiming [done]
+      // is rewritten, whatever the receipt says - the receipt alone is never a
+      // report. Say once what is missing when nothing is sealed.
+      if (typeof data.title === 'string' && data.title === recentDone.get(sessionID)) return;
       await applyTitle(ctx, dir, sessionID, 'parked', record);
-      await nudgeMissingClose(ctx, dir, sessionID);
+      if (closeState(dir).length) await nudgeMissingClose(ctx, dir, sessionID);
       return;
     }
-    // A parked claim stands while nothing is sealed; a GO outranks it.
-    if (claimed === 'parked' && !valid) return;
-    await applyTitle(ctx, dir, sessionID, valid ? 'done' : overrideOf(dir, sessionID) === 'parked' ? 'parked' : 'active', record);
+    // A parked claim stands; every other claim is active or parked, never done.
+    if (claimed === 'parked') return;
+    await applyTitle(ctx, dir, sessionID, overrideOf(dir, sessionID) === 'parked' ? 'parked' : 'active', record);
     return;
   }
 
@@ -616,7 +628,7 @@ async function onPrompt(ctx, dir, event) {
   await applyTitle(ctx, dir, sessionID, targetStatus(dir, sessionID, 'working'), record);
 }
 
-/** The gate: `[done]` is refused without a GO receipt, and every other rename is normalized. */
+/** The gate: `[done]` is never typed, and every other rename is normalized. */
 async function beforeTool(ctx, dir, event) {
   if (!RENAME_TOOLS.has(event?.tool)) return;
   const input = event?.input;
@@ -627,9 +639,10 @@ async function beforeTool(ctx, dir, event) {
   let refusal = null;
   try {
     if (!(await liveSession(ctx, sessionID, dir))) return;
-    const reasons = closeState(dir);
-    if (statusOf(input.title) === 'done' && reasons.length) {
-      refusal = `[oc-stacked] [done] refused: ${reasons.join('; ')}. Run stack_close op=run lesson="..." and let the plugin set the prefix.`;
+    if (statusOf(input.title) === 'done') {
+      // The prefix is the plugin's output, not an input: a receipt is half of
+      // the seal, and the report is the other half.
+      refusal = '[done] is written by the plugin after the sealed report; do not type it.';
     } else {
       // While a close is open, only the idle gate may apply [done]: the turn
       // still owes the final report and the seal token.
