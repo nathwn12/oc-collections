@@ -4,17 +4,22 @@ mode: subagent
 color: "#3b6ea5"
 steps: 55
 permissions:
+  # A shell deny matches the raw command string only; a variable, alias or script evades it, and always will.
+  # It fences the honest mistake and the obvious move. It is not a sandbox.
   - action: shell
-    resource: "git push*"
+    resource: "*"
+    effect: allow
+  - action: shell
+    resource: "*git push*"
     effect: deny
   - action: shell
-    resource: "git merge*"
+    resource: "*git merge*"
     effect: deny
   - action: shell
-    resource: "git reset --hard*"
+    resource: "*git reset --hard*"
     effect: deny
   - action: shell
-    resource: "opencode run*"
+    resource: "*opencode run*"
     effect: deny
   - action: edit
     resource: "*"
@@ -30,9 +35,6 @@ permissions:
     effect: deny
   - action: edit
     resource: "**/skills/stacked-employee/references/product.md"
-    effect: allow
-  - action: shell
-    resource: "*"
     effect: allow
   - action: read
     resource: "*"

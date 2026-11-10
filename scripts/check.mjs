@@ -1703,6 +1703,35 @@ check('every archetype may edit its own handbook', () => {
   return `${archetypes.length} archetypes own one handbook each`;
 });
 
+check('every archetype puts a shell deny after its broad allow', () => {
+  for (const id of archetypes) {
+    const shells = agentPermissions(id).filter((r) => r.action === 'shell');
+    assert(shells.length, `${id}.md has no shell rule`);
+    const last = shells[shells.length - 1];
+    assert(
+      !(last.resource === '*' && last.effect === 'allow'),
+      `${id}.md ends its shell rules on * allow, so every deny written above it is dead`,
+    );
+  }
+  return `${archetypes.length} archetypes end on a shell deny`;
+});
+
+check('every shell deny is bounded by a wildcard on both sides', () => {
+  let denies = 0;
+  for (const id of agentIds) {
+    for (const rule of agentPermissions(id)) {
+      if (rule.action !== 'shell' || rule.effect !== 'deny') continue;
+      denies += 1;
+      assert(
+        rule.resource.startsWith('*') && rule.resource.endsWith('*'),
+        `${id}.md denies shell "${rule.resource}"; the matcher anchors the pattern, so it only catches a command that starts or ends with it`,
+      );
+    }
+  }
+  assert(denies > 0, 'no shell deny rule was found; the sweep is not reading the rules');
+  return `${denies} denies bounded on both sides`;
+});
+
 check('the permission sweep covers the roster the agent check asserts', () => {
   assert(agentFiles.length === 24, `the roster is ${agentFiles.length} agents, not 24; change the roster assertion and this sweep together`);
   const swept = agentFiles.filter((f) => {
