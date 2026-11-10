@@ -17,6 +17,8 @@
     "lib",
     "skills",
     "agents",
+    "roles",
+    "routing.json",
     "commands",
     "scripts",
     "SOUL.md",

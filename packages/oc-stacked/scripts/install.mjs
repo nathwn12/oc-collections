@@ -24,6 +24,7 @@ const configDir =
   process.env.OPENCODE_CONFIG_DIR || path.join(os.homedir(), '.config', 'opencode');
 const pluginsDir = path.join(configDir, 'plugins');
 const agentsDir = path.join(configDir, 'agents');
+const rolesDir = path.join(configDir, 'roles');
 const commandsDir = path.join(configDir, 'commands');
 const linkPath = path.join(pluginsDir, 'oc-stacked');
 
@@ -137,10 +138,36 @@ function removeShipped(from, to) {
  * Files an earlier install created that this one no longer ships. The current
  * repo cannot list them — they are deleted — so they are named here, and both
  * `install` and `--remove` prune them. An upgrade must not leave a ghost seat
- * in the TUI.
+ * in the TUI, so the twenty-one archetype agents that the six seats replaced
+ * are named too: each one is a card in `roles/` now, and a stale agent is a
+ * description the model can still pick.
  */
 const OBSOLETE = {
-  agents: ['ceo.md', 'stacked-ceo.md', 'employee.md'],
+  agents: [
+    'ceo.md',
+    'stacked-ceo.md',
+    'backend.md',
+    'data-analyst.md',
+    'data-engineer.md',
+    'design-reviewer.md',
+    'design-system.md',
+    'devops.md',
+    'docs.md',
+    'fact-checker.md',
+    'frontend.md',
+    'product-manager.md',
+    'project-manager.md',
+    'qa.md',
+    'release-manager.md',
+    'researcher.md',
+    'reviewer.md',
+    'security.md',
+    'sre.md',
+    'technical-writer.md',
+    'tester.md',
+    'ui-designer.md',
+    'ux-researcher.md',
+  ],
   commands: [],
 };
 
@@ -165,6 +192,7 @@ if (remove) {
     ok(`removed ${linkPath}`);
   } else warn('plugin link was not present');
   ok(`removed ${removeShipped(path.join(repo, 'agents'), agentsDir)} agent file(s) from ${agentsDir}`);
+  ok(`removed ${removeShipped(path.join(repo, 'roles'), rolesDir)} role card(s) from ${rolesDir}`);
   ok(`removed ${removeShipped(path.join(repo, 'commands'), commandsDir)} command file(s) from ${commandsDir}`);
   for (const [key, dir] of Object.entries({ agents: agentsDir, commands: commandsDir })) {
     const n = removeObsolete(dir, OBSOLETE[key]);
@@ -185,6 +213,7 @@ if (linkDirectory(repo, linkPath)) ok(`plugin → ${linkPath}`);
 ok(`${copyDir(path.join(repo, 'agents'), agentsDir, routing)} agent file(s) → ${agentsDir}`);
 reportPins();
 ok(`${copyDir(path.join(repo, 'commands'), commandsDir)} command file(s) → ${commandsDir}`);
+ok(`${copyDir(path.join(repo, 'roles'), rolesDir)} role card(s) → ${rolesDir}`);
 for (const [key, dir] of Object.entries({ agents: agentsDir, commands: commandsDir })) {
   const n = removeObsolete(dir, OBSOLETE[key]);
   if (n) ok(`pruned ${n} obsolete ${key} file(s) from a previous install`);
@@ -200,8 +229,9 @@ Done. Three things happen on next launch:
      stacked-swarm, stacked-debug, stacked-tdd, stacked-review,
      stacked-ship, stacked-deepen, stacked-wizard, stacked-oftb,
      stacked-loop
-  3. Twenty-four agents appear: lead, auditor, and twenty-two archetypes
-     across seven departments, pinned by routing.json
+  3. Six seats appear: lead, employee, auditor, scout, runner and planner,
+     pinned by routing.json, with the role cards the seats read in
+     ${rolesDir}
 
 Restart OpenCode, then prove it loaded:
 

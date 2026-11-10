@@ -14,8 +14,10 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { readSkills, skillsDir } from './lib/content.js';
 import { bootstrap, MARKER } from './lib/bootstrap.js';
+import { classifyAsk, loadCards, route } from './lib/router.js';
 import { toolDefinitions } from './lib/tools.js';
 import { seedStack, tryReadJson, withLock, writeJson, log } from './lib/state.js';
 import { ARMED_PATH, closeReasons, invalidateClose, preflight, readClose } from './lib/close.js';
@@ -26,6 +28,18 @@ const DEBUG = process.env.OC_STACKED_DEBUG === '1';
 const note = (...parts) => {
   const line = `[oc-stacked] ${parts.join(' ')}`;
   if (DEBUG) console.error(line);
+};
+
+/** The seat cards ship beside the plugin, not in the project being worked on. */
+const CARD_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'roles');
+
+/** One instruction per kind of ask, and no more: the model gets told, not essayed. */
+const ASK_LINES = {
+  command: 'Restate this in one sharpened line (scope, proof, out of scope) and then do it. Do not restate the plan.',
+  objective: 'Name the stop conditions and the budget before the first action.',
+  goal: 'Name the number that proves it, then work.',
+  intent: 'Name the outcome in one falsifiable sentence.',
+  idea: 'Shape it. Do not build anything.',
 };
 
 /** Project root for this plugin instance. Falls back to the process cwd. */
@@ -723,6 +737,44 @@ async function idleOnce(ctx, dir, sessionID) {
 }
 
 /**
+ * What the model sees on the next step, with no new turn: what kind of ask this
+ * was, which card it routed to, and that card's proof. Local arithmetic over
+ * the cards on disk - no model call, no network - and every failure is a note,
+ * because a prompt that arrives without a route is still a prompt.
+ */
+async function instruct(ctx, sessionID, said) {
+  try {
+    const entry = ctx?.session?.instructions?.entry;
+    if (typeof entry?.put !== 'function') return;
+
+    const ask = classifyAsk(said);
+    await entry.put({ sessionID, key: 'ask', value: `[oc-stacked] ${ask.kind}: ${ASK_LINES[ask.kind]}` });
+
+    const cards = loadCards(CARD_DIR);
+    if (cards.skipped.length) {
+      note(`cards skipped: ${cards.skipped.map((card) => `${card.id} (${card.reason})`).join(', ')}`);
+    }
+    const routed = route(said, cards);
+    if (!routed) return;
+
+    const also = routed.cards.length > 1 ? ` with ${routed.cards[1]}` : '';
+    await entry.put({
+      sessionID,
+      key: 'route',
+      value: [
+        `[oc-stacked] Routed: ${routed.cards[0]} (${routed.department}, ${routed.seat})${also}.`,
+        `Card: roles/${routed.cards[0]}.md; proof: ${routed.proof}.`,
+        `Read the card and skills/stacked-employee/SKILL.md before the first edit; if you delegate, dispatch employee with card "${routed.cards[0]}".`,
+        'If this route does not fit, say so in one line and route yourself.',
+      ].join(' '),
+    });
+    await entry.put({ sessionID, key: 'proof', value: routed.proof });
+  } catch (err) {
+    note('routing failed:', err?.message || err);
+  }
+}
+
+/**
  * The prompt is where the owner says what they want in words. The hook appends
  * one block and records the intent; the loop itself lives in the idle gate.
  */
@@ -769,6 +821,9 @@ async function onPrompt(ctx, dir, event) {
   clearIntent(dir, sessionID);
   setOverride(dir, sessionID, null);
   await applyTitle(ctx, dir, sessionID, targetStatus(dir, sessionID, 'working'), record);
+  // Short input is not a task ("yes", "continue", a path); everything else is
+  // said to have a kind and, when the words fit a card, a seat.
+  if (said.trim().length >= 12) await instruct(ctx, sessionID, said);
 }
 
 /** The gate: `[done]` is never typed, and every other rename is normalized. */

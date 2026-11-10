@@ -348,6 +348,10 @@ const routing = (() => {
 
 const isArchetype = (name) => Object.prototype.hasOwnProperty.call(routing, name);
 
+/** The six seats, read from the table so no message can name a dead id. */
+const SEATS = Object.keys(routing).filter((key) => !key.startsWith('_'));
+const SEAT_HELP = SEATS.length ? `one of: ${SEATS.join(', ')}` : 'an id from routing.json';
+
 const dispatchBlock = (id, tier, agent) => {
   const name = str(agent);
   const seat = !name ? 'unassigned' : `${name} (${routing[name] || 'inherit'})`;
@@ -374,7 +378,7 @@ function briefTool(dir) {
         tier: { type: 'string', enum: ['cheap', 'standard', 'expert'], description: 'Model tier for the employee.' },
         agent: {
           type: 'string',
-          description: 'Archetype id from routing.json, e.g. backend or reviewer. A seam with no archetype prints Agent: unassigned and ready refuses it.',
+          description: `Seat id from routing.json, ${SEAT_HELP}. A seam with no seat prints Agent: unassigned and ready refuses it.`,
         },
         why: { type: 'string', description: 'Why this seam matters now. One line.' },
         status: { type: 'string', enum: STATUSES, description: 'New status for op=status. The closed set above, nothing else.' },
@@ -442,7 +446,7 @@ function briefTool(dir) {
 
         if (str(input.agent) && !isArchetype(str(input.agent))) {
           return ok(
-            `Refused. \`${str(input.agent)}\` is not an archetype in routing.json, so the dispatch block would name a seat that does not exist. Use one of the ids listed there, or omit it and the seam lands unassigned. Nothing was written.`,
+            `Refused. \`${str(input.agent)}\` is not a seat in routing.json, so the dispatch block would name a seat that does not exist. Use ${SEAT_HELP}, or omit it and the seam lands unassigned. Nothing was written.`,
           );
         }
 
@@ -630,7 +634,7 @@ function swarmTool(dir) {
               files: { type: 'array', items: { type: 'string' }, description: 'Exact files this seam may edit.' },
               owns: { type: 'array', items: { type: 'string' }, description: 'Globs for the scope audit.' },
               tier: { type: 'string', enum: ['cheap', 'standard', 'expert'], description: 'Model tier.' },
-              agent: { type: 'string', description: 'Archetype id from routing.json.' },
+              agent: { type: 'string', description: `Seat id from routing.json, ${SEAT_HELP}.` },
               why: { type: 'string', description: 'Why this one matters. Falls back to the swarm reason.' },
             },
             required: ['title', 'out', 'check', 'files'],
@@ -669,7 +673,7 @@ function swarmTool(dir) {
         if (!str(s.check)) holes.push(`- ${id}: no \`check\`. A seam whose proof you cannot name is not ready to run.`);
         if (!list(s.files).length) holes.push(`- ${id}: no \`files\`. Disjointness is proved on exact paths.`);
         if (str(s.agent) && !isArchetype(str(s.agent))) {
-          holes.push(`- ${id}: \`${str(s.agent)}\` is not an archetype in routing.json.`);
+          holes.push(`- ${id}: \`${str(s.agent)}\` is not a seat in routing.json (${SEAT_HELP}).`);
         }
         const sealed = [...sealClaims(dir, s.files), ...sealClaims(dir, s.owns)];
         for (const claimed of sealed) {

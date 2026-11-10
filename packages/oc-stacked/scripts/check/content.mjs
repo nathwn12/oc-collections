@@ -203,6 +203,48 @@ export function register(ctx) {
     return 'RELEASING.md, ship, prepublishOnly, owner line';
   });
 
+  /**
+   * `files` is a second contract, and npm is the only thing that reads it: an
+   * entry missing there means an installed copy with something the runtime reads
+   * simply absent, and every such absence is silent - index.js demotes a missing
+   * card directory to a note, and tools.js catches a missing routing.json and
+   * keeps `{}`. So the manifest is asserted rather than trusted.
+   */
+  const RUNTIME_READS = [
+    ['index.js', 'the plugin entry'],
+    ['bin', 'bin/stack.js, the CLI'],
+    ['lib', 'the modules the entry imports'],
+    ['routing.json', 'the seat-to-model table tools.js reads'],
+    ['SOUL.md', 'registered as the stacked-soul skill'],
+    ['skills', 'the router skills'],
+    ['agents', 'the six seats'],
+    ['roles', 'the cards index.js routes against'],
+    ['commands', 'the owner commands'],
+    ['scripts', 'the documented self-check'],
+  ];
+
+  /** The runtime paths no `files` entry covers, by exact name or parent directory. */
+  const uncoveredBy = (files) =>
+    RUNTIME_READS.filter(
+      ([wanted]) =>
+        !files.some((entry) => {
+          const named = String(entry).replace(/\/+$/, '');
+          return named === wanted || wanted.startsWith(`${named}/`);
+        }),
+    ).map(([wanted]) => wanted);
+
+  check('package.json ships every path the runtime reads', () => {
+    const pkg = JSON.parse(fs.readFileSync(path.join(repo, 'package.json'), 'utf8'));
+    assert(Array.isArray(pkg.files), 'package.json has no `files` list, so an install gets npm defaults and nothing here can check it');
+    const missing = uncoveredBy(pkg.files);
+    assert(!missing.length, `package.json files omits ${missing.join(', ')}; an installed copy reads nothing there, with no crash and no red`);
+    // Red-capable in frame: dropping roles/ must be refused, and the refusal must
+    // name exactly that path, or the assertion above proves nothing.
+    const probe = uncoveredBy(pkg.files.filter((entry) => entry !== 'roles'));
+    assert(probe.length === 1 && probe[0] === 'roles', `a manifest without roles/ was accepted (${probe.join(', ') || 'no fault found'})`);
+    return `${RUNTIME_READS.length} runtime paths in ${pkg.files.length} entries`;
+  });
+
   check('stacked-pls answers an invocation with no task', () => {
     const pls = skills.find((s) => s.id === 'stacked-pls');
     assert(pls, 'stacked-pls is not registered');

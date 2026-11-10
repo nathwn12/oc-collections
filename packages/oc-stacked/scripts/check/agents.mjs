@@ -1,18 +1,58 @@
 /**
- * Agent files, the roster, and the order the permission rules land in.
+ * The six seat files, the order their permission rules land in, the routing
+ * table, and the role cards the seats read.
  *
  * Split out of scripts/check.mjs; the runner is scripts/check/index.mjs.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 
+/** The six seats: a permission boundary and a model, never a personality. */
+const SEATS = ['lead', 'employee', 'auditor', 'scout', 'runner', 'planner'];
+/** The seats that return words, not diffs: each ends its edit rules on a deny. */
+const READ_ONLY = ['auditor', 'scout', 'planner', 'runner'];
+/** The seven departments a role card may name. */
+const DEPARTMENTS = ['engineering', 'quality', 'platform', 'design', 'knowledge', 'product', 'research'];
+/** A card's body, in this order, and nothing else. */
+const CARD_HEADINGS = ['Owns', 'Must not', 'Proof', 'Handoff'];
+/** A card's frontmatter keys, exactly. */
+const CARD_KEYS = ['name', 'department', 'seat', 'proof'];
+/** The cap a card is held to, in characters. */
+const CARD_CAP = 1200;
+/**
+ * The archetype agents the six seats replaced. A stale agent is still a
+ * description the model can pick, so their absence is asserted, not assumed.
+ */
+const RETIRED = [
+  'backend',
+  'data-analyst',
+  'data-engineer',
+  'design-reviewer',
+  'design-system',
+  'devops',
+  'docs',
+  'fact-checker',
+  'frontend',
+  'product-manager',
+  'project-manager',
+  'qa',
+  'release-manager',
+  'researcher',
+  'reviewer',
+  'security',
+  'sre',
+  'technical-writer',
+  'tester',
+  'ui-designer',
+  'ux-researcher',
+];
+
 export async function register(ctx) {
   const { check, checkAsync, assert, repo, configuredRepo, runIn } = ctx;
 
-  // ---------------------------------------------------------------- agents, routing, handbooks
+  // ------------------------------------------------------ seats, permissions, routing
   const agentFiles = fs.readdirSync(path.join(repo, 'agents')).filter((f) => f.endsWith('.md'));
   const agentIds = agentFiles.map((f) => f.replace(/\.md$/, '')).sort();
-  const archetypes = agentIds.filter((id) => id !== 'lead' && id !== 'auditor');
   const routing = JSON.parse(fs.readFileSync(path.join(repo, 'routing.json'), 'utf8'));
 
   /** An agent's `permissions` rules from its frontmatter, in file order. */
@@ -32,22 +72,12 @@ export async function register(ctx) {
   const MUSE = 'opencode-go/muse-spark-1.3-contributor';
   const DEEPSEEK = 'opencode-go/deepseek-v4.1-flash';
 
-  /** The department handbooks, and exactly which archetypes read each one. */
-  const HANDBOOKS = {
-    'product.md': ['product-manager', 'project-manager'],
-    'design.md': ['ui-designer', 'ux-researcher', 'design-system'],
-    'engineering.md': ['frontend', 'backend', 'data-engineer', 'tester'],
-    'platform.md': ['devops', 'sre', 'release-manager'],
-    'quality.md': ['qa', 'security', 'reviewer', 'design-reviewer'],
-    'knowledge.md': ['docs', 'technical-writer', 'data-analyst'],
-    'research.md': ['researcher', 'scout', 'fact-checker'],
-  };
-
-  check('twenty-four agents exist with valid V2 frontmatter', () => {
-    assert(agentFiles.length === 24, `expected 24 agents, got ${agentFiles.length}: ${agentFiles.join(', ')}`);
-    for (const id of ['lead', 'auditor', ...Object.values(HANDBOOKS).flat()]) {
-      assert(agentIds.includes(id), `missing agent: ${id}.md`);
-    }
+  check('six seats exist with valid V2 frontmatter', () => {
+    assert(agentFiles.length === SEATS.length, `expected ${SEATS.length} seats, got ${agentFiles.length}: ${agentFiles.join(', ')}`);
+    assert(
+      agentIds.join(',') === [...SEATS].sort().join(','),
+      `the seat ids are ${agentIds.join(', ')}; expected exactly ${[...SEATS].sort().join(', ')}`,
+    );
     const legacy = /\b(tools|temperature|maxSteps|permission)\s*:/;
     for (const f of agentFiles) {
       const raw = fs.readFileSync(path.join(repo, 'agents', f), 'utf8');
@@ -57,9 +87,9 @@ export async function register(ctx) {
       assert(/^mode:/m.test(fm), `${f} has no mode`);
       assert(!legacy.test(fm), `${f} uses a legacy V1 field`);
       const body = raw.split('---').slice(2).join('---');
-      assert(body.trim().length > 400, `${f} body is too thin to steer an agent`);
+      assert(body.trim().length > 400, `${f} body is too thin to steer an agent (${body.trim().length} chars)`);
     }
-    return `${agentFiles.length} agents`;
+    return `${agentFiles.length} seats: ${agentIds.join(', ')}`;
   });
 
   check('the lead edits only .stack, and the exception comes after the ask', () => {
@@ -80,35 +110,43 @@ export async function register(ctx) {
       return /^permission[ \t]*:/m.test(raw.slice(4, raw.indexOf('\n---', 3)));
     });
     assert(!offenders.length, `the legacy singular permission: key is in: ${offenders.join(', ')}`);
-    return `${agentIds.length} agents use permissions:`;
+    return `${agentIds.length} seats use permissions:`;
   });
 
-  check('every non-lead agent ends on a subagent deny', () => {
-    const others = agentIds.filter((id) => id !== 'lead');
+  check('every non-lead seat is a subagent that cannot dispatch another agent', () => {
+    const others = SEATS.filter((id) => id !== 'lead');
     for (const id of others) {
-      const rules = agentPermissions(id);
-      assert(rules.length, `${id}.md has no permission rules`);
+      const raw = fs.readFileSync(path.join(repo, 'agents', `${id}.md`), 'utf8');
+      assert(/^mode:\s*subagent$/m.test(raw), `${id}.md is not mode: subagent`);
+      const rules = agentPermissions(id).filter((r) => r.action === 'subagent');
+      assert(rules.length, `${id}.md has no subagent rule`);
       const last = rules[rules.length - 1];
       assert(
-        last.action === 'subagent' && last.resource === '*' && last.effect === 'deny',
-        `${id}.md ends on ${last.action} ${last.resource} ${last.effect}; a later rule can widen the spawn deny`,
+        last.effect === 'deny',
+        `${id}.md ends its subagent rules on ${last.effect} ${last.resource}; a later rule would widen the spawn deny`,
       );
     }
-    return `${others.length} agents cannot delegate`;
+    return `${others.length} seats cannot delegate`;
   });
 
-  check('every non-lead agent puts its edit exceptions after the broad allow', () => {
-    const others = agentIds.filter((id) => id !== 'lead');
-    for (const id of others) {
+  check('each seat ends its edit rules on the boundary its work needs', () => {
+    for (const id of READ_ONLY) {
       const edits = agentPermissions(id).filter((r) => r.action === 'edit');
       assert(edits.length, `${id}.md has no edit rule`);
       const last = edits[edits.length - 1];
       assert(
-        !(last.resource === '*' && last.effect === 'allow'),
-        `${id}.md ends its edit rules on * allow, so every exception written above it is dead`,
+        last.effect === 'deny',
+        `${id}.md ends its edit rules on ${last.effect} ${last.resource}; a read-only seat returns words, not diffs`,
       );
     }
-    return `${others.length} agents end on an exception`;
+    const edits = agentPermissions('employee').filter((r) => r.action === 'edit');
+    assert(edits.length, 'employee.md has no edit rule');
+    const last = edits[edits.length - 1];
+    assert(
+      last.effect === 'allow',
+      `employee.md ends its edit rules on ${last.effect} ${last.resource}; the seat that writes must end on an allow`,
+    );
+    return `${READ_ONLY.length} read-only seats deny, employee allows`;
   });
 
   check('every edit deny names a path the engine can actually send', () => {
@@ -127,34 +165,6 @@ export async function register(ctx) {
     return `${denies} denies anchored`;
   });
 
-  check('every archetype may edit its own handbook', () => {
-    for (const id of archetypes) {
-      const entry = Object.entries(HANDBOOKS).find(([, ids]) => ids.includes(id));
-      assert(entry, `${id}.md is mapped to no handbook`);
-      const [handbook] = entry;
-      const edits = agentPermissions(id).filter((r) => r.action === 'edit');
-      const last = edits[edits.length - 1];
-      assert(
-        last && last.effect === 'allow' && last.resource.endsWith(handbook),
-        `${id}.md has no edit allow for its own handbook references/${handbook} as its last edit rule; a deny below it would win`,
-      );
-    }
-    return `${archetypes.length} archetypes own one handbook each`;
-  });
-
-  check('every archetype puts a shell deny after its broad allow', () => {
-    for (const id of archetypes) {
-      const shells = agentPermissions(id).filter((r) => r.action === 'shell');
-      assert(shells.length, `${id}.md has no shell rule`);
-      const last = shells[shells.length - 1];
-      assert(
-        !(last.resource === '*' && last.effect === 'allow'),
-        `${id}.md ends its shell rules on * allow, so every deny written above it is dead`,
-      );
-    }
-    return `${archetypes.length} archetypes end on a shell deny`;
-  });
-
   check('every shell deny is bounded by a wildcard on both sides', () => {
     let denies = 0;
     for (const id of agentIds) {
@@ -171,31 +181,17 @@ export async function register(ctx) {
     return `${denies} denies bounded on both sides`;
   });
 
-  check('the permission sweep covers the roster the agent check asserts', () => {
-    assert(agentFiles.length === 24, `the roster is ${agentFiles.length} agents, not 24; change the roster assertion and this sweep together`);
+  check('the permission sweep covers the roster the seat check asserts', () => {
+    assert(
+      agentFiles.length === SEATS.length,
+      `the roster is ${agentFiles.length} agents, not ${SEATS.length}; change the roster assertion and this sweep together`,
+    );
     const swept = agentFiles.filter((f) => {
       const raw = fs.readFileSync(path.join(repo, 'agents', f), 'utf8');
       return /^permissions:/m.test(raw.slice(4, raw.indexOf('\n---', 3)));
     }).length;
-    assert(swept === agentFiles.length, `the permission sweep reads ${swept} of ${agentFiles.length} agents`);
-    return `${swept} of 24 agents carry permissions:`;
-  });
-
-  check('every archetype is a subagent that denies subagent and reads one handbook', () => {
-    for (const id of archetypes) {
-      const raw = fs.readFileSync(path.join(repo, 'agents', `${id}.md`), 'utf8');
-      assert(/^mode:\s*subagent$/m.test(raw), `${id}.md is not mode: subagent`);
-      assert(/action:\s*subagent[\s\S]{0,160}effect:\s*deny/.test(raw), `${id}.md does not deny the subagent action`);
-      const body = raw.split('---').slice(2).join('---').trim();
-      const lines = body.split('\n').length;
-      assert(lines <= 30, `${id}.md body is ${lines} lines; the cap is 30`);
-      assert(lines >= 18, `${id}.md body is ${lines} lines; too thin to steer`);
-      assert(/Load `stacked-employee`/.test(body), `${id}.md does not load stacked-employee`);
-      assert(/stacked-soul/.test(body), `${id}.md does not load stacked-soul`);
-      const named = Object.keys(HANDBOOKS).filter((h) => body.includes(`references\\${h}`) || body.includes(`references/${h}`));
-      assert(named.length === 1, `${id}.md names ${named.length} handbooks (${named.join(', ')}); it reads exactly one`);
-    }
-    return `${archetypes.length} archetypes cannot delegate`;
+    assert(swept === agentFiles.length, `the permission sweep reads ${swept} of ${agentFiles.length} seats`);
+    return `${swept} of ${SEATS.length} seats carry permissions:`;
   });
 
   check('no shipped agent carries a model line', () => {
@@ -208,86 +204,172 @@ export async function register(ctx) {
     return 'unpinned in the repository';
   });
 
-  check('routing.json covers every agent exactly once, and the lead inherits', () => {
+  check('routing.json carries the six seats exactly, and the lead inherits', () => {
     const ids = Object.keys(routing).filter((key) => key !== '_comment').sort();
-    assert(ids.length === 24, `routing.json has ${ids.length} ids, expected 24`);
-    for (const id of agentIds) assert(ids.includes(id), `routing.json has no entry for ${id}`);
+    assert(
+      ids.join(',') === [...SEATS].sort().join(','),
+      `routing.json has ${ids.length} ids (${ids.join(', ')}), expected exactly the six seats`,
+    );
     assert(routing.lead === null, `lead is ${JSON.stringify(routing.lead)}, expected null`);
 
-    const tier = { terra: [], muse: [], deepseek: [] };
-    for (const id of ids) {
-      const model = routing[id];
-      if (model === null) continue;
-      if (model === TERRA) tier.terra.push(id);
-      else if (model === MUSE) tier.muse.push(id);
-      else if (model === DEEPSEEK) tier.deepseek.push(id);
-      else throw new Error(`routing.json names an unknown model for ${id}: ${model}`);
+    const EXPECT = new Map([
+      ['employee', DEEPSEEK],
+      ['runner', DEEPSEEK],
+      ['auditor', TERRA],
+      ['planner', TERRA],
+      ['scout', MUSE],
+    ]);
+    for (const [id, model] of EXPECT) {
+      assert(routing[id] === model, `${id} should be ${model.split('/').pop()}, is ${routing[id]}`);
     }
-    const expectTerra = ['auditor', 'product-manager', 'design-reviewer', 'qa', 'security', 'reviewer', 'researcher', 'scout', 'fact-checker'];
-    const expectDeepseek = ['frontend', 'backend', 'data-engineer', 'tester'];
-    const expectMuse = [
-      'project-manager', 'ui-designer', 'ux-researcher', 'design-system', 'devops',
-      'sre', 'release-manager', 'docs', 'technical-writer', 'data-analyst',
-    ];
-    for (const id of expectTerra) assert(routing[id] === TERRA, `${id} should be terra, is ${routing[id]}`);
-    for (const id of expectDeepseek) assert(routing[id] === DEEPSEEK, `${id} should be deepseek, is ${routing[id]}`);
-    for (const id of expectMuse) assert(routing[id] === MUSE, `${id} should be muse, is ${routing[id]}`);
-    return `terra ${tier.terra.length} · muse ${tier.muse.length} · deepseek ${tier.deepseek.length} · lead inherit`;
+    const pinnedRoles = RETIRED.filter((id) => Object.prototype.hasOwnProperty.call(routing, id));
+    assert(
+      !pinnedRoles.length,
+      `routing.json pins ${pinnedRoles.length} role card(s) as if they were seats: ${pinnedRoles.join(', ')}; a card is read by a seat and never gets a model pin`,
+    );
+    return `deepseek employee,runner · terra auditor,planner · muse scout · lead inherit`;
   });
 
-  check('every archetype reads a handbook that exists and is long enough', () => {
-    const dir = path.join(repo, 'skills', 'stacked-employee', 'references');
-    for (const [file, ids] of Object.entries(HANDBOOKS)) {
-      const p = path.join(dir, file);
-      assert(fs.existsSync(p), `handbook missing: references/${file}`);
-      const lines = fs.readFileSync(p, 'utf8').trim().split('\n').length;
-      assert(lines > 60, `references/${file} is ${lines} lines; the floor is 60`);
-      for (const id of ids) {
-        const body = fs.readFileSync(path.join(repo, 'agents', `${id}.md`), 'utf8');
-        assert(
-          body.includes(`references\\${file}`) || body.includes(`references/${file}`),
-          `${id}.md does not name its handbook references/${file}`,
-        );
-      }
-    }
-    const mapped = Object.values(HANDBOOKS).flat().sort();
-    const gap = archetypes.filter((id) => !mapped.includes(id));
-    const extra = mapped.filter((id) => !archetypes.includes(id));
-    assert(!gap.length, `archetypes with no handbook: ${gap.join(', ')}`);
-    assert(!extra.length, `handbooks claim archetypes that do not exist: ${extra.join(', ')}`);
-    return `${Object.keys(HANDBOOKS).length} handbooks cover ${mapped.length} archetypes`;
-  });
+  check('stacked-lead routes the six seats, and picks a card by department', () => {
+    const skillDir = path.join(repo, 'skills', 'stacked-lead');
+    const text = fs.readFileSync(path.join(skillDir, 'SKILL.md'), 'utf8');
+    const start = text.search(/^## Routing$/m);
+    assert(start >= 0, 'stacked-lead has no Routing section');
+    const rest = text.slice(start + 1);
+    const next = rest.search(/\n## /);
+    const section = next >= 0 ? rest.slice(0, next) : rest;
 
-  check('the generic seat and the folded archetypes are gone', () => {
-    for (const gone of ['employee', 'refactorer', 'debugger', 'builder']) {
-      assert(!fs.existsSync(path.join(repo, 'agents', `${gone}.md`)), `agents/${gone}.md is back`);
-    }
-    return 'employee, refactorer and debugger are not files';
-  });
-
-  check('stacked-lead routes every archetype, and research comes first', () => {
-    const lead = fs.readFileSync(path.join(repo, 'skills', 'stacked-lead', 'SKILL.md'), 'utf8');
-    assert(/^## Routing$/m.test(lead), 'stacked-lead has no Routing section');
-    const rows = [...lead.matchAll(/^\|[^|\n]*\|\s*`([a-z0-9-]+)`\s*\|$/gm)].map((m) => m[1]);
-    const missing = archetypes.filter((id) => !rows.includes(id));
+    // One table row per seat: the first cell of the row is the seat id.
+    const rows = section
+      .split('\n')
+      .map((line) => /^\|\s*`([a-z0-9-]+)`\s*\|/.exec(line))
+      .filter(Boolean)
+      .map((m) => m[1]);
+    assert(
+      rows.length === SEATS.length,
+      `the routing table has ${rows.length} seat row(s) (${rows.join(', ') || 'none'}); expected exactly one per seat (${SEATS.join(', ')})`,
+    );
+    const missing = SEATS.filter((seat) => !rows.includes(seat));
     assert(!missing.length, `stacked-lead has no routing row for: ${missing.join(', ')}`);
-    assert(rows.length === archetypes.length, `routing table has ${rows.length} rows for ${archetypes.length} archetypes`);
-    assert(/`researcher` or `scout` before it is briefed/.test(lead), 'the routing section does not put research before the brief');
-    return `${rows.length} rows, one per archetype`;
+    const extra = rows.filter((id) => !SEATS.includes(id));
+    assert(!extra.length, `stacked-lead routes ids that are not seats: ${extra.join(', ')}; the 22 roles are cards, not seats`);
+
+    // The cards are the list: a router that enumerates every role is a table
+    // that rots, so the table names where they live and how one is chosen.
+    assert(/roles\//.test(section), 'the Routing section never names roles/; the cards are the list');
+    assert(/department/i.test(section), 'the Routing section does not say a card is chosen by its department');
+
+    // The rule survives the collapse: research comes before the brief. The
+    // router may carry it in SKILL.md or in a reference the router names.
+    const references = fs.existsSync(path.join(skillDir, 'references'))
+      ? fs.readdirSync(path.join(skillDir, 'references')).filter((f) => f.endsWith('.md')).sort()
+      : [];
+    const scanned = [path.join(skillDir, 'SKILL.md'), ...references.map((f) => path.join(skillDir, 'references', f))];
+    const researchFirst = scanned.some((file) =>
+      /`researcher` or `scout` before it is briefed/.test(fs.readFileSync(file, 'utf8')),
+    );
+    assert(
+      researchFirst,
+      `stacked-lead does not put research before the brief in ${scanned.map((f) => path.relative(repo, f)).join(', ')}`,
+    );
+    return `${rows.length} seat rows, roles/ by department, research first`;
   });
 
-  await checkAsync('a dispatch block names the archetype, its routed model, or unassigned', async () => {
+  check('the retired archetype agents are gone, not shadowed', () => {
+    const back = RETIRED.filter((id) => fs.existsSync(path.join(repo, 'agents', `${id}.md`)));
+    assert(!back.length, `agents/ still ships ${back.length} retired archetype(s): ${back.join(', ')}; a stale agent is a description the model can still pick`);
+    return `${RETIRED.length} retired agents absent`;
+  });
+
+  // ---------------------------------------------------------------- role cards
+  const rolesDir = path.join(repo, 'roles');
+  const cardFiles = fs.existsSync(rolesDir) ? fs.readdirSync(rolesDir).filter((f) => f.endsWith('.md')).sort() : [];
+
+  /** A card's frontmatter fields and its body, or null when it has no frontmatter. */
+  function cardOf(raw) {
+    if (!raw.startsWith('---')) return null;
+    const end = raw.indexOf('\n---', 3);
+    if (end < 0) return null;
+    const fields = {};
+    for (const line of raw.slice(4, end).split('\n')) {
+      const m = /^([a-z][a-z-]*)[ \t]*:[ \t]*(.*)$/.exec(line);
+      if (m) fields[m[1]] = m[2].trim().replace(/^"(.*)"$/, '$1');
+    }
+    return { fields, body: raw.slice(end + 4) };
+  }
+
+  /** Every fault in one card, as a sentence; an empty list is a valid card. */
+  function cardFaults(file, raw) {
+    const card = cardOf(raw);
+    if (!card) return [`${file} has no frontmatter`];
+    const { fields, body } = card;
+    const faults = [];
+    const extra = Object.keys(fields).filter((key) => !CARD_KEYS.includes(key));
+    if (extra.length) faults.push(`${file} has frontmatter keys beyond ${CARD_KEYS.join(', ')}: ${extra.join(', ')}`);
+    for (const key of CARD_KEYS) if (!fields[key]) faults.push(`${file} has no ${key}`);
+    if (fields.department && !DEPARTMENTS.includes(fields.department)) {
+      faults.push(`${file} department "${fields.department}" is not one of the seven (${DEPARTMENTS.join(', ')})`);
+    }
+    if (fields.seat && !SEATS.includes(fields.seat)) {
+      faults.push(`${file} seat "${fields.seat}" is not one of the six seats (${SEATS.join(', ')})`);
+    }
+    const headings = [...body.matchAll(/^##[ \t]+(.+?)[ \t\r]*$/gm)].map((m) => m[1]);
+    if (headings.join('|') !== CARD_HEADINGS.join('|')) {
+      faults.push(
+        `${file} body headings are ${headings.join(', ') || 'none'}; expected exactly ${CARD_HEADINGS.join(', ')} in that order`,
+      );
+    }
+    if (raw.length > CARD_CAP) faults.push(`${file} is ${raw.length} characters; the cap is ${CARD_CAP}`);
+    return faults;
+  }
+
+  /** A minimal valid card, for the two cases that need a fixture of their own. */
+  const sampleCard = (seat, department) =>
+    `---\nname: Sample\ndepartment: ${department}\nseat: ${seat}\nproof: node -e "process.exit(0)"\n---\n\n` +
+    `## Owns\none decision\n\n## Must not\none failure\n\n## Proof\none command\n\n## Handoff\none paragraph\n`;
+
+  check('the role cards carry a seat, a department and the four sections', () => {
+    assert(
+      cardFiles.length === 22,
+      `expected 22 role cards in roles/, got ${cardFiles.length}: ${cardFiles.join(', ') || 'none'}`,
+    );
+    const cards = cardFiles.map((f) => [f, fs.readFileSync(path.join(rolesDir, f), 'utf8')]);
+    const faults = cards.flatMap(([f, raw]) => cardFaults(f, raw));
+    assert(!faults.length, faults.join('\n        '));
+    const counts = SEATS.map((seat) => `${seat} ${cards.filter(([, raw]) => cardOf(raw).fields.seat === seat).length}`);
+    return `${cardFiles.length} cards (${counts.join(' · ')})`;
+  });
+
+  check('a card naming an unknown seat fails, a seat with no card in a department passes', () => {
+    const bogus = cardFaults('ghost.md', sampleCard('wizard', 'engineering'));
+    assert(
+      bogus.some((f) => /seat "wizard"/.test(f)),
+      `an unknown seat was accepted: ${bogus.join('; ') || 'no fault found'}`,
+    );
+
+    // Cards are optional per department: a deck may carry one engineering card
+    // and no runner at all. Only the six seat files are mandatory.
+    const deck = [
+      ['one-employee.md', sampleCard('employee', 'engineering')],
+      ['one-auditor.md', sampleCard('auditor', 'quality')],
+    ];
+    const faults = deck.flatMap(([f, raw]) => cardFaults(f, raw));
+    assert(!faults.length, `a deck with no card for four seats was refused: ${faults.join('; ')}`);
+    return 'unknown seat refused, cards optional per department';
+  });
+
+  await checkAsync('a dispatch block names the seat, its routed model, or unassigned', async () => {
     const d = configuredRepo();
     const assigned = await runIn(d, 'brief', {
       op: 'new',
-      agent: 'qa',
+      agent: 'auditor',
       title: 'named seat',
       out: 'a thing',
       check: 'node -e "process.exit(0)"',
       owns: ['**'],
       files: ['n.md'],
     });
-    assert(/Agent: qa \(openai\/gpt-6\.1-terra\)/.test(assigned), `the block did not name the archetype and model:\n${assigned}`);
+    assert(/Agent: auditor \(openai\/gpt-6\.1-terra\)/.test(assigned), `the block did not name the seat and model:\n${assigned}`);
 
     const unassigned = await runIn(d, 'brief', {
       op: 'new',
@@ -297,11 +379,11 @@ export async function register(ctx) {
       owns: ['**'],
       files: ['m.md'],
     });
-    assert(/Agent: unassigned/.test(unassigned), `a seam with no archetype did not print unassigned:\n${unassigned}`);
+    assert(/Agent: unassigned/.test(unassigned), `a seam with no seat did not print unassigned:\n${unassigned}`);
 
     const gate = await runIn(d, 'ready', { id: 'no-seat', lean: true });
-    assert(/NO-GO/.test(gate), `a seam with no archetype was gated GO:\n${gate}`);
-    assert(/archetype/i.test(gate), `the missing archetype was not named:\n${gate}`);
+    assert(/NO-GO/.test(gate), `a seam with no seat was gated GO:\n${gate}`);
+    assert(/archetype/i.test(gate), `the missing seat was not named:\n${gate}`);
 
     const bogus = await runIn(d, 'brief', {
       op: 'new',
@@ -312,7 +394,7 @@ export async function register(ctx) {
       owns: ['**'],
       files: ['o.md'],
     });
-    assert(/Refused/.test(bogus), 'an archetype absent from routing.json was accepted');
+    assert(/Refused/.test(bogus), 'a seat absent from routing.json was accepted');
     assert(!fs.existsSync(path.join(d, '.stack', 'briefs', 'bogus-seat.md')), 'the refused brief was still written');
 
     fs.rmSync(d, { recursive: true, force: true });

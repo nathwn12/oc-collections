@@ -41,6 +41,7 @@ const SUBJECTS = [
   { name: 'gate', load: () => import('./gate.mjs') },
   { name: 'close', load: () => import('./close.mjs') },
   { name: 'title', load: () => import('./title.mjs') },
+  { name: 'router', load: () => import('./router.mjs') },
   { name: 'plugin', load: () => import('./plugin.mjs') },
 ];
 const NAMES = SUBJECTS.map((s) => s.name);
@@ -81,6 +82,7 @@ const OWNERS = {
   gate: ['lib/tools.js', 'lib/checks.js'],
   close: ['lib/close.js', 'lib/git.js'],
   title: ['index.js', 'lib/title.js', 'lib/close.js', 'lib/git.js'],
+  router: ['lib/router.js', 'index.js', 'roles/**'],
   plugin: ['index.js'],
 };
 /** A change to the runner changes how every subject is proven. */

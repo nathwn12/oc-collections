@@ -17,7 +17,7 @@ export async function register(ctx) {
   // brief, then a tree that gets dirtied, checked, reported, and landed.
   const dir = configuredRepo();
   await runIn(dir, 'brief', {
-    op: 'new', agent: 'backend',
+    op: 'new', agent: 'employee',
     title: 'retry budget',
     out: 'a failing endpoint is retried at most three times',
     check: 'node -e "process.exit(0)"',
@@ -144,7 +144,7 @@ export async function register(ctx) {
 
   await checkAsync('marking a seam landed without a GO is refused', async () => {
     await runIn(dir, 'brief', {
-      op: 'new', agent: 'backend',
+      op: 'new', agent: 'employee',
       title: 'no gate yet',
       out: 'something nobody proved',
       check: 'node -e "process.exit(0)"',
@@ -193,7 +193,7 @@ export async function register(ctx) {
     commit('base');
 
     await runIn(d, 'brief', {
-      op: 'new', agent: 'backend',
+      op: 'new', agent: 'employee',
       title: 'only a',
       out: 'a changes',
       check: 'node -e "process.exit(0)"',
@@ -232,7 +232,7 @@ export async function register(ctx) {
     spawnSync('git', ['-c', 'user.email=c@l', '-c', 'user.name=c', 'commit', '-qm', 'base'], { cwd: d, windowsHide: true });
 
     await runIn(d, 'brief', {
-      op: 'new', agent: 'backend',
+      op: 'new', agent: 'employee',
       title: 'trusted check',
       out: 'a thing',
       check: 'node -e "process.exit(0)"',
@@ -261,7 +261,7 @@ export async function register(ctx) {
     spawnSync('git', ['add', '-A'], { cwd: d, windowsHide: true });
     spawnSync('git', ['-c', 'user.email=c@l', '-c', 'user.name=c', 'commit', '-qm', 'base'], { cwd: d, windowsHide: true });
     await runIn(d, 'brief', {
-      op: 'new', agent: 'backend',
+      op: 'new', agent: 'employee',
       title: 'old gate',
       out: 'a thing',
       check: 'node -e "process.exit(0)"',
@@ -284,7 +284,7 @@ export async function register(ctx) {
   await checkAsync('a forged green check record is not evidence', async () => {
     const d = configuredRepo('node -e "process.exit(3)"');
     await runIn(d, 'brief', {
-      op: 'new', agent: 'backend',
+      op: 'new', agent: 'employee',
       title: 'forged',
       out: 'a thing',
       check: 'node -e "process.exit(0)"',
@@ -395,7 +395,7 @@ export async function register(ctx) {
   await checkAsync('a brief copied over its report is not a report', async () => {
     const d = configuredRepo();
     await runIn(d, 'brief', {
-      op: 'new', agent: 'backend',
+      op: 'new', agent: 'employee',
       title: 'copied report',
       out: 'a thing',
       check: 'node -e "process.exit(0)"',
@@ -416,7 +416,7 @@ export async function register(ctx) {
   await checkAsync("a report in the brief's own example style is a report", async () => {
     const d = configuredRepo();
     await runIn(d, 'brief', {
-      op: 'new', agent: 'backend',
+      op: 'new', agent: 'employee',
       title: 'template style',
       out: 'a thing',
       check: 'node -e "process.exit(0)"',
@@ -456,7 +456,7 @@ export async function register(ctx) {
   await checkAsync('a fenced example is never a report section', async () => {
     const d = configuredRepo();
     await runIn(d, 'brief', {
-      op: 'new', agent: 'backend',
+      op: 'new', agent: 'employee',
       title: 'fenced example',
       out: 'a thing',
       check: 'node -e "process.exit(0)"',
@@ -523,7 +523,7 @@ export async function register(ctx) {
 
   await checkAsync('a brief with no recorded base is refused, not passed', async () => {
     const d = configuredRepo();
-    await runIn(d, 'brief', { op: 'new', agent: 'backend', title: 'no head', out: 'x', check: 'node -e "process.exit(0)"', owns: ['**'], files: ['n.md'] });
+    await runIn(d, 'brief', { op: 'new', agent: 'employee', title: 'no head', out: 'x', check: 'node -e "process.exit(0)"', owns: ['**'], files: ['n.md'] });
     const gate = await runIn(d, 'ready', { id: 'no-head', lean: true });
     assert(/## GO/.test(gate), `setup gate failed:\n${gate}`);
 
@@ -547,20 +547,20 @@ export async function register(ctx) {
 
   await checkAsync('re-briefing a landed seam needs force and says why', async () => {
     const d = configuredRepo();
-    await runIn(d, 'brief', { op: 'new', agent: 'backend', title: 'shipped seam', out: 'x', check: 'node -e "process.exit(0)"', owns: ['**'], files: ['n.md'] });
+    await runIn(d, 'brief', { op: 'new', agent: 'employee', title: 'shipped seam', out: 'x', check: 'node -e "process.exit(0)"', owns: ['**'], files: ['n.md'] });
     await runIn(d, 'check', { op: 'run' });
     const gate = await runIn(d, 'ready', { id: 'shipped-seam', lean: true });
     assert(/## GO/.test(gate), gate);
     await runIn(d, 'brief', { op: 'status', id: 'shipped-seam', status: 'landed' });
 
-    const refused = await runIn(d, 'brief', { op: 'new', agent: 'backend', title: 'shipped seam again', id: 'shipped-seam', out: 'y', check: 'node -e "process.exit(0)"', owns: ['**'], files: ['n.md'] });
+    const refused = await runIn(d, 'brief', { op: 'new', agent: 'employee', title: 'shipped seam again', id: 'shipped-seam', out: 'y', check: 'node -e "process.exit(0)"', owns: ['**'], files: ['n.md'] });
     assert(/Refused/.test(refused), 'a landed seam was silently re-briefed');
     assert(/landed/.test(refused) && /force/.test(refused), `the refusal names neither the state nor the override:\n${refused}`);
     const indexFile = path.join(d, '.stack', 'state', 'briefs.json');
     assert(JSON.parse(fs.readFileSync(indexFile, 'utf8'))[0].status === 'landed', 'the state was reset anyway');
 
     const forced = await runIn(d, 'brief', {
-      op: 'new', agent: 'backend',
+      op: 'new', agent: 'employee',
       title: 'shipped seam again',
       id: 'shipped-seam',
       out: 'y',

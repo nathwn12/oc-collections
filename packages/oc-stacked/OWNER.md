@@ -8,9 +8,9 @@ The owner's standing decisions for this repository, so no session re-asks them.
 
 - **Three kinds of seat.** `lead` decides and dispatches. Specialised employees build one seam each. `auditor` judges work it did not write. The owner is the CEO and is not an agent in the stack. *(2026-11-10)*
 - **Employees are a standing family of specialists**, not one generic worker reused per seam. The seats are permanent; the seams are disposable. *(2026-11-10)*
-- **Twenty-two archetypes in seven departments:** Product, Design, Engineering, Platform, Quality, Knowledge, Research. Department boundaries are file boundaries, and no department gets a lead; the lead routes directly. *(2026-11-10)*
+- **Six seats, twenty-two role cards in seven departments.** The seats are the six agent files (`lead`, `employee`, `auditor`, `scout`, `runner`, `planner`); the cards in `roles/` name a department (Product, Design, Engineering, Platform, Quality, Knowledge, Research) and the seat that reads them. Department boundaries are card boundaries, and no department gets a lead; the lead routes directly. *(2026-11-10)*
 - **The Research department answers before the seam is briefed.** A seam that turns on external behaviour routes to `researcher` or `scout` first, so no specialist guesses at an API it could have read. *(2026-11-10)*
-- **The auditor is not a department.** It answers to the owner and never shares a model family with the archetype that wrote the work. *(2026-11-10)*
+- **The auditor is not a department.** It answers to the owner and never shares a model family with the seat that wrote the work. *(2026-11-10)*
 
 ## Work
 
