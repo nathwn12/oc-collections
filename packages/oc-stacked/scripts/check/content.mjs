@@ -15,7 +15,7 @@ export function register(ctx) {
   // ---------------------------------------------------------------- skills
   const skills = readSkills();
 
-  check('sixteen skills register', () => {
+  check('seventeen skills register', () => {
     const expected = [
       'stacked',
       'stacked-soul',
@@ -33,8 +33,9 @@ export function register(ctx) {
       'stacked-wizard',
       'stacked-oftb',
       'stacked-loop',
+      'stacked-close',
     ];
-    assert(skills.length === 16, `expected 16, got ${skills.length}: ${skills.map((s) => s.id).join(', ')}`);
+    assert(skills.length === 17, `expected 17, got ${skills.length}: ${skills.map((s) => s.id).join(', ')}`);
     for (const id of expected) assert(skills.some((s) => s.id === id), `missing skill: ${id}`);
     return skills.map((s) => s.id).join(', ');
   });

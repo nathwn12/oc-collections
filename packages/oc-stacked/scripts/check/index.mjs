@@ -83,7 +83,10 @@ const OWNERS = {
   close: ['lib/close.js', 'lib/git.js'],
   title: ['index.js', 'lib/title.js', 'lib/close.js', 'lib/git.js'],
   router: ['lib/router.js', 'index.js', 'roles/**'],
-  plugin: ['index.js'],
+  // The vanilla cases drive the real setup and read what it installs: the
+  // catalogue in `agents/` and `roles/`, the skills it registers, and the router
+  // that answers the first prompt.
+  plugin: ['index.js', 'lib/content.js', 'lib/router.js', 'roles/**', 'agents/**', 'skills/**', 'SOUL.md'],
 };
 /** A change to the runner changes how every subject is proven. */
 const EVERY = ['scripts/check/index.mjs'];

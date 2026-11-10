@@ -224,11 +224,11 @@ Done. Three things happen on next launch:
 
   1. OpenCode loads the package at
      ${linkPath}
-  2. Sixteen skills register: stacked, stacked-soul, stacked-pls,
+  2. Seventeen skills register: stacked, stacked-soul, stacked-pls,
      stacked-lead, stacked-employee, stacked-audit, stacked-plan,
      stacked-swarm, stacked-debug, stacked-tdd, stacked-review,
      stacked-ship, stacked-deepen, stacked-wizard, stacked-oftb,
-     stacked-loop
+     stacked-loop, stacked-close
   3. Six seats appear: lead, employee, auditor, scout, runner and planner,
      pinned by routing.json, with the role cards the seats read in
      ${rolesDir}

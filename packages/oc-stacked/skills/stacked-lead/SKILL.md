@@ -44,5 +44,6 @@ Route a seam to a seat, then a `roles/` card by department.
 | reconcile | `references/reconciliation.md` |
 | land | `references/landing.md` |
 | digest | `references/digest.md` |
+| closing a session | `stacked-close` |
 
 Five stops gate; close sets `[done]`.

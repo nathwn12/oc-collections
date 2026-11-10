@@ -81,9 +81,9 @@ A pass is not closed until it is swept and written down: `clean` `sweep` removes
 | `[parked]` | work exists but is not moving | the owner says stop/halt/freeze/pause/park, an execution is interrupted, or the session idles with no valid receipt |
 | `[done]` | genuinely finished, closing remarks written | the sealed report is present: a `close` op=run returned GO and the idle gate applied `[done]` |
 
-The plugin owns the prefix. A close intent ("close session", "wrap it up", "we're done", "seal it") appends one directive: run `close` op=preflight, settle every ticket it names (land, kill, answer, or record an ASK and park), then `close` op=run with one lesson of at least 8 characters. `op=run` refuses while a ticket is open, and a hand-typed `[done]` without a GO receipt is refused. The receipt lives at `state/close.json` (`op=show` reads it back). A session that cannot clear a ticket parks instead of closing. The gate is bounded: the intent persists until the tool prints `SEALED <sha>`, and the final message ends with that exact token — no tools run after it. An attempt to end with "done" or a bare summary while the intent is open gets the next exact action injected and the same execution continues; after 6 failed continuations the session parks and an ASK is recorded. The gate never says done.
+The plugin owns the prefix. A close intent ("close session", "wrap it up", "we're done", "seal it") is optional: it appends one directive to run `close` op=preflight, settle every ticket it names (land, kill, answer, or record an ASK and park), then `close` op=run with one lesson of at least 8 characters. `op=run` refuses while a ticket is open, and a hand-typed `[done]` without a GO receipt is refused. The receipt lives at `state/close.json` (`op=show` reads it back). A session that cannot clear a ticket parks instead of closing. The gate is bounded: the intent persists until the tool prints `SEALED <sha>`, and the final message ends with that exact token — no tools run after it. An attempt to end with "done" or a bare summary while the intent is open gets the next exact action injected and the same execution continues; after 6 failed continuations the session parks and an ASK is recorded. The gate never says done.
 
-A `close` op=run that returns GO arms the close itself: it writes a one-shot arm record, and the idle gate then applies `[done]` from the sealed report with no phrase. `show`, `preflight`, and a refused `run` arm nothing. No typed phrase is required; the seal is the report.
+A `close` op=run that returns GO arms the close itself: it writes a one-shot arm record, and the idle gate then applies `[done]` from the sealed report with no phrase. `show`, `preflight`, and a refused `run` arm nothing. Before this, a `close` run from the command line wrote the arm record and nothing consumed it, so a sealed session never compacted and never got `[done]`, and the owner had to hand-write an intent file. One invoke is enough now: `op=run` returns GO, the idle gate consumes the record when the turn ends on the sealed report, one compaction fires, and `[done]` follows. A bare `SEALED` token is not the seal; the report is.
 
 The receipt is signed. It binds the full 40-hex HEAD it was written at (`sealed` is its first 7 characters), a uuid `receipt_id`, a check run at that HEAD whose every result is `ok` with exit 0, a passing `preflight` criterion, an `at` inside the commit's window, and a lesson of at least 8 characters. `sig` is HMAC-SHA256 over the body, keyed by `~/.config/opencode/oc-stacked.secret`. The signature stops a typed receipt; it does not stop someone with read access to the secret.
 
@@ -116,7 +116,7 @@ All local. Files and `git` only; no network call, no daemon, no MCP handshake.
 
 ## The skills
 
-Sixteen. They are ordinary `SKILL.md` files with front matter; the plugin registers them natively at startup. One is the hub, the rest are seats, discipline lenses, and the shelf you pull when the moment matches.
+Seventeen. They are ordinary `SKILL.md` files with front matter; the plugin registers them natively at startup. One is the hub, the rest are seats, discipline lenses, and the shelf you pull when the moment matches.
 
 | Skill id | Loads when |
 |---|---|
@@ -136,6 +136,7 @@ Sixteen. They are ordinary `SKILL.md` files with front matter; the plugin regist
 | `stacked-wizard` | oc-stacked is installed but not behaving: seats missing, models unpinned, `.stack/` unseeded, a ghost seat, a check green on a stale tree. Aligns a host that already has its own opinions, by adding only. |
 | `stacked-oftb` | You are blocked. Names which kind of rule is in the way - owner gate, doctrine default, or physics - then climbs six rungs (invert, confine, split, other door, witness, shrink) to reach the same goal without an authorization nobody gave. |
 | `stacked-loop` | "Don't stop until", "keep going", a vague ask that should still land, or any multi-turn job with a check. The goal lives in `.stack/goal.md`; every turn ends with a verdict from a context that did none of the work. |
+| `stacked-close` | The session is ending, the work is done, or you say close, wrap up, seal, we're done. The fixed closing order: settle every ticket, sweep, align the docs to the diff, one lesson, the report, then the sealed receipt and the compaction. |
 
 **Commands are the owner's.** `/stack` and friends are manual by design: the route table decides which seat handles an ask, and the loop never types a command for itself.
 

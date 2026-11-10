@@ -6,7 +6,11 @@ One entry per landed pass. Written in plain words; internals live in the commit 
 
 The close seals itself, and the receipt is evidence.
 
+**Added.** Closing a session is a fixed ceremony a skill owns now: `stacked-close` settles every open ticket, sweeps the leftovers, aligns the docs to the diff, records one lesson, writes the report, then seals the receipt and compacts. The last thing a session does is loaded, not remembered — a step skipped is named in the report, and the session ends on evidence, not on a summary.
+
 **Added.** A `close` op=run that returns GO arms the close itself: the idle gate applies `[done]` from the sealed report, so no typed phrase is needed. `show`, `preflight`, and a refused run arm nothing.
+
+**Fixed.** A `close` that returns GO now finishes the session by itself, including the compaction, without a typed phrase or a hand-armed intent. Run it from the command line, end on the sealed report, and the session compacts once and takes `[done]`. Before this, a command-line close wrote the arm record and nothing consumed it, so a sealed session never compacted and never got `[done]`.
 
 **Changed.** The receipt is signed now. It binds the full 40-hex HEAD, a uuid receipt id, a check run at that HEAD with every result green and exit 0, a passing preflight, a timestamp inside the commit's window, and a lesson of at least 8 characters. The signature is an HMAC-SHA256 keyed by a secret outside the repository. It stops a typed receipt; it does not stop someone who can read the secret.
 
