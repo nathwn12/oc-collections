@@ -248,13 +248,27 @@ function firstToken(line) {
   return out;
 }
 
+// npm, npx, pnpm, yarn and corepack ship as .cmd shims on Windows, not as
+// executables: a direct spawn of `npm` is ENOENT (-4058) and nothing runs.
+const WIN_SHIMS = new Set(['npm', 'npx', 'pnpm', 'yarn', 'corepack']);
+
+/** The program a token names, without its directory or .cmd/.bat suffix. */
+function programName(first) {
+  return first
+    .split(/[\\/]/)
+    .pop()
+    .replace(/\.(cmd|bat)$/i, '')
+    .toLowerCase();
+}
+
 /** Does this command need a shell even when we start it ourselves? */
 export function needsShell(line) {
   if (/[|&<>]/.test(line)) return true;
   // %VAR% is cmd's expansion, not the child's. Only cmd can expand it.
   if (/%[^%\s]+%/.test(line)) return true;
+  if (!WIN) return false;
   const first = firstToken(line);
-  return WIN && /\.(cmd|bat)$/i.test(first);
+  return /\.(cmd|bat)$/i.test(first) || WIN_SHIMS.has(programName(first));
 }
 
 /**
@@ -342,8 +356,14 @@ function badCommand(err) {
   };
 }
 
-/** A direct spawn failed before the program ran: the shell may still know it. */
+/**
+ * A direct spawn failed before the program ran: the shell may still know it.
+ * On Windows a missing program arrives as status -4058 (spawn ENOENT) or, from
+ * cmd, 9009, and startError is set alongside a non-null status, so the status
+ * is the only honest signal here.
+ */
 function failedToStart(result) {
+  if (result.status === -4058 || result.status === 9009) return true;
   return result.status === null && /ENOENT|EINVAL|ENOEXEC/.test(result.startError);
 }
 
