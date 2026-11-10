@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>oc-stacked — a three-rung agent stack for OpenCode</title>
+<style>
+  :root {
+    --ink: #0c0d0f;
+    --ink-2: #121417;
+    --ink-3: #191c21;
+    --line: #262a31;
+    --line-2: #333943;
+    --text: #e6e8ec;
+    --muted: #969ea9;
+    --faint: #6b7480;
+    --ceo: #c9a227;
+    --lead: #4f8cc9;
+    --emp: #6aa84f;
+    --audit: #a64d79;
+    --mono: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
+    --sans: ui-sans-serif, -apple-system, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
+    --max: 1120px;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--ink);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  body::before {
+    content: "";
+    position: fixed; inset: 0;
+    background:
+      radial-gradient(900px 500px at 12% -8%, rgba(201,162,39,.10), transparent 62%),
+      radial-gradient(800px 480px at 92% 4%, rgba(79,140,201,.10), transparent 60%);
+    pointer-events: none;
+    z-index: 0;
+  }
+  .wrap { position: relative; z-index: 1; max-width: var(--max); margin: 0 auto; padding: 0 28px; }
+  a { color: inherit; text-decoration: none; border-bottom: 1px solid var(--line-2); }
+  a:hover { border-color: var(--text); }
+  code, .mono { font-family: var(--mono); font-size: .88em; }
+
+  /* ---------- top bar ---------- */
+  .top {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 22px 0 18px; border-bottom: 1px solid var(--line);
+    font-family: var(--mono); font-size: 12px; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--faint);
+  }
+  .top .mark { color: var(--text); letter-spacing: .12em; }
+  .top nav { display: flex; gap: 22px; }
+  .top nav a { border: 0; }
+  .top nav a:hover { color: var(--text); }
+
+  /* ---------- hero ---------- */
+  header.hero { padding: 84px 0 64px; }
+  .eyebrow {
+    font-family: var(--mono); font-size: 12px; letter-spacing: .16em; text-transform: uppercase;
+    color: var(--ceo); display: flex; align-items: center; gap: 12px;
+  }
+  .eyebrow::after { content: ""; height: 1px; flex: 1; background: linear-gradient(90deg, var(--line-2), transparent); }
+  h1 {
+    font-size: clamp(44px, 7.4vw, 88px);
+    line-height: .96; letter-spacing: -.035em; margin: 26px 0 0; font-weight: 620;
+  }
+  h1 .thin { color: var(--muted); font-weight: 380; }
+  .lede {
+    margin: 26px 0 0; max-width: 62ch; font-size: clamp(17px, 1.6vw, 20px);
+    color: var(--muted); line-height: 1.6;
+  }
+  .lede strong { color: var(--text); font-weight: 550; }
+
+  .install {
+    margin-top: 38px; display: flex; flex-wrap: wrap; gap: 10px; align-items: stretch;
+  }
+  .cmd {
+    display: flex; align-items: center; gap: 12px;
+    background: var(--ink-2); border: 1px solid var(--line); border-radius: 10px;
+    padding: 13px 16px; font-family: var(--mono); font-size: 13.5px; color: var(--text);
+    min-width: 0; overflow-x: auto;
+  }
+  .cmd .sigil { color: var(--emp); user-select: none; }
+  .cmd .dim { color: var(--faint); }
+  .pill {
+    display: inline-flex; align-items: center; gap: 8px; padding: 13px 16px;
+    border: 1px solid var(--line); border-radius: 10px; background: transparent;
+    font-family: var(--mono); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted);
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--emp); box-shadow: 0 0 0 3px rgba(106,168,79,.14); }
+
+  /* ---------- section ---------- */
+  section { padding: 56px 0; border-top: 1px solid var(--line); }
+  .sec-head { display: flex; align-items: baseline; gap: 18px; margin-bottom: 30px; }
+  .sec-num { font-family: var(--mono); font-size: 12px; color: var(--faint); letter-spacing: .1em; }
+  h2 { font-size: clamp(24px, 2.6vw, 32px); letter-spacing: -.02em; margin: 0; font-weight: 580; }
+  .sec-sub { color: var(--muted); font-size: 15px; max-width: 66ch; margin: 12px 0 0; }
+
+  /* ---------- rungs ---------- */
+  .rungs { display: grid; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  .rung {
+    display: grid; grid-template-columns: 78px 168px 1fr 1fr; gap: 22px;
+    background: var(--ink-2); padding: 22px 24px; align-items: start;
+  }
+  .rung .n {
+    font-family: var(--mono); font-size: 12px; letter-spacing: .08em; color: var(--faint); padding-top: 4px;
+  }
+  .rung .name { font-size: 19px; font-weight: 600; letter-spacing: -.01em; display: flex; align-items: center; gap: 10px; }
+  .rung .name i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .rung .role { font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); margin-top: 7px; }
+  .rung .owns { font-size: 14.5px; color: var(--text); }
+  .rung .never { font-size: 14.5px; color: var(--muted); }
+  .rung .label {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--faint); display: block; margin-bottom: 6px;
+  }
+  .r-ceo .name i { background: var(--ceo); }
+  .r-lead .name i { background: var(--lead); }
+  .r-emp .name i { background: var(--emp); }
+  .r-audit .name i { background: var(--audit); }
+
+  /* ---------- loop ---------- */
+  .loop { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  .step { background: var(--ink-2); padding: 20px; }
+  .step b { font-family: var(--mono); font-size: 11px; color: var(--lead); letter-spacing: .1em; display: block; margin-bottom: 10px; }
+  .step h3 { margin: 0 0 6px; font-size: 15.5px; font-weight: 580; }
+  .step p { margin: 0; font-size: 13.5px; color: var(--muted); line-height: 1.5; }
+
+  /* ---------- tools ---------- */
+  .tools { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .tool {
+    border: 1px solid var(--line); border-radius: 12px; padding: 18px; background: var(--ink-2);
+    display: flex; flex-direction: column; gap: 10px; min-height: 190px;
+  }
+  .tool .tname { font-family: var(--mono); font-size: 14px; color: var(--text); }
+  .tool .tname::before { content: "stack_"; color: var(--faint); font-size: 11px; }
+  .tool p { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.5; flex: 1; }
+  .tool .verb {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--emp);
+  }
+
+  /* ---------- refusals ---------- */
+  .refusals { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .refuse {
+    display: grid; grid-template-columns: 22px 1fr; gap: 14px;
+    border: 1px solid var(--line); border-left: 2px solid var(--audit);
+    border-radius: 10px; padding: 16px 18px; background: var(--ink-2);
+  }
+  .refuse .x { font-family: var(--mono); color: var(--audit); font-size: 14px; line-height: 1.4; }
+  .refuse b { display: block; font-size: 14.5px; font-weight: 560; margin-bottom: 3px; }
+  .refuse span { font-size: 13px; color: var(--muted); }
+
+  /* ---------- terminal ---------- */
+  .term {
+    border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: #0a0b0d;
+  }
+  .term .bar {
+    display: flex; align-items: center; gap: 8px; padding: 11px 14px;
+    border-bottom: 1px solid var(--line); font-family: var(--mono); font-size: 11px;
+    letter-spacing: .1em; text-transform: uppercase; color: var(--faint);
+  }
+  .term .bar .lamp { width: 8px; height: 8px; border-radius: 50%; background: var(--line-2); }
+  .term .body { padding: 20px 22px; font-family: var(--mono); font-size: 13px; line-height: 1.85; overflow-x: auto; }
+  .term .body .p { color: var(--faint); }
+  .term .body .ok { color: var(--emp); }
+  .term .body .warn { color: var(--ceo); }
+  .term .body .bad { color: #d05c5c; }
+  .term .body .key { color: var(--lead); }
+  .term .body .c { color: var(--faint); }
+
+  /* ---------- state ---------- */
+  .split { display: grid; grid-template-columns: 1.05fr 1fr; gap: 34px; align-items: start; }
+  .tree { font-family: var(--mono); font-size: 13px; line-height: 2; color: var(--muted); }
+  .tree .dir { color: var(--text); }
+  .tree .cm { color: var(--faint); }
+  .laws { display: grid; gap: 12px; }
+  .law { display: grid; grid-template-columns: 30px 1fr; gap: 12px; align-items: baseline; }
+  .law .k { font-family: var(--mono); font-size: 11px; color: var(--ceo); }
+  .law b { font-weight: 560; font-size: 14.5px; }
+  .law span { display: block; color: var(--muted); font-size: 13.5px; }
+
+  footer {
+    border-top: 1px solid var(--line); padding: 34px 0 46px;
+    display: flex; flex-wrap: wrap; gap: 16px; justify-content: space-between;
+    font-family: var(--mono); font-size: 12px; color: var(--faint); letter-spacing: .04em;
+  }
+  footer a { border: 0; color: var(--muted); }
+  footer a:hover { color: var(--text); }
+
+  @media (max-width: 900px) {
+    .rung { grid-template-columns: 44px 1fr; gap: 14px 16px; }
+    .rung .owns, .rung .never { grid-column: 2; }
+    .loop { grid-template-columns: 1fr 1fr; }
+    .tools { grid-template-columns: 1fr 1fr; }
+    .refusals { grid-template-columns: 1fr; }
+    .split { grid-template-columns: 1fr; }
+    .top nav { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="top">
+    <span class="mark">oc-stacked</span>
+    <nav>
+      <a href="#shape">shape</a>
+      <a href="#loop">loop</a>
+      <a href="#tools">tools</a>
+      <a href="#refuses">gates</a>
+      <a href="#state">state</a>
+    </nav>
+    <span>v0.2.0 · private</span>
+  </div>
+
+  <header class="hero">
+    <div class="eyebrow">OpenCode plugin · zero MCP · Windows-first</div>
+    <h1>One lead.<br><span class="thin">A stack of</span><br>employees.</h1>
+    <p class="lede">
+      One agent doing everything holds context it does not need, approves its own work,
+      and forgets what it finished the moment context compacts.
+      <strong>This stack splits the work into seats</strong>, puts the contract on disk,
+      and makes every claim carry a command.
+    </p>
+    <div class="install">
+      <div class="cmd"><span class="sigil">›</span><span>node scripts/install.mjs</span><span class="dim"># junction, restart, done</span></div>
+      <div class="pill"><span class="dot"></span>suite green</div>
+    </div>
+  </header>
+
+  <section id="shape">
+    <div class="sec-head"><span class="sec-num">01</span><h2>The shape</h2></div>
+    <p class="sec-sub">Three seats. Every seat has one job and one thing it may never do. The prohibition is what makes the seat real.</p>
+    <p class="sec-sub" style="margin-top:14px">Models: <span class="mono">lead</span> inherits the session model, so the TUI pick wins; <span class="mono">employee</span> pins <span class="mono">deepseek-v4.1-flash</span>, <span class="mono">auditor</span> pins <span class="mono">gpt-6.1-terra</span>.</p>
+    <div class="rungs">
+      <div class="rung r-lead">
+        <div class="n">01</div>
+        <div><div class="name"><i></i>LEAD</div><div class="role">decides and dispatches</div></div>
+        <div><span class="label">owns</span>direction, seams, briefs, dispatch, reconciliation, landing, the digest</div>
+        <div><span class="label">may never</span>take a seam it already dispatched, or land on a worker's word alone</div>
+      </div>
+      <div class="rung r-emp">
+        <div class="n">02</div>
+        <div><div class="name"><i></i>EMPLOYEE</div><div class="role">builds</div></div>
+        <div><span class="label">owns</span>one seam, one brief, one check, one report</div>
+        <div><span class="label">may never</span>merge, push a shared branch, widen scope, or dispatch anyone</div>
+      </div>
+      <div class="rung r-audit">
+        <div class="n">03</div>
+        <div><div class="name"><i></i>AUDIT</div><div class="role">judges</div></div>
+        <div><span class="label">owns</span>the verdict on work it did not write</div>
+        <div><span class="label">may never</span>edit what it judges, or accept the author's own check as the verdict</div>
+      </div>
+    </div>
+  </section>
+
+  <section id="loop">
+    <div class="sec-head"><span class="sec-num">02</span><h2>The loop</h2></div>
+    <p class="sec-sub">Nine steps, one direction. The state that survives a compaction is on disk, not in the conversation.</p>
+    <div class="loop">
+      <div class="step"><b>01</b><h3>Intake</h3><p>Restate the objective in one sentence. Name the unknowns you would otherwise guess.</p></div>
+      <div class="step"><b>02</b><h3>Rank</h3><p>Cut into seams. Score value × risk ÷ effort. Keep three live; park the rest with a reason.</p></div>
+      <div class="step"><b>03</b><h3>Brief</h3><p>Out, Check, Owns. The tool refuses a hole, and nothing is written.</p></div>
+      <div class="step"><b>04</b><h3>Dispatch</h3><p>One employee per seam, disjoint paths proved first. The prompt carries a path, not history.</p></div>
+      <div class="step"><b>05</b><h3>Reconcile</h3><p>Read the report before chat. Re-run the cheap check yourself. A claim is not evidence.</p></div>
+      <div class="step"><b>06</b><h3>Land</h3><p>One commit, plain words, the check output in the body. Mark the seam landed.</p></div>
+      <div class="step"><b>07</b><h3>Digest</h3><p>Needs you / New / In progress. Every row aged, so a stall is visible without asking.</p></div>
+      <div class="step"><b>08</b><h3>Audit</h3><p>A context that wrote none of it gives the verdict. The author's check is smoke.</p></div>
+      <div class="step"><b>09</b><h3>Close</h3><p>Sweep the plugin's own leftovers, name junk that is not its, refresh the digest, write one lesson.</p></div>
+    </div>
+  </section>
+
+  <section id="tools">
+    <div class="sec-head"><span class="sec-num">03</span><h2>Seven tools, no infrastructure</h2></div>
+    <p class="sec-sub">Local files and git. No MCP handshake, no daemon, no network call, no dependencies. Each tool can refuse, which is the point.</p>
+    <div class="tools">
+      <div class="tool"><span class="tname">ledger</span><p>Appends one stamped line. Reads the tail. Rewrites the digest from the record instead of from memory.</p><span class="verb">append-only</span></div>
+      <div class="tool"><span class="tname">brief</span><p>Writes a seam contract. Refuses a brief missing Out, Check, or Owns, and writes nothing.</p><span class="verb">refuses</span></div>
+      <div class="tool"><span class="tname">swarm</span><p>Takes two to ten seams, proves their exact files are disjoint, writes every brief in one call, returns one dispatch prompt each.</p><span class="verb">refuses overlap</span></div>
+      <div class="tool"><span class="tname">check</span><p>Runs the repo's proving commands and binds pass or fail to a specific HEAD.</p><span class="verb">binds</span></div>
+      <div class="tool"><span class="tname">scope</span><p>Compares every touched path with the brief's Owns list and names what left the seam.</p><span class="verb">audits</span></div>
+      <div class="tool"><span class="tname">ready</span><p>The landing gate. GO or NO-GO, with every failing reason named in a sentence you can act on.</p><span class="verb">gates</span></div>
+      <div class="tool"><span class="tname">clean</span><p>The closing sweep. Removes only what the plugin itself left under <span class="mono">.stack/</span>, and names the junk that is not its own without deleting it.</p><span class="verb">sweeps</span></div>
+    </div>
+  </section>
+
+  <section id="refuses">
+    <div class="sec-head"><span class="sec-num">04</span><h2>What it refuses</h2></div>
+    <p class="sec-sub">A system is defined by what it will not do. These are enforced by code, not by prose a model can skip under pressure.</p>
+    <div class="refusals">
+      <div class="refuse"><span class="x">✕</span><div><b>A brief with a hole</b><span>No Out, no Check, or no Owns means no file, no dispatch, no work.</span></div></div>
+      <div class="refuse"><span class="x">✕</span><div><b>Green from another head</b><span>A check that ran before HEAD moved is stale, and the gate says which two shas disagree.</span></div></div>
+      <div class="refuse"><span class="x">✕</span><div><b>A seam with no report</b><span>Outcome, Evidence, Unverified, Scope, Lesson. The report is not optional paperwork.</span></div></div>
+      <div class="refuse"><span class="x">✕</span><div><b>Two workers, one file</b><span>Same branch, same folder, same package are all fine. Same file is one seam with two owners, so the swarm refuses it.</span></div></div>
+      <div class="refuse"><span class="x">✕</span><div><b>A quiet widening</b><span>Any path outside Owns is named. It needs its own brief or a line explaining why it belongs.</span></div></div>
+      <div class="refuse"><span class="x">✕</span><div><b>A worker who delegates</b><span>The employee agent denies the subagent action outright. One seat, one writer.</span></div></div>
+      <div class="refuse"><span class="x">✕</span><div><b>The author's own verdict</b><span>A verdict comes from a context that wrote none of the work. Otherwise it is smoke, and marked as such.</span></div></div>
+      <div class="refuse"><span class="x">✕</span><div><b>A plan waiting for a signature</b><span>A reversible call inside the tree is the lead's. A plan is not a permission slip; the check is the approval.</span></div></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="sec-num">05</span><h2>What it looks like</h2></div>
+    <div class="term">
+      <div class="bar"><span class="lamp"></span><span class="lamp"></span><span class="lamp"></span><span style="margin-left:8px">stack-ready retry-budget</span></div>
+      <div class="body">
+        <div><span class="ok">## GO</span> — seam retry-budget</div>
+        <div>&nbsp;</div>
+        <div><span class="p">-</span> pass <span class="c">·</span> brief: .stack/briefs/retry-budget.md</div>
+        <div><span class="p">-</span> pass <span class="c">·</span> report declares nothing unverified</div>
+        <div><span class="p">-</span> pass <span class="c">·</span> checks green at <span class="key">4f2c1ab</span>: unit, lint</div>
+        <div><span class="p">-</span> pass <span class="c">·</span> tree clean at <span class="key">4f2c1ab</span> on retry-budget</div>
+        <div>&nbsp;</div>
+        <div><span class="c">Land it: one commit, plain words, the check output in the message body.</span></div>
+      </div>
+    </div>
+    <div class="term" style="margin-top:14px">
+      <div class="bar"><span class="lamp"></span><span class="lamp"></span><span class="lamp"></span><span style="margin-left:8px">stack-ready retry-budget — after a quiet widening</span></div>
+      <div class="body">
+        <div><span class="bad">## NO-GO</span> — seam retry-budget</div>
+        <div>&nbsp;</div>
+        <div><span class="p">-</span> pass <span class="c">·</span> checks green at <span class="key">4f2c1ab</span>: unit, lint</div>
+        <div><span class="p">-</span> <span class="bad">**fail**</span> <span class="c">·</span> uncommitted or out-of-scope paths: src/billing.ts.</div>
+        <div>&nbsp;</div>
+        <div><span class="c">Nothing lands on a named reason. Fix the reason, not the wording.</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="state">
+    <div class="sec-head"><span class="sec-num">06</span><h2>Memory on disk</h2></div>
+    <div class="split">
+      <div>
+        <p class="sec-sub" style="margin-top:0">Conversation memory does not survive compaction. Controllers that lost their place have re-run entire finished sequences, the most expensive failure this system exists to prevent.</p>
+        <div class="tree" style="margin-top:22px">
+          <div><span class="dir">.stack/</span></div>
+          <div>&nbsp;&nbsp;ledger.md <span class="cm"># append-only, one stamped line per event</span></div>
+          <div>&nbsp;&nbsp;digest.md <span class="cm"># derived: needs you / new / in progress</span></div>
+          <div>&nbsp;&nbsp;briefs/&lt;id&gt;.md <span class="cm"># the seam contract</span></div>
+          <div>&nbsp;&nbsp;reports/&lt;id&gt;.md <span class="cm"># what was found and proved</span></div>
+          <div>&nbsp;&nbsp;state/checks.json <span class="cm"># last real check, bound to a HEAD</span></div>
+          <div>&nbsp;&nbsp;config.json <span class="cm"># this repo's checks and ownership</span></div>
+        </div>
+      </div>
+      <div>
+        <div class="label" style="font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);margin-bottom:14px">The soul, four laws</div>
+        <div class="laws">
+          <div class="law"><span class="k">L1</span><div><b>Name the unknown before you spend a token.</b><span>Assumptions stated. Two readings put on the table. Stop when the picture is unclear.</span></div></div>
+          <div class="law"><span class="k">L2</span><div><b>The smallest change that closes the seam.</b><span>No speculative flexibility. Two hundred lines that could be fifty is fifty.</span></div></div>
+          <div class="law"><span class="k">L3</span><div><b>Touch only your seam.</b><span>Every changed line traces to the ask. Orphans you made, you delete.</span></div></div>
+          <div class="law"><span class="k">L4</span><div><b>Prove it, or say you did not.</b><span>Success is a check that can go red. <span class="mono">Unverified:</span> is a first-class line.</span></div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span>MIT · private build · OpenCode 2.2.6 · Node 20+ · git optional</span>
+    <span>lineage: <a href="../SOURCES.md">SOURCES.md</a></span>
+  </footer>
+
+</div>
+</body>
+</html>
+
