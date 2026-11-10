@@ -2,11 +2,37 @@
 
 One entry per landed pass. Written in plain words; internals live in the commit bodies.
 
+## Unreleased
+
+The close seals itself, and the receipt is evidence.
+
+**Added.** A `close` op=run that returns GO arms the close itself: the idle gate applies `[done]` from the sealed report, so no typed phrase is needed. `show`, `preflight`, and a refused run arm nothing.
+
+**Changed.** The receipt is signed now. It binds the full 40-hex HEAD, a uuid receipt id, a check run at that HEAD with every result green and exit 0, a passing preflight, a timestamp inside the commit's window, and a lesson of at least 8 characters. The signature is an HMAC-SHA256 keyed by a secret outside the repository. It stops a typed receipt; it does not stop someone who can read the secret.
+
+**Changed.** Every NO-GO writes a refusal record (`go: false`) over the old GO; nothing is deleted. A refused close destroys an earlier GO on purpose. A receipt older than the run is never overwritten by a later refusal; a newer refusal replaces an older GO; two simultaneous runs end with the later receipt.
+
+**Changed.** Sealing fires one real session compaction with a 15-second deadline; a failed or timed-out compaction does not stop the seal. The digest is rewritten from the ledger before the report, and is not the compaction. The ceremony order is checks, sweep, junk report, lesson, digest, atlas.
+
+**Changed.** All four spellings reach the same tool (`stack_close`, `stack.close`, `oc_stack_close`, `oc.stack.close`). `brief` and `swarm` prove file-disjointness inside the state lock. Reserved Windows device names are refused as seam ids, and no seam may claim `.stack/state/**`. `force` is `true` or absent; statuses are a closed set; an unquoted absolute path with a space in a check command is refused rather than silently split.
+
+**Changed.** Detected checks are installed once, when the config is created or corrupt — never appended afterwards, so a trimmed list stays trimmed. `Cargo.toml` yields `cargo test` only when it declares a `[package]` table or a `[workspace]` naming at least one member.
+
+**Fixed.** On Windows, `npm`/`npx`/`pnpm`/`yarn`/`corepack` route through the shell, and a failed direct spawn falls back to the shell. Atomic writes retry on a busy file, a lock names its holder so a dead one is recovered at once, and a leading BOM in a JSON state file is ignored instead of treated as corruption.
+
 ## 0.4.0
 
 The close is a command, not advice.
 
-**Added.** The session title carries the live status: `[active]` while work moves, `[parked]` when the owner says stop (or a run is interrupted), `[done]` only when the close returns GO. Say "close session", "wrap it up", "we’re done" or "seal it" and the plugin appends the directive: `stack_close` op=preflight first — it lists every open ticket (unanswered ASK, unlanded brief, missing audit, dirty tree, no checks, failing atlas) — settle each one, then op=run with one lesson. It runs the check at the final tree, sweep, report, digest, lesson and atlas, and seals the GO receipt in `state/close.json`; op=show reads it back. A hand-typed `[done]` without a valid receipt is refused.
+**Added.** The session title carries the live status: `[active]` while work moves, `[parked]` when the owner says stop (or a run is interrupted), `[done]` only when the close returns GO. Say "close session", "wrap it up", "we're done" or "seal it" and the plugin appends the directive: `close` op=preflight first — it lists every open ticket (unanswered ASK, unlanded brief, missing audit, dirty tree, no checks, failing atlas) — settle each one, then op=run with one lesson. It runs the checks, the sweep, the junk report, the lesson, the digest and the atlas at the final tree, and seals the GO receipt in `state/close.json`; op=show reads it back. A hand-typed `[done]` without a valid receipt is refused. If the close goes green, you don't need to say any magic words — the session seals itself with `[done]` after the final report.
+
+**The receipt is signed.** It binds the full 40-hex HEAD, a uuid, a check run at that HEAD with every result green, a passing preflight, a lesson of at least 8 characters, and an HMAC signature keyed outside the repo. A typed-up receipt no longer passes; someone holding the machine's secret still could.
+
+**A refused close leaves a tombstone, not a hole.** Every NO-GO writes `{ go: false, ... }` over `state/close.json`, so an earlier GO cannot survive a later failure. Two closes racing each other end with the later receipt.
+
+**The seal compacts the session.** Sealing fires one real session compaction with a 15-second deadline; a compaction that fails or hangs never stops the seal. The digest file is separate — rewritten from the ledger, not the compaction.
+
+**Changed.** The `stacked-pls` Close is one fixed path now: preflight, settle, run — a NO-GO names the reason to fix, and only a GO makes `[done]` possible. All four spellings of a stack tool work (`stack_close`, `stack.close`, `oc_stack_close`, `oc.stack.close`). Node-package-manager checks (`npm`, `npx`, `pnpm`, `yarn`, `corepack`) run through the shell on Windows instead of failing to start, with a shell fallback when a direct spawn fails. Your `.stack/config.json` is yours after the first seed: detected checks are installed once and never appended over your choices — delete or corrupt the config to re-detect. Rust repos only get a `cargo test` check when the manifest can actually build tests; an empty virtual workspace adds none. A seam cannot take a reserved device name or claim `.stack/state/**`, `force` is `true` or absent, and a check command with an unquoted absolute path containing a space is refused rather than silently split.
 
 **Changed.** The `stacked-pls` Close is one fixed path now: preflight, settle, run — a NO-GO names the reason to fix, and only a GO makes `[done]` possible.
 
@@ -50,7 +76,7 @@ The release that stopped trusting itself.
 
 **State that survives a crash.** Index writes are atomic and locked; the ledger tolerates CRLF and a missing trailing newline; a corrupt `briefs.json` is reported instead of silently replaced by an empty one; the digest renders the intake objective from the whole ledger, not the last window.
 
-**Windows-grown correctness.** `git status --porcelain -z` is parsed with its NUL separators intact, so a rename names both paths and a created file cannot hide. The check runner keeps NULs, decodes UTF-16 when it sees it, quotes `/c` correctly, kills a timed-out process tree, and refuses to run a `.cmd` shim without a shell.
+**Windows-grown correctness.** `git status --porcelain -z` is parsed with its NUL separators intact, so a rename names both paths and a created file cannot hide. The check runner keeps NULs, decodes UTF-16 when it sees it, quotes `/c` correctly, kills a timed-out process tree, and routes `npm`/`npx`/`pnpm`/`yarn`/`corepack` through the shell on Windows, treating status `-4058`/`9009` as a failed start with shell fallback. Atomic writes retry `EPERM`/`EACCES`/`EBUSY`, a lock records its pid so a dead holder is recovered immediately, and a leading BOM in a JSON state file is ignored rather than treated as corruption.
 
 **Auto-maintained.** `.stack/` is seeded on first sight of a project and re-seeded without ever removing a hand-written check. It carries its own `.gitignore`, so `state/` and `plugin.log` never enter your history.
 

@@ -32,15 +32,43 @@ const MANIFESTS = ['package.json', 'pyproject.toml', 'go.mod', 'Cargo.toml', 'Ma
 const sleepCell = new Int32Array(new SharedArrayBuffer(4));
 const pause = (ms) => Atomics.wait(sleepCell, 0, 0, ms);
 
+/** JSON.parse that ignores a leading UTF-8 BOM: Notepad writes one, and it is not corruption. */
+const parseJson = (raw) => JSON.parse(raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw);
+
+/** Windows refuses a rename while another handle briefly holds the destination. */
+const RENAME_RETRIES = 4;
+
 /**
  * Write a file by writing `<file>.tmp` and renaming it. A crash or a full disk
- * leaves the old file intact instead of a truncated one.
+ * leaves the old file intact instead of a truncated one. Windows fails that
+ * rename with EPERM/EACCES/EBUSY while an editor, antivirus or a second session
+ * holds the destination, so exactly those codes are retried with a short
+ * backoff; any other failure, and the last retry, rethrows with the path named
+ * and removes the temp, so a refused write leaves no litter.
  */
 export function writeAtomic(file, text) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.tmp`;
   fs.writeFileSync(tmp, text, 'utf8');
-  fs.renameSync(tmp, file);
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      fs.renameSync(tmp, file);
+      return;
+    } catch (err) {
+      const busy = err && (err.code === 'EPERM' || err.code === 'EACCES' || err.code === 'EBUSY');
+      if (busy && attempt < RENAME_RETRIES) {
+        pause(10 * 2 ** attempt);
+        continue;
+      }
+      try {
+        fs.unlinkSync(tmp);
+      } catch {
+        /* already gone */
+      }
+      if (err instanceof Error) err.message = `cannot write ${file}: ${err.message}`;
+      throw err;
+    }
+  }
 }
 
 export function ensureStack(dir) {
@@ -74,7 +102,7 @@ export function config(dir) {
   }
   let parsed;
   try {
-    parsed = JSON.parse(raw);
+    parsed = parseJson(raw);
   } catch {
     return corruptConfig();
   }
@@ -97,7 +125,7 @@ export function readJson(dir, rel, fallback) {
     throw new Error(`cannot read ${file}: ${err.message}`);
   }
   try {
-    return JSON.parse(raw);
+    return parseJson(raw);
   } catch (err) {
     throw new Error(`${file} is not valid JSON: ${err.message}`);
   }
@@ -117,10 +145,42 @@ export function writeJson(dir, rel, value) {
 }
 
 /**
+ * The pid a lock names, or null when it is pid-less (written by an older
+ * version), empty or unreadable. A pid-less lock keeps the age rule.
+ */
+function lockPid(file) {
+  try {
+    const raw = fs.readFileSync(file, 'utf8').trim();
+    return /^\d+$/.test(raw) ? Number(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * True only when the lock names a pid that is certain not to exist. `EPERM`
+ * means the process is alive but not ours, so it is not gone, and a pid-less
+ * lock is never judged gone: its age is what the sweep measures.
+ */
+function holderGone(pid) {
+  if (pid === null) return false;
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (err) {
+    return err.code === 'ESRCH';
+  }
+}
+
+/**
  * Run `fn` as the only writer of the stack's state directory.
  *
  * `wx` fails if the lock exists, so the file itself is the mutex. Fifty tries
- * at 20ms is one second of contention before we refuse rather than corrupt.
+ * at 20ms is one second of contention before we refuse rather than corrupt. A
+ * lock whose pid is certainly dead is stale now, not ten minutes from now, so a
+ * crashed holder does not freeze every write until the sweep notices. Release
+ * removes the lock only when it still names this process: a holder that wakes
+ * after its lock was pruned must not unlink the next owner's.
  */
 export function withLock(dir, fn) {
   ensureStack(dir);
@@ -129,8 +189,34 @@ export function withLock(dir, fn) {
   for (let attempt = 0; attempt < 50 && fd === null; attempt += 1) {
     try {
       fd = fs.openSync(file, 'wx');
+      // The pid travels through the fd the exclusive create returned, so the
+      // lock never exists without naming its holder.
+      fs.writeSync(fd, String(process.pid));
     } catch (err) {
+      if (fd !== null) {
+        // The create succeeded and the write did not: this lock is ours to clear.
+        try {
+          fs.closeSync(fd);
+        } catch {
+          /* already closed */
+        }
+        fd = null;
+        try {
+          fs.unlinkSync(file);
+        } catch {
+          /* already gone */
+        }
+        throw err;
+      }
       if (err.code !== 'EEXIST') throw err;
+      if (holderGone(lockPid(file))) {
+        try {
+          fs.unlinkSync(file);
+        } catch {
+          /* another writer removed it first */
+        }
+        continue;
+      }
       pause(20);
     }
   }
@@ -145,10 +231,12 @@ export function withLock(dir, fn) {
     } catch {
       /* already closed */
     }
-    try {
-      fs.unlinkSync(file);
-    } catch {
-      /* someone else cleaned it up */
+    if (lockPid(file) === process.pid) {
+      try {
+        fs.unlinkSync(file);
+      } catch {
+        /* someone else cleaned it up */
+      }
     }
   }
 }
@@ -385,6 +473,103 @@ export function isProject(dir) {
 }
 
 /**
+ * Scan Cargo.toml once, returning two views at the original offsets: `bare`
+ * with comments and strings blanked, and `live` with strings kept and comments
+ * blanked. Structure is read from `bare`, so a `[package]` in a comment or
+ * inside `"""..."""` is not a table and a `#` inside a string is not a comment;
+ * the members list is read from `live`, where a commented-out line is gone.
+ * Returns null for text this reader cannot delimit (an unterminated string,
+ * comment or multi-line string), because that is not a manifest we can trust.
+ */
+function cargoScan(text) {
+  const bare = [];
+  const live = [];
+  const blank = (from, to, keepLive) => {
+    for (let j = from; j < to; j += 1) {
+      const c = text[j];
+      bare.push(c === '\n' ? '\n' : ' ');
+      live.push(keepLive || c === '\n' ? c : ' ');
+    }
+  };
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch === '#') {
+      const end = text.indexOf('\n', i);
+      blank(i, end < 0 ? text.length : end, false);
+      i = end < 0 ? text.length : end;
+      continue;
+    }
+    if (ch !== '"' && ch !== "'") {
+      bare.push(ch);
+      live.push(ch);
+      i += 1;
+      continue;
+    }
+    const triple = text.startsWith(ch.repeat(3), i);
+    let j = i + (triple ? 3 : 1);
+    if (triple) {
+      const close = text.indexOf(ch.repeat(3), j);
+      if (close < 0) return null;
+      j = close + 3;
+    } else {
+      for (; j < text.length; j += 1) {
+        if (text[j] === ch) break;
+        if (text[j] === '\n') return null;
+        if (ch === '"' && text[j] === '\\') j += 1;
+      }
+      if (j >= text.length) return null;
+      j += 1;
+    }
+    blank(i, j, true);
+    i = j;
+  }
+  return { bare: bare.join(''), live: live.join('') };
+}
+
+/** Square brackets and curly braces must balance outside strings and comments. */
+function balanced(text) {
+  let square = 0;
+  let curly = 0;
+  for (const ch of text) {
+    if (ch === '[') square += 1;
+    else if (ch === ']') square -= 1;
+    else if (ch === '{') curly += 1;
+    else if (ch === '}') curly -= 1;
+    if (square < 0 || curly < 0) return false;
+  }
+  return square === 0 && curly === 0;
+}
+
+/**
+ * True when Cargo.toml declares something `cargo test` can build: a `[package]`
+ * table, or a `[workspace]` naming at least one member. An empty virtual
+ * workspace has no tests to run, and a manifest that is unreadable, unparseable
+ * (an unterminated string or an unbalanced bracket) or not understood is not
+ * proof, so all of them add no check. `[workspace.package]` and
+ * `[workspace.dependencies]` are neither of those tables.
+ */
+function cargoDeclaresTests(text) {
+  const scan = cargoScan(text);
+  // Unparseable is treated exactly like unreadable: a bracket that never closes
+  // means every table below it is guesswork, and a header inside a comment or a
+  // multi-line string never reaches this scan at all.
+  if (!scan || !balanced(scan.bare)) return false;
+  const header = /^[ \t]*\[([^\]\r\n]+)\][ \t]*\r?$/gm;
+  const headers = [...scan.bare.matchAll(header)];
+  if (headers.some((h) => h[1].trim() === 'package')) return true;
+  for (let i = 0; i < headers.length; i += 1) {
+    if (headers[i][1].trim() !== 'workspace') continue;
+    const from = headers[i].index + headers[i][0].length;
+    const to = i + 1 < headers.length ? headers[i + 1].index : text.length;
+    const members = /(?:^|\r?\n)[ \t]*members[ \t]*=[ \t]*\[([\s\S]*?)\]/.exec(scan.live.slice(from, to));
+    const strings = members ? members[1].match(/"[^"\r\n]*"|'[^'\r\n]*'/g) || [] : [];
+    if (strings.some((s) => s.slice(1, -1).trim().length > 0)) return true;
+  }
+  return false;
+}
+
+/**
  * The repo's proving commands, detected from its own manifests. Only cheap,
  * well-known commands, and only the ones the project actually declares.
  */
@@ -397,7 +582,7 @@ export function detectChecks(dir) {
 
   if (has('package.json')) {
     try {
-      const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
+      const pkg = parseJson(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
       const scripts = pkg.scripts || {};
       const pm = has('pnpm-lock.yaml') ? 'pnpm' : has('yarn.lock') ? 'yarn' : has('bun.lockb') ? 'bun' : 'npm';
       const verb = pm === 'npm' ? 'npm run' : pm;
@@ -410,7 +595,13 @@ export function detectChecks(dir) {
   }
   if (has('pyproject.toml') || has('pytest.ini') || has('tox.ini') || has('tests')) add('pytest', 'python -m pytest -q');
   if (has('go.mod')) add('go', 'go test ./...');
-  if (has('Cargo.toml')) add('cargo', 'cargo test');
+  if (has('Cargo.toml')) {
+    try {
+      if (cargoDeclaresTests(fs.readFileSync(path.join(dir, 'Cargo.toml'), 'utf8'))) add('cargo', 'cargo test');
+    } catch {
+      /* a manifest we cannot read or parse is no proof of a test suite */
+    }
+  }
   if (has('Makefile')) {
     try {
       if (/^test:/m.test(fs.readFileSync(path.join(dir, 'Makefile'), 'utf8'))) add('make', 'make test');
@@ -425,17 +616,22 @@ export function detectChecks(dir) {
  * Make `.stack/` exist and be useful, without ever destroying what is there.
  *
  * Missing -> create the directories, the config with detected checks, the
- * ledger header, and a first digest. Present -> add any check the manifests now
- * declare that the config does not, union the ignore list, and refresh the
- * digest when the ledger is newer. Custom checks, notes, briefs and reports are
- * never touched. A corrupt config is rewritten, because it has no content to
- * preserve and leaving it means `check` can never run.
+ * ledger header, and a first digest. Present -> union the ignore list and
+ * refresh the digest when the ledger is newer; detected checks are installed
+ * once, when the config is first written, because an existing valid config is
+ * the owner's statement of what proves this repo and seeding must not append
+ * to it. Custom checks, notes, briefs and reports are never touched. A corrupt
+ * config is rewritten, because it has no content to preserve and leaving it
+ * means `check` can never run.
  */
 export function seedStack(dir, { quiet = true } = {}) {
   if (!isProject(dir)) return { ok: false, reason: 'not a project', created: [] };
 
   const created = [];
   const updated = [];
+  // Read before ensureStack writes the default: a seed that finds no config
+  // installs the detected checks, and a seed that finds a valid one does not.
+  const freshConfig = !fs.existsSync(path.join(dir, PATHS.config));
   ensureStack(dir);
   if (!fs.existsSync(path.join(dir, PATHS.ledger))) created.push(PATHS.ledger);
 
@@ -453,9 +649,12 @@ export function seedStack(dir, { quiet = true } = {}) {
   const pruned = sweepStack(dir, { tmpAgeMs: TMP_STALE_MS, apply: true });
 
   const cfgFile = path.join(dir, PATHS.config);
+  const exists = fs.existsSync(cfgFile);
   const cfg = config(dir);
   const corrupt = isCorruptConfig(cfg);
-  const detected = detectChecks(dir);
+  // Installed once: a valid config already answers "what proves this repo", so
+  // a detected check it does not list must not be appended behind the owner.
+  const detected = (freshConfig || corrupt) ? detectChecks(dir) : [];
   const before = JSON.stringify({ ...cfg, checks: cfg.checks, ownership: cfg.ownership });
   const mergedChecks = [...(Array.isArray(cfg.checks) ? cfg.checks : [])];
   for (const check of detected) {
@@ -467,7 +666,6 @@ export function seedStack(dir, { quiet = true } = {}) {
     checks: mergedChecks,
     ownership: { ...(cfg.ownership || {}), ignore: [...ignore] },
   };
-  const exists = fs.existsSync(cfgFile);
   if (corrupt || JSON.stringify(next) !== before || !exists) {
     writeJson(dir, PATHS.config, next);
     if (exists) updated.push(PATHS.config);

@@ -4,6 +4,7 @@
 // that has moved.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { checkRecordReasons, configuredChecks, executeChecks } from './checks.js';
 import { commandAsync } from './exec.js';
@@ -17,18 +18,130 @@ import {
   renderDigest,
   sweepStack,
   tryReadJson,
+  withLock,
   writeJson,
 } from './state.js';
 import { stamps, table } from './text.js';
 
 export const CLOSE_PATH = '.stack/state/close.json';
 
+/**
+ * The one-shot arming record. It is written only by a close that sealed, after
+ * the receipt, so the arming side can tell a receipt this run produced from one
+ * that was already on disk. A refusal never writes it and never deletes it.
+ */
+export const ARMED_PATH = '.stack/state/close-armed.json';
+
 /** A lesson shorter than this is a shrug, not a memory. */
 const MIN_LESSON = 8;
+
+/** The receipt's key: outside the repository, never printed, never logged, never in the digest. */
+const SECRET_FILE = path.join(os.homedir(), '.config', 'opencode', 'oc-stacked.secret');
+const SECRET_BYTES = 32;
+/** A full sha, the uuid a close writes, and an HMAC-SHA256 digest. */
+const SHA = /^[0-9a-f]{40}$/;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const SIG = /^[0-9a-f]{64}$/i;
+/** A receipt dated this far ahead is not evidence of anything that happened. */
+const FUTURE_SLACK_MS = 5 * 60 * 1000;
 
 const str = (v) => (typeof v === 'string' ? v.trim() : '');
 
 const shortSha = (sha) => (sha ? String(sha).slice(0, 7) : 'no-head');
+
+/**
+ * Stable JSON for the signature: keys sorted, no whitespace. Two serialisations
+ * of the same body sign the same, so a re-serialised receipt still verifies.
+ */
+function canonical(value) {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const keys = Object.keys(value).sort();
+    return `{${keys.map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;
+  }
+  return String(JSON.stringify(value));
+}
+
+/** The signed part of a receipt: every field except the signature itself. */
+function bodyOf(receipt) {
+  const body = {};
+  for (const [key, value] of Object.entries(receipt || {})) if (key !== 'sig') body[key] = value;
+  return body;
+}
+
+/** The signature of a receipt body. Exported so a fixture signs exactly what the writer signs. */
+export function signReceipt(receipt) {
+  return crypto.createHmac('sha256', secretForWrite()).update(canonical(bodyOf(receipt))).digest('hex');
+}
+
+/** The machine-local secret, read only. A missing one is never created to validate a receipt. */
+function readSecret() {
+  let hex;
+  try {
+    hex = fs.readFileSync(SECRET_FILE, 'utf8').trim();
+  } catch (err) {
+    const why = err.code === 'ENOENT' ? `there is no secret at \`${SECRET_FILE}\`` : `\`${SECRET_FILE}\` could not be read (${err.message})`;
+    return { secret: null, error: why };
+  }
+  if (!/^[0-9a-f]{64}$/i.test(hex)) return { secret: null, error: `\`${SECRET_FILE}\` is not 32 hex-encoded bytes` };
+  return { secret: Buffer.from(hex, 'hex'), error: null };
+}
+
+/** The same secret, created once on a machine that has never closed. A write path only. */
+function secretForWrite() {
+  const read = readSecret();
+  if (read.secret) return read.secret;
+  const hex = crypto.randomBytes(SECRET_BYTES).toString('hex');
+  try {
+    fs.mkdirSync(path.dirname(SECRET_FILE), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(SECRET_FILE, `${hex}\n`, { mode: 0o600, flag: 'wx' });
+    return Buffer.from(hex, 'hex');
+  } catch (err) {
+    if (err.code !== 'EEXIST') throw new Error(`the close secret could not be written to \`${SECRET_FILE}\`: ${err.message}`);
+    const racing = readSecret();
+    if (!racing.secret) throw new Error(racing.error);
+    return racing.secret;
+  }
+}
+
+/**
+ * Why a receipt's signature does not stand: a missing `sig`, a body that no
+ * longer matches it, and a secret that cannot be read are one verdict. The
+ * reason never contains the secret.
+ */
+function signatureReasons(receipt) {
+  const read = readSecret();
+  if (!read.secret) return [`the receipt has no valid signature: ${read.error}.`];
+  if (typeof receipt.sig !== 'string' || !SIG.test(receipt.sig)) {
+    const said = receipt.sig === undefined ? '`sig` is missing' : '`sig` is not a sha256 digest';
+    return [`the receipt has no valid signature: ${said}.`];
+  }
+  const expected = crypto.createHmac('sha256', read.secret).update(canonical(bodyOf(receipt))).digest();
+  const given = Buffer.from(receipt.sig, 'hex');
+  if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) {
+    return ['the receipt has no valid signature: the body does not match `sig`.'];
+  }
+  return [];
+}
+
+/** The commit time of `sha` in ms, or null when git cannot name it. */
+function committedAt(dir, sha) {
+  if (!SHA.test(String(sha))) return null;
+  const r = git(dir, ['show', '-s', '--format=%ct', String(sha)]);
+  if (!r.ok) return null;
+  const seconds = Number(String(r.out).trim());
+  return Number.isFinite(seconds) ? seconds * 1000 : null;
+}
+
+/**
+ * True when a receipt on disk is dated after this run started, so it was written
+ * by a later ceremony and this run's news is stale. Two closes can overlap; the
+ * later fact wins, and an older run must not overwrite it.
+ */
+function newerThan(receipt, startedAt) {
+  const at = Date.parse(receipt && receipt.at);
+  return Number.isFinite(at) && at > Date.parse(startedAt);
+}
 
 /** The stack's own state never makes the tree dirty: it churns on every call. */
 const isStackPath = (file) => {
@@ -49,10 +162,73 @@ export function readClose(dir) {
 }
 
 /**
+ * Every way a receipt can fail to be evidence: its own fields, its binding to
+ * this tree, and its signature. Each failure is named, so one run repairs all
+ * of them. An empty array is the only green.
+ */
+function evidenceReasons(receipt, dir) {
+  const said = [];
+  const head = typeof receipt.head === 'string' ? receipt.head : '';
+
+  if (receipt.sealed !== head.slice(0, 7)) {
+    said.push(`the receipt's \`sealed\` is not the first 7 characters of its head (${JSON.stringify(receipt.sealed)}).`);
+  }
+  if (typeof receipt.receipt_id !== 'string' || !UUID.test(receipt.receipt_id)) {
+    said.push(`the receipt's \`receipt_id\` is not the uuid a close writes (${JSON.stringify(receipt.receipt_id)}).`);
+  }
+
+  const checks = receipt.checks;
+  if (!checks || typeof checks !== 'object' || Array.isArray(checks)) {
+    said.push('the receipt records no check run, so nothing was proved.');
+  } else {
+    if (checks.head !== head) {
+      said.push(`the check run is bound to ${shortSha(checks.head)}, not the receipt's head (${shortSha(head)}).`);
+    }
+    if (!Array.isArray(checks.results) || !checks.results.length) {
+      said.push('the receipt records no check results, so nothing was proved.');
+    } else {
+      checks.results.forEach((result, i) => {
+        const name = result && typeof result.name === 'string' ? result.name : `#${i + 1}`;
+        if (!result || result.ok !== true) said.push(`check \`${name}\` is not green (ok: ${JSON.stringify(result && result.ok)}).`);
+        if (!result || typeof result.code !== 'number' || result.code !== 0) {
+          said.push(`check \`${name}\` exited ${JSON.stringify(result && result.code)}, not 0.`);
+        }
+      });
+    }
+  }
+
+  const criteria = Array.isArray(receipt.criteria) && receipt.criteria.length ? receipt.criteria : null;
+  if (!criteria) said.push('the receipt records no criteria, so no step was shown to hold.');
+  else if (!criteria.some((c) => c && c.id === 'preflight' && c.status === 'pass')) {
+    said.push("the receipt's criteria do not include a passing `preflight`.");
+  }
+
+  const at = Date.parse(receipt.at);
+  if (typeof receipt.at !== 'string' || Number.isNaN(at)) {
+    said.push(`the receipt's \`at\` is not a date (${JSON.stringify(receipt.at)}).`);
+  } else {
+    if (at - Date.now() > FUTURE_SLACK_MS) said.push("the receipt's `at` is more than 5 minutes in the future.");
+    const committed = committedAt(dir, head);
+    if (committed !== null && at < committed) said.push("the receipt's `at` is earlier than the commit it seals.");
+  }
+
+  const lesson = str(receipt.lesson);
+  if (!lesson) said.push('the receipt records no lesson.');
+  else if (lesson.length < MIN_LESSON) {
+    said.push(`the receipt's lesson is ${lesson.length} character${lesson.length === 1 ? '' : 's'}; a close needs at least ${MIN_LESSON}.`);
+  }
+
+  said.push(...signatureReasons(receipt));
+  return said;
+}
+
+/**
  * Why `[done]` cannot be claimed right now. An empty array is the only green:
- * a git repository holds a receipt, it says GO, it was not invalidated, it was
- * written at the HEAD that is checked out now, and nothing outside `.stack` has
- * been touched since. A non-git directory can never be green: no HEAD, no binding.
+ * a git repository holds a signed receipt, it says GO, it was not invalidated,
+ * it was written at the HEAD that is checked out now, its own evidence holds,
+ * and nothing outside `.stack` has been touched since. A non-git directory can
+ * never be green: no HEAD, no binding. A tombstone is a refusal and nothing
+ * else: it is reported as one reason and never read as evidence.
  */
 export function closeReasons(dir) {
   const read = readClose(dir);
@@ -61,33 +237,59 @@ export function closeReasons(dir) {
   }
   const receipt = read.value;
   if (!receipt) return [`no close receipt at \`${CLOSE_PATH}\`. Sealing needs \`close\` op=run with a lesson.`];
+  if (typeof receipt !== 'object' || Array.isArray(receipt)) {
+    return [`\`${CLOSE_PATH}\` is not a receipt object. Run \`close\` op=run to replace it.`];
+  }
+
+  // A tombstone is a NO-GO that happened. It is not evidence, and no field of it
+  // is checked: a refusal record carrying a signature must still never validate.
+  if (receipt.go !== true) {
+    const why = Array.isArray(receipt.reasons) && receipt.reasons.length ? String(receipt.reasons[0]) : null;
+    return [
+      why
+        ? `the last close was refused: ${why}`
+        : `the recorded close is not a GO (go: ${JSON.stringify(receipt.go)}).`,
+    ];
+  }
 
   const reasons = [];
-  if (receipt.go !== true) reasons.push(`the recorded close is not a GO (go: ${JSON.stringify(receipt.go)}).`);
-  if (!isRepo(dir)) {
+  const repo = isRepo(dir);
+  const now = repo ? head(dir) : null;
+  if (!repo) {
     reasons.push('not a git repository: a close needs a HEAD to bind the receipt.');
-  } else {
-    const now = head(dir);
-    if (!receipt.head) reasons.push('the receipt records no HEAD, so it cannot be bound to this tree.');
-    else if (now && receipt.head !== now) reasons.push(`the receipt is for ${shortSha(receipt.head)} but HEAD is ${shortSha(now)}.`);
+  } else if (!receipt.head) {
+    reasons.push('the receipt records no HEAD, so it cannot be bound to this tree.');
+  } else if (!SHA.test(String(receipt.head))) {
+    reasons.push(`the receipt's \`head\` is not a full 40-character lowercase sha (${JSON.stringify(receipt.head)}).`);
+  } else if (now && receipt.head !== now) {
+    reasons.push(`the receipt is for ${shortSha(receipt.head)} but HEAD is ${shortSha(now)}.`);
   }
   // The tested tree was clean outside .stack. An edit since then is not covered.
   if (dirtyOutside(dir).length) {
     reasons.push('the working tree has uncommitted work outside .stack; the receipt covers a clean tree.');
   }
   if (receipt.invalidated) reasons.push(`the receipt was invalidated: ${receipt.invalidated}.`);
+
+  reasons.push(...evidenceReasons(receipt, dir));
   return reasons;
 }
 
 /**
  * Mark a live GO stale. The receipt keeps its evidence and gains the reason, so
  * the next reader sees why `[done]` went away instead of finding nothing.
- * Returns the new receipt, or null when there was nothing to invalidate.
+ * Returns the new receipt, or null when there was nothing to invalidate. A
+ * tombstone is already a refusal and is left alone; what this writes, it signs,
+ * so the only reason an invalidated receipt carries is that it was invalidated.
  */
 export function invalidateClose(dir, reason) {
   const read = readClose(dir);
-  if (read.error || !read.value || read.value.invalidated) return null;
+  if (read.error || !read.value || read.value.invalidated || read.value.go !== true) return null;
   const next = { ...read.value, invalidated: str(reason) || 'invalidated', invalidatedAt: stamps().iso };
+  try {
+    next.sig = signReceipt(next);
+  } catch {
+    /* the secret is gone: an unsigned invalidated receipt is refused anyway */
+  }
   writeJson(dir, CLOSE_PATH, next);
   return next;
 }
@@ -308,53 +510,97 @@ export async function preflight(dir, { lesson = '', atlas: runAtlas = true } = {
   return { blockers, notes, text, atlas, dirty, junk, head: headAt, branch: branchAt };
 }
 
-/** A refusal made before any work: no receipt is written and none is deleted. */
-const refused = (text) => ({ ok: false, text, receipt: null });
+/**
+ * A refusal leaves a tombstone, never a deletion. Windows refuses to unlink a
+ * file another process holds, and a call that "tried" is not a gate: the atomic
+ * overwrite is the operation the platform actually permits. The write happens
+ * under the state lock and only over an older receipt, so a later ceremony's GO
+ * is never destroyed by a refusal that arrived late. A tombstone that cannot be
+ * written throws, because a NO-GO that leaves a readable GO is not a NO-GO, and
+ * the arming side must find no record to act on.
+ */
+function refuse(dir, reasons, { done = [], before = false, startedAt } = {}) {
+  const tombstone = {
+    go: false,
+    receipt_id: crypto.randomUUID(),
+    at: stamps().iso,
+    startedAt,
+    head: head(dir),
+    reasons: reasons.map(String),
+  };
+
+  let kept = null;
+  let failure = null;
+  try {
+    withLock(dir, () => {
+      const current = tryReadJson(dir, CLOSE_PATH, null).value;
+      if (current && typeof current === 'object' && current.go === true && newerThan(current, startedAt)) {
+        kept = current;
+        return;
+      }
+      writeJson(dir, CLOSE_PATH, tombstone);
+    });
+  } catch (err) {
+    failure = err;
+  }
+
+  const tail = failure
+    ? `**The refused close could not replace \`${CLOSE_PATH}\` (${failure.message}). Delete it by hand: until it is gone the old receipt may still read as GO.**`
+    : kept
+      ? `A later close is already sealed at ${shortSha(kept.head)} (${kept.receipt_id}); its receipt was kept, so this refusal did not overwrite it.`
+      : `\`${CLOSE_PATH}\` now holds a refusal record (\`go: false\`), so an earlier GO cannot survive this failure.`;
+
+  const text = [
+    '## NO-GO — close',
+    '',
+    ...(before ? ['Refused before any work.', ''] : []),
+    ...reasons.map((r) => `- **fail** · ${r}`),
+    ...(done.length ? ['', ...done.map((d) => `- done · ${d}`)] : []),
+    '',
+    tail,
+    'Fix the reasons, not the wording, then run the close again.',
+  ].join('\n');
+
+  if (failure) {
+    // The old receipt is still readable, so nothing about this state may look
+    // like a NO-GO. Take the arming record away and throw instead of returning.
+    try {
+      fs.rmSync(path.join(dir, ARMED_PATH), { force: true });
+    } catch {
+      /* best effort: the throw below is the gate */
+    }
+    log(dir, 'RED', `close NO-GO: ${reasons.join('; ')}; the refusal record could not replace ${CLOSE_PATH} (${failure.message})`);
+    throw new Error(text);
+  }
+  log(dir, 'RED', `close NO-GO: ${reasons.join('; ')}`);
+  return { ok: false, text, receipt: null };
+}
 
 /**
  * Seal the session, in one order that cannot be skipped: the checks, the sweep,
- * the junk report, the lesson, the digest, the atlas. Any red deletes a previous
- * receipt and logs RED, so an old GO can never survive a failed close.
+ * the junk report, the lesson, the digest, the atlas. Any red replaces a previous
+ * receipt with a tombstone and logs RED, so an old GO can never survive a failed
+ * close, and a GO also leaves the one-shot arming record for the title gate.
+ * Both writes carry this run's `startedAt` and happen under the state lock, so
+ * two overlapping ceremonies order themselves instead of overwriting each other.
  */
 export async function runClose(dir, { lesson } = {}) {
+  // Before the first await: the instant this ceremony began, which is what the
+  // receipt ordering compares against, never a clock read after the work.
+  const startedAt = stamps().iso;
   const said = str(lesson);
   if (!said) {
-    return refused(
-      `## NO-GO — close\n\nRefused before any work: a close needs \`lesson\`, one sentence the next session must not lose.\n\nNothing was written, and any receipt already on disk was left alone.`,
-    );
+    return refuse(dir, ['a close needs `lesson`, one sentence the next session must not lose.'], { before: true, startedAt });
   }
   if (said.length < MIN_LESSON) {
-    return refused(
-      `## NO-GO — close\n\nRefused before any work: the lesson is ${said.length} character${said.length === 1 ? '' : 's'} and a close needs at least ${MIN_LESSON}. Write the fact the next session cannot rediscover.\n\nNothing was written, and any receipt already on disk was left alone.`,
-    );
+    const size = `${said.length} character${said.length === 1 ? '' : 's'}`;
+    return refuse(dir, [`the lesson is ${size} and a close needs at least ${MIN_LESSON}.`], { before: true, startedAt });
   }
-
-  const red = (reasons, done) => {
-    let leftover = '';
-    try {
-      fs.rmSync(path.join(dir, CLOSE_PATH), { force: true });
-    } catch (err) {
-      leftover = `the previous receipt could not be deleted (${err.message})`;
-    }
-    if (fs.existsSync(path.join(dir, CLOSE_PATH))) leftover = leftover || 'the previous receipt is still on disk';
-    log(dir, 'RED', `close NO-GO: ${reasons.join('; ')}`);
-    const text = [
-      '## NO-GO — close',
-      '',
-      ...reasons.map((r) => `- **fail** · ${r}`),
-      ...(done.length ? ['', ...done.map((d) => `- done · ${d}`)] : []),
-      '',
-      'Nothing was sealed. Any earlier receipt was deleted, so an old GO cannot survive this failure.',
-      'Fix the reasons, not the wording, then run the close again.',
-      ...(leftover ? ['', `**Warning:** ${leftover}; it may still read as GO. Delete it by hand.`] : []),
-    ].join('\n');
-    return { ok: false, text, receipt: null };
-  };
 
   // The owner's order: open tickets first, and no ceremony over one of them.
   const pre = await preflight(dir, { lesson: said, atlas: true });
   if (pre.blockers.length) {
-    return { ...red(pre.blockers, []), preflight: pre };
+    return { ...refuse(dir, pre.blockers, { startedAt }), preflight: pre };
   }
 
   const done = [];
@@ -404,17 +650,18 @@ export async function runClose(dir, { lesson } = {}) {
     );
   }
 
-  if (reasons.length) return { ...red(reasons, done), preflight: pre };
+  if (reasons.length) return { ...refuse(dir, reasons, { done, startedAt }), preflight: pre };
 
   // 9. Every step green: the receipt that makes [done] possible. The head is the
   // one the checks started at, never a fresh read: a check that moved HEAD has
   // already refused above, and reading again here would hide it.
   const receiptHead = record.head;
-  const receipt = {
+  const body = {
     go: true,
     receipt_id: crypto.randomUUID(),
     sealed: shortSha(receiptHead),
     at: stamps().iso,
+    startedAt,
     head: receiptHead,
     branch: branch(dir),
     // The tested tree. The preflight refuses while anything outside .stack is
@@ -432,8 +679,38 @@ export async function runClose(dir, { lesson } = {}) {
     atlas: pre.atlas,
     dirty: post.dirty,
   };
-  writeJson(dir, CLOSE_PATH, receipt);
-  log(dir, 'CLOSE', `GO at ${shortSha(receipt.head)} on ${receipt.branch || 'detached'}: ${record.results.length} check(s) green, atlas ${pre.atlas.status}`);
+
+  // The signature is what makes a receipt evidence instead of a shape anyone can
+  // type: the body is signed with a key that lives outside the repository, and
+  // the signature is written beside it so what is on disk is what was signed.
+  let receipt;
+  try {
+    receipt = { ...body, sig: signReceipt(body) };
+  } catch (err) {
+    return { ...refuse(dir, [`the receipt could not be signed: ${err.message}. Fix \`${SECRET_FILE}\` and close again.`], { done, startedAt }), preflight: pre };
+  }
+
+  // The ordering rule: a GO replaces anything older and nothing newer. A later
+  // ceremony's receipt is the later fact, so this one keeps it.
+  let kept = null;
+  let armed = 'written';
+  withLock(dir, () => {
+    const current = tryReadJson(dir, CLOSE_PATH, null).value;
+    if (current && typeof current === 'object' && newerThan(current, startedAt)) {
+      kept = current;
+      return;
+    }
+    writeJson(dir, CLOSE_PATH, receipt);
+    // The one-shot arming record, written after the receipt and never before: a
+    // refused run must leave an earlier record alone for the consumer to consume.
+    try {
+      writeJson(dir, ARMED_PATH, { receipt_id: receipt.receipt_id, head: receipt.head, at: stamps().iso });
+    } catch (err) {
+      armed = `not written (${err.message}); the seal stands, the title stays active`;
+    }
+  });
+  if (kept) armed = `not written: a later close is sealed at ${shortSha(kept.head)}`;
+  log(dir, 'CLOSE', `GO at ${shortSha(receipt.head)} on ${receipt.branch || 'detached'}: ${record.results.length} check(s) green, atlas ${pre.atlas.status}, armed ${armed}`);
 
   const text = [
     `## GO — close at ${shortSha(receipt.head)} (${receipt.branch || 'detached'})`,
@@ -448,12 +725,15 @@ export async function runClose(dir, { lesson } = {}) {
         ['digest', `rewritten at ${PATHS.digest}`],
         ['atlas', `${pre.atlas.status}${pre.atlas.code === null ? '' : ` (exit ${pre.atlas.code})`}`],
         ['tree', post.dirty.length ? post.dirty.join(', ') : 'clean outside .stack'],
-        ['receipt', `${CLOSE_PATH} (${receipt.receipt_id})`],
+        ['receipt', kept ? `${CLOSE_PATH} kept from a later close (${kept.receipt_id})` : `${CLOSE_PATH} (${receipt.receipt_id}, signed)`],
+        ['armed', armed],
       ],
     ),
     '',
-    'Sealed. `[done]` is legitimate at this head until a new turn starts.',
-    `SEALED ${receipt.sealed}`,
+    kept
+      ? `A later close is already sealed at ${shortSha(kept.head)}; its receipt was kept.`
+      : 'Sealed. `[done]` is legitimate at this head until a new turn starts.',
+    `SEALED ${shortSha(kept ? kept.head : receipt.sealed)}`,
   ].join('\n');
   return { ok: true, text, receipt };
 }

@@ -8,47 +8,50 @@
  *
  * Split out of scripts/check.mjs; the runner is scripts/check/index.mjs.
  */
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import plugin from '../../index.js';
+import { signReceipt } from '../../lib/close.js';
 import { STATUS, intentOf, isDone, statusOf, stripStatus, withStatus } from '../../lib/title.js';
 import { head } from '../../lib/git.js';
 
 export async function register(ctx) {
-  const { check, checkAsync, assert, configuredRepo } = ctx;
+  const { check, checkAsync, assert, configuredRepo, runIn } = ctx;
 
   const INTENT = path.join('.stack', 'state', 'close-intent.json');
   const RECEIPT = path.join('.stack', 'state', 'close.json');
+  const ARMED = path.join('.stack', 'state', 'close-armed.json');
   const LEDGER = path.join('.stack', 'ledger.md');
   const intentFile = (d) => path.join(d, INTENT);
   const ledgerOf = (d) => (fs.existsSync(path.join(d, LEDGER)) ? fs.readFileSync(path.join(d, LEDGER), 'utf8') : '');
 
-  /** A receipt that is a GO at this HEAD, so the idle gate has something to seal. */
-  const writeReceipt = (d) => {
+  /**
+   * A receipt the close code accepts: a real uuid, this HEAD, the same HEAD on
+   * the check run, a passing preflight criterion, a fresh `at`, and the HMAC the
+   * writer signs. A hand-written shape is not evidence without it.
+   */
+  const writeReceipt = (d, patch = {}) => {
     const sha = head(d);
+    const at = new Date().toISOString();
+    const body = {
+      go: true,
+      receipt_id: crypto.randomUUID(),
+      sealed: sha.slice(0, 7),
+      at,
+      head: sha,
+      branch: 'main',
+      tree: [],
+      criteria: [{ id: 'preflight', status: 'pass', evidence: [] }],
+      checks: { at, head: sha, results: [{ name: 'ok', ok: true, code: 0, ms: 1 }] },
+      sweep: { removed: [], kept: [] },
+      junk: [],
+      atlas: { status: 'not configured', code: null, ms: 0 },
+      lesson: 'a fixture receipt, written by the check itself',
+      ...patch,
+    };
     fs.mkdirSync(path.join(d, '.stack', 'state'), { recursive: true });
-    fs.writeFileSync(
-      path.join(d, RECEIPT),
-      JSON.stringify(
-        {
-          go: true,
-          receipt_id: 'fixture-receipt',
-          sealed: sha.slice(0, 7),
-          at: new Date().toISOString(),
-          head: sha,
-          branch: 'main',
-          tree: [],
-          criteria: [{ id: 'preflight', status: 'pass', evidence: [] }],
-          checks: { at: new Date().toISOString(), head: sha, results: [{ name: 'ok', ok: true, code: 0, ms: 1 }] },
-          sweep: { removed: [], kept: [] },
-          junk: [],
-          atlas: { status: 'not configured', code: null, ms: 0 },
-          lesson: 'a fixture receipt, written by the check itself',
-        },
-        null,
-        2,
-      ),
-    );
+    fs.writeFileSync(path.join(d, RECEIPT), JSON.stringify({ ...body, sig: signReceipt(body) }, null, 2));
   };
 
   const writeIntent = (d, sessionID, attempts = 0) => {
@@ -595,5 +598,236 @@ export async function register(ctx) {
     assert(f.titleOf('ses_a') === '[active] retry budget', `a named session was not prefixed: ${f.titleOf('ses_a')}`);
     f.shut();
     return 'deferred to the host title';
+  });
+
+  // ---------------------------------------------------------------- the close tool arms the loop
+  //
+  // The run that seals writes the receipt and a one-shot marker naming it; the
+  // execute.after event for that same call consumes the marker and opens the
+  // close intent, so the turn still owes its report and the idle gate seals it
+  // with no typed phrase. Only a marker that names the receipt in hand and is
+  // fresh can arm: a stale GO, and one that `show`, `preflight` or a refused
+  // `run` never earned, must leave the session exactly as it was. The fixture
+  // runs the real tool, because the arming gate reads what that run wrote.
+  const seal = async (d, lesson = 'the close arms its own intent in the tool') => {
+    const out = await runIn(d, 'close', { op: 'run', lesson });
+    assert(/## GO/.test(out), `the fixture close did not seal:\n${out}`);
+    return out;
+  };
+  const goReceipt = (d) => JSON.parse(fs.readFileSync(path.join(d, RECEIPT), 'utf8'));
+  const armMarker = (d, patch = {}) => {
+    const receipt = goReceipt(d);
+    fs.mkdirSync(path.join(d, '.stack', 'state'), { recursive: true });
+    const marker = { receipt_id: receipt.receipt_id, head: receipt.head, at: new Date().toISOString(), ...patch };
+    fs.writeFileSync(path.join(d, ARMED), JSON.stringify(marker));
+    return marker;
+  };
+  const reportMessage = (token) => ({
+    type: 'assistant',
+    content: [
+      {
+        type: 'text',
+        text: `## Outcome\nThe retry budget is sealed.\n\n## Evidence\nnode -e "process.exit(0)" exited 0.\n\n${token}`,
+      },
+    ],
+  });
+
+  await checkAsync('a GO close arms its own intent, and the idle seals from that intent alone', async () => {
+    const f = fixture();
+    await plugin.setup(f.ctx);
+    await seal(f.dir);
+    assert(!fs.existsSync(intentFile(f.dir)), 'the close wrote an intent before the after event');
+    assert(fs.existsSync(path.join(f.dir, ARMED)), 'the sealed close wrote no arming marker');
+    const token = `SEALED ${head(f.dir).slice(0, 7)}`;
+    f.messages.push(
+      { type: 'user', content: [{ type: 'text', text: 'close the session' }] },
+      reportMessage(token),
+    );
+
+    await f.hook('tool.execute.after')({ tool: 'stack_close', sessionID: 'ses_a', status: 'completed', result: {} });
+    const armed = intentsOf(f.dir);
+    assert(armed.ses_a, `a GO close armed no intent: ${JSON.stringify(armed)}`);
+    assert(armed.ses_a.attempts === 0, `the armed intent did not start at zero: ${JSON.stringify(armed.ses_a)}`);
+    assert(!fs.existsSync(path.join(f.dir, ARMED)), 'the arming marker was not consumed: a later show would arm on this GO');
+
+    // No hand-written intent anywhere: the idle reads only what the tool wrote.
+    await f.hook('session.experimental.idle')({ sessionID: 'ses_a' });
+    assert(f.titleOf('ses_a') === '[done] retry budget', `the armed intent did not seal: ${f.titleOf('ses_a')}`);
+    assert(f.calls.compact.length === 1, `the armed seal fired ${f.calls.compact.length} compaction(s), not one`);
+    assert(!fs.existsSync(intentFile(f.dir)), 'the sealed intent was left open');
+    assert(!f.calls.synthetic.length, `the armed chain nudged the session ${f.calls.synthetic.length} time(s)`);
+    f.shut();
+    return 'GO close armed, one compaction, [done]';
+  });
+
+  await checkAsync('a signed receipt edited after signing is refused by its signature', async () => {
+    const f = fixture();
+    await plugin.setup(f.ctx);
+    writeReceipt(f.dir);
+    // One byte in the body, after the signature was written: the lesson's last
+    // character. The shape is untouched, so only the signature can catch it.
+    const file = path.join(f.dir, RECEIPT);
+    const receipt = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const lesson = receipt.lesson;
+    receipt.lesson = `${lesson.slice(0, -1)}${lesson.endsWith('x') ? 'y' : 'x'}`;
+    fs.writeFileSync(file, JSON.stringify(receipt, null, 2));
+
+    const shown = await runIn(f.dir, 'close', { op: 'show' });
+    assert(/## NO-GO/.test(shown), `a tampered receipt still read as a GO:\n${shown}`);
+    assert(/no valid signature/.test(shown), `the refusal does not name the signature:\n${shown}`);
+    assert(/does not match/.test(shown), `the refusal does not say why the signature fails:\n${shown}`);
+
+    // And it cannot seal: an open intent plus a report is not enough when the
+    // receipt the report names is no longer evidence.
+    writeIntent(f.dir, 'ses_a', 1);
+    f.messages.push(reportMessage(`SEALED ${head(f.dir).slice(0, 7)}`));
+    await f.hook('session.experimental.idle')({ sessionID: 'ses_a' });
+    assert(!isDone(f.titleOf('ses_a')), `a tampered receipt sealed the session: ${f.titleOf('ses_a')}`);
+    assert(fs.existsSync(intentFile(f.dir)), 'a tampered receipt cleared the close intent');
+    f.shut();
+    return 'one byte changed, the signature refuses';
+  });
+
+  await checkAsync('a NO-GO close arms nothing and the idle does not seal', async () => {
+    const f = fixture();
+    await plugin.setup(f.ctx);
+    // One path outside .stack: the ceremony refuses before it writes a receipt.
+    fs.writeFileSync(path.join(f.dir, 'loose.ts'), 'export const loose = 1;\n');
+    const out = await runIn(f.dir, 'close', { op: 'run', lesson: 'a refused close arms nothing at all' });
+    assert(/## NO-GO/.test(out), `the fixture close did not refuse:\n${out}`);
+    f.messages.push(reportMessage(`SEALED ${head(f.dir).slice(0, 7)}`));
+
+    await f.hook('tool.execute.after')({ tool: 'stack_close', sessionID: 'ses_a', status: 'completed', result: {} });
+    assert(!fs.existsSync(intentFile(f.dir)), `a NO-GO close armed an intent: ${JSON.stringify(intentsOf(f.dir))}`);
+
+    await f.hook('session.experimental.idle')({ sessionID: 'ses_a' });
+    assert(!isDone(f.titleOf('ses_a')), `a NO-GO close was sealed: ${f.titleOf('ses_a')}`);
+    assert(f.titleOf('ses_a') === '[parked] retry budget', `the unarmed idle ended ${JSON.stringify(f.titleOf('ses_a'))}`);
+    assert(!f.calls.compact.length, `a NO-GO close fired ${f.calls.compact.length} compaction(s)`);
+    assert(!f.calls.synthetic.length, `a NO-GO close was chased: ${f.calls.synthetic.length} message(s)`);
+    f.shut();
+    return 'NO-GO close, no intent, no seal';
+  });
+
+  // The marker is the one-shot proof this turn ran the close. A GO receipt alone
+  // is not: `op=show`, `op=preflight`, and a `run` refused before writing anything
+  // can all stand beside a receipt an earlier run produced, and none of them owe
+  // a report. So the cases below hold a genuine GO at HEAD and a marker that
+  // cannot be honoured, and every one of them must arm nothing.
+
+  await checkAsync('a GO receipt with no arming marker arms nothing', async () => {
+    const f = fixture();
+    await plugin.setup(f.ctx);
+    await seal(f.dir);
+    fs.rmSync(path.join(f.dir, ARMED), { force: true });
+    const receipt = goReceipt(f.dir);
+    assert(
+      receipt.go === true && receipt.head === head(f.dir),
+      `the fixture receipt is not a GO at HEAD: ${JSON.stringify(receipt)}`,
+    );
+
+    await f.hook('tool.execute.after')({ tool: 'stack_close', sessionID: 'ses_a', status: 'completed', result: {} });
+    assert(!fs.existsSync(intentFile(f.dir)), `a GO with no marker armed an intent: ${JSON.stringify(intentsOf(f.dir))}`);
+    f.shut();
+    return 'GO without a marker, nothing armed';
+  });
+
+  await checkAsync('a marker naming another receipt arms nothing', async () => {
+    const f = fixture();
+    await plugin.setup(f.ctx);
+    await seal(f.dir);
+    armMarker(f.dir, { receipt_id: 'a-receipt-from-another-run' });
+
+    await f.hook('tool.execute.after')({ tool: 'stack_close', sessionID: 'ses_a', status: 'completed', result: {} });
+    assert(!fs.existsSync(intentFile(f.dir)), `a foreign marker armed an intent: ${JSON.stringify(intentsOf(f.dir))}`);
+    f.shut();
+    return 'receipt_id mismatch, nothing armed';
+  });
+
+  await checkAsync('a marker older than the window arms nothing', async () => {
+    const f = fixture();
+    await plugin.setup(f.ctx);
+    await seal(f.dir);
+    armMarker(f.dir, { at: new Date(Date.now() - 10 * 60 * 1000).toISOString() });
+
+    await f.hook('tool.execute.after')({ tool: 'stack_close', sessionID: 'ses_a', status: 'completed', result: {} });
+    assert(!fs.existsSync(intentFile(f.dir)), `a stale marker armed an intent: ${JSON.stringify(intentsOf(f.dir))}`);
+    f.shut();
+    return 'ten minutes old, nothing armed';
+  });
+
+  await checkAsync('a marker that is not JSON arms nothing and does not throw', async () => {
+    const f = fixture();
+    await plugin.setup(f.ctx);
+    await seal(f.dir);
+    fs.writeFileSync(path.join(f.dir, ARMED), '{not json');
+
+    await f.hook('tool.execute.after')({ tool: 'stack_close', sessionID: 'ses_a', status: 'completed', result: {} });
+    assert(!fs.existsSync(intentFile(f.dir)), `an unreadable marker armed an intent: ${JSON.stringify(intentsOf(f.dir))}`);
+    assert(f.titleOf('ses_a') === '[active] retry budget', `the hook did not finish after a bad marker: ${f.titleOf('ses_a')}`);
+    f.shut();
+    return 'bad marker ignored, hook completed';
+  });
+
+  await checkAsync('a close never resets an intent that is already counting', async () => {
+    const f = fixture();
+    await plugin.setup(f.ctx);
+    await seal(f.dir);
+    writeIntent(f.dir, 'ses_a', 3);
+
+    await f.hook('tool.execute.after')({ tool: 'stack_close', sessionID: 'ses_a', status: 'completed', result: {} });
+    assert(intentsOf(f.dir).ses_a.attempts === 3, `the first close reset the loop: ${JSON.stringify(intentsOf(f.dir))}`);
+    await f.hook('tool.execute.after')({ tool: 'stack_close', sessionID: 'ses_a', status: 'completed', result: {} });
+    assert(intentsOf(f.dir).ses_a.attempts === 3, `a second close reset the loop: ${JSON.stringify(intentsOf(f.dir))}`);
+    f.shut();
+    return 'two closes, attempts held at 3';
+  });
+
+  // The host prefixes a tool with its namespace using whatever separator the
+  // surface chose, so the same close arrives as `stack_close`, `stack.close`, or
+  // `oc.stack.close`. All of them are this plugin's close and must arm; a foreign
+  // `other.close` merely sharing the last segment must not.
+
+  await checkAsync('the dot form of the close tool arms the intent', async () => {
+    const f = fixture();
+    await plugin.setup(f.ctx);
+    await seal(f.dir);
+
+    await f.hook('tool.execute.after')({ tool: 'stack.close', sessionID: 'ses_a', status: 'completed', result: {} });
+    const armed = intentsOf(f.dir);
+    assert(armed.ses_a, `the dot form armed no intent: ${JSON.stringify(armed)}`);
+    assert(armed.ses_a.attempts === 0, `the armed intent did not start at zero: ${JSON.stringify(armed.ses_a)}`);
+    f.shut();
+    return 'stack.close armed';
+  });
+
+  await checkAsync('a namespaced close arms the intent', async () => {
+    const f = fixture();
+    await plugin.setup(f.ctx);
+    await seal(f.dir);
+
+    await f.hook('tool.execute.after')({ tool: 'oc.stack.close', sessionID: 'ses_a', status: 'completed', result: {} });
+    const armed = intentsOf(f.dir);
+    assert(armed.ses_a, `a namespaced close armed no intent: ${JSON.stringify(armed)}`);
+    assert(armed.ses_a.attempts === 0, `the armed intent did not start at zero: ${JSON.stringify(armed.ses_a)}`);
+    f.shut();
+    return 'oc.stack.close armed';
+  });
+
+  await checkAsync('a foreign tool whose last segment matches arms nothing', async () => {
+    const f = fixture();
+    await plugin.setup(f.ctx);
+    await seal(f.dir);
+
+    for (const tool of ['other.close', 'foo.close', 'other_ready']) {
+      await f.hook('tool.execute.after')({ tool, sessionID: 'ses_a', status: 'completed', result: {} });
+      assert(!fs.existsSync(intentFile(f.dir)), `${tool} armed an intent: ${JSON.stringify(intentsOf(f.dir))}`);
+    }
+    assert(
+      f.titleOf('ses_a') === 'retry budget' && !f.calls.update.length,
+      `a foreign tool was handled as ours: ${JSON.stringify(f.calls.update)}`,
+    );
+    f.shut();
+    return 'other.close, foo.close, other_ready ignored';
   });
 }

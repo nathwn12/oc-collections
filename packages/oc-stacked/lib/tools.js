@@ -31,6 +31,15 @@ const list = (v) =>
 const ID_RE = /^[a-z0-9][a-z0-9._-]*$/;
 
 /**
+ * Windows reserves these names at every extension: `con.md` opens the console
+ * device, not a file, and cmd, git and Explorer then disagree with Node about
+ * whether the file exists. Refused on every platform, because a stack seeded
+ * on Windows is read elsewhere. Only the exact name is reserved, so `console`
+ * and `con-art` are ordinary ids.
+ */
+const RESERVED_NAMES = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/;
+
+/**
  * An id is a file name. Explicit ids are slugged so `Retry-Budget` and
  * `retry-budget` are one seam on every filesystem, then anything that could
  * resolve outside `.stack/briefs/` is refused rather than repaired.
@@ -45,8 +54,39 @@ function seamId(raw) {
   if (!ID_RE.test(id)) {
     return { id: null, error: `\`${value}\` is not a seam id: use letters, digits, dot, dash, underscore.` };
   }
+  const base = id.split('.')[0];
+  if (RESERVED_NAMES.test(base)) {
+    return {
+      id: null,
+      error: `\`${value}\` is the reserved Windows device name \`${base}\`: a file called \`${id}.md\` opens the device in cmd, git and Explorer instead of the brief. Pick an id that is not con, prn, aux, nul, com1-com9 or lpt1-lpt9.`,
+    };
+  }
   return { id, error: null };
 }
+
+/**
+ * `force` is a boolean or it is absent. A string like `"yes"` is truthy, and a
+ * truthy override is exactly what lands a seam with no recorded GO, so any
+ * other value is refused rather than read for its truthiness.
+ */
+function forceFlag(input) {
+  const value = input.force;
+  if (value === undefined) return { value: false, error: null };
+  if (typeof value === 'boolean') return { value, error: null };
+  let shown;
+  try {
+    shown = JSON.stringify(value) ?? String(value);
+  } catch {
+    shown = String(value);
+  }
+  return {
+    value: false,
+    error: `Refused. \`force\` is \`true\` or absent; \`${oneLine(shown)}\` is not a boolean, so it is not an override. Nothing was written.`,
+  };
+}
+
+/** The only states a seam may be moved to; anything else is a state no gate reads. */
+const STATUSES = ['briefed', 'building', 'ready', 'landed', 'killed'];
 
 /** Resolve a validated id under `.stack/briefs/` and prove it stayed there. */
 function briefFile(dir, id) {
@@ -257,15 +297,30 @@ function buildBrief(dir, spec) {
   return { id, title, body, record, file };
 }
 
-/** One writer for brief bodies, so `brief` and `swarm` cannot drift apart. */
-function writeBrief(dir, spec) {
+/**
+ * One writer for brief bodies, so `brief` and `swarm` cannot drift apart. The
+ * index read, the refusal checks and the write all happen inside one lock: a
+ * collision proved against an index read outside the lock is a collision two
+ * writers both miss, and each then commits a seam owning the same file.
+ */
+function writeBrief(dir, spec, { force = false } = {}) {
   const built = buildBrief(dir, spec);
   return withLock(dir, () => {
+    // Re-read inside the lock: another writer may have indexed this id, or
+    // claimed one of its files, between the caller's validation and this commit.
+    const index = readJson(dir, PATHS.briefsIndex, []);
+    const existing = index.find((b) => b.id === built.id);
+    if (existing && existing.status !== 'briefed' && !force) {
+      return { refusal: reBriefRefusal([{ id: built.id, status: str(existing.status) || 'unknown' }]) };
+    }
+
+    const clashes = collisions({ id: built.id, files: spec.files, owns: spec.owns }, index);
+    if (clashes.length) return { refusal: clashReport(clashes) };
+
     const existed = fs.existsSync(built.file);
     const previous = existed ? fs.readFileSync(built.file, 'utf8') : null;
     try {
       writeAtomic(built.file, built.body);
-      const index = readJson(dir, PATHS.briefsIndex, []);
       writeJson(dir, PATHS.briefsIndex, [...index.filter((b) => b.id !== built.id), built.record]);
     } catch (err) {
       // Leave the directory as it was: a partial pair is worse than a refusal.
@@ -322,7 +377,7 @@ function briefTool(dir) {
           description: 'Archetype id from routing.json, e.g. backend or reviewer. A seam with no archetype prints Agent: unassigned and ready refuses it.',
         },
         why: { type: 'string', description: 'Why this seam matters now. One line.' },
-        status: { type: 'string', description: 'New status for op=status.' },
+        status: { type: 'string', enum: STATUSES, description: 'New status for op=status. The closed set above, nothing else.' },
         force: {
           type: 'boolean',
           description:
@@ -335,6 +390,8 @@ function briefTool(dir) {
     },
     execute: async (input) => {
       ensureStack(dir);
+      const force = forceFlag(input);
+      if (force.error) return ok(force.error);
       const op = str(input.op);
 
       if (op === 'new') {
@@ -348,6 +405,18 @@ function briefTool(dir) {
             `Refused. A brief with a hole is a seam that will be guessed at.\n\n${missing.join('\n')}\n\nNothing was written.`,
           );
         }
+
+        // A declared `files` with nothing in it is a promise of no work wearing
+        // the contract's clothes: the dispatch says "build nothing outside its
+        // Files" and there is no Files to be outside of.
+        if (input.files !== undefined && !list(input.files).length) {
+          return ok(
+            'Refused. `files` is empty, so the dispatch would promise "build nothing outside its Files" with no Files at all.\n\nName at least one exact path this seam may edit. Nothing was written.',
+          );
+        }
+
+        const sealed = [...sealClaims(dir, input.files), ...sealClaims(dir, input.owns)];
+        if (sealed.length) return ok(sealRefusal(sealed));
 
         if (isRepo(dir)) {
           const ignored = ignoredPaths(dir);
@@ -377,29 +446,19 @@ function briefTool(dir) {
           );
         }
 
+        // The index is read for its error only. The authoritative read, the
+        // landed check and the collision proof all happen inside writeBrief's
+        // lock, so two writers serialise on the check and not only on the write.
         const read = indexOf(dir);
         if (read.error) return ok(`Refused. ${read.error}\n\nNothing was written.`);
 
-        const existing = read.index.find((b) => b.id === id);
-        if (existing && existing.status !== 'briefed' && input.force !== true) {
-          return ok(
-            [
-              `Refused. \`${id}\` is already **${existing.status}**. Re-briefing it would reset the state to briefed and move its base to the current HEAD, which quietly erases the work and the gate history behind it.`,
-              '',
-              'Move it with op=status, brief a different seam, or pass `force: true` to overwrite it on purpose and say why in the ledger. Nothing was written.',
-            ].join('\n'),
-          );
-        }
-
-        const clashes = collisions({ id, files: input.files, owns: input.owns }, read.index);
-        if (clashes.length) return ok(clashReport(clashes));
-
         let written;
         try {
-          written = writeBrief(dir, { ...input, id });
+          written = writeBrief(dir, { ...input, id }, { force: force.value });
         } catch (err) {
           return ok(`Refused. Writing the brief failed: ${err.message}\n\nNothing was indexed.`);
         }
+        if (written.refusal) return ok(written.refusal);
         return ok(
           `Brief written: ${PATHS.briefs}/${id}.md\n\nDispatch one employee with:\n\`\`\`text\n${dispatchBlock(id, written.record.tier, written.record.agent)}\n\`\`\``,
         );
@@ -421,6 +480,11 @@ function briefTool(dir) {
         const id = normalized.id;
         const status = str(input.status);
         if (!id || !status) return ok('op=status needs `id` and `status`.');
+        if (!STATUSES.includes(status)) {
+          return ok(
+            `Refused. \`${status}\` is not a seam state. A seam is one of ${STATUSES.map((s) => `\`${s}\``).join(', ')}; any other word would write a state no gate reads. Nothing was written.`,
+          );
+        }
 
         const pre = indexOf(dir);
         if (pre.error) return ok(`Refused. ${pre.error}\n\nNothing was written.`);
@@ -437,7 +501,7 @@ function briefTool(dir) {
             // A seam is landed only behind a recorded GO. Otherwise the digest
             // would quietly claim work the gate never approved, which is the
             // exact failure this system exists to prevent.
-            if (status === 'landed' && !input.force) {
+            if (status === 'landed' && !force.value) {
               const verdict = lastVerdict(dir, id);
               if (!verdict || verdict.kind !== 'READY') {
                 const last = verdict ? `the last gate said **${verdict.kind}**: ${verdict.text}` : 'no gate has run for this seam';
@@ -446,7 +510,7 @@ function briefTool(dir) {
                 };
               }
               log(dir, 'LANDED', `${id} behind ${verdict.at}`);
-            } else if (status === 'landed' && input.force) {
+            } else if (status === 'landed' && force.value) {
               log(dir, 'RULING', `${id} landed without a GO, forced by the lead`);
             }
 
@@ -496,6 +560,45 @@ function clashReport(clashes) {
   ].join('\n');
 }
 
+/**
+ * One refusal for both writers. Re-briefing an id that is already past briefed
+ * resets it to briefed and moves its base to the current HEAD, which quietly
+ * erases the work and the gate history behind it.
+ */
+function reBriefRefusal(hits) {
+  const many = hits.length > 1;
+  return [
+    many
+      ? `Refused. ${hits.length} of these seams already exist at or past briefed. Re-briefing them would reset each state to briefed and move its base to the current HEAD, which quietly erases the work and the gate history behind them:`
+      : `Refused. \`${hits[0].id}\` is already **${hits[0].status}**. Re-briefing it would reset the state to briefed and move its base to the current HEAD, which quietly erases the work and the gate history behind it.`,
+    ...(many ? ['', ...hits.map((h) => `- \`${h.id}\` is already **${h.status}**.`)] : []),
+    '',
+    `Move ${many ? 'them' : 'it'} with op=status, brief a different seam, or pass \`force: true\` to overwrite ${many ? 'them' : 'it'} on purpose and say why in the ledger. Nothing was written.`,
+  ].join('\n');
+}
+
+/** Case folding only where the filesystem folds, so a POSIX `.STACK` stays a different path. */
+const foldPath = (value) => (process.platform === 'win32' ? value.toLowerCase() : value);
+
+/** `.stack/state/` holds the seal; a seam that can claim it can overwrite its own receipt. */
+function sealClaims(dir, entries) {
+  const root = foldPath(path.resolve(dir, PATHS.state));
+  return list(entries).filter((entry) => {
+    const p = foldPath(path.resolve(dir, entry));
+    return p === root || p.startsWith(root + path.sep);
+  });
+}
+
+function sealRefusal(entries) {
+  return [
+    'Refused. `.stack/state/` holds the seal: the brief index, the check record and the close receipt. A seam that may write there can overwrite its own evidence.',
+    '',
+    ...entries.map((p) => `- \`${p}\``),
+    '',
+    'Drop those paths from `files` and `owns`. Nothing was written.',
+  ].join('\n');
+}
+
 // ---------------------------------------------------------------- swarm
 
 const SWARM_CAP = 10;
@@ -504,11 +607,16 @@ function swarmTool(dir) {
   return {
     name: 'swarm',
     description:
-      'Atomic fan-out. Takes 2 to 10 seams, proves their exact files are disjoint (and clear of every live brief), writes every brief body first and the index in one locked write, and returns one dispatch prompt per employee. Refuses the whole swarm if any seam is incomplete, duplicated, or shares a file. This is the only way to fan out more than one seam.',
+      'Atomic fan-out. Takes 2 to 10 seams, proves their exact files are disjoint (and clear of every live brief), writes every brief body first and the index in one locked write, and returns one dispatch prompt per employee. Refuses the whole swarm if any seam is incomplete, duplicated, already exists at or past briefed, or shares a file. This is the only way to fan out more than one seam.',
     input: {
       type: 'object',
       properties: {
         why: { type: 'string', description: 'Why these seams run together. One line, shared by all of them.' },
+        force: {
+          type: 'boolean',
+          description:
+            'Rewrite seams whose ids already exist, on purpose. `true` or absent; any other value is refused, because a truthy override resets a seam nobody approved.',
+        },
         seams: {
           type: 'array',
           description: 'Two to ten seams. Each needs title, out, check, and files.',
@@ -535,6 +643,8 @@ function swarmTool(dir) {
     },
     execute: async (input) => {
       ensureStack(dir);
+      const force = forceFlag(input);
+      if (force.error) return ok(force.error);
       const seams = Array.isArray(input.seams) ? input.seams : [];
       const sharedWhy = str(input.why);
 
@@ -560,6 +670,10 @@ function swarmTool(dir) {
         if (!list(s.files).length) holes.push(`- ${id}: no \`files\`. Disjointness is proved on exact paths.`);
         if (str(s.agent) && !isArchetype(str(s.agent))) {
           holes.push(`- ${id}: \`${str(s.agent)}\` is not an archetype in routing.json.`);
+        }
+        const sealed = [...sealClaims(dir, s.files), ...sealClaims(dir, s.owns)];
+        for (const claimed of sealed) {
+          holes.push(`- ${id}: \`${claimed}\` is inside \`.stack/state/\`, which holds the seal; a seam may not claim its own receipt.`);
         }
         return {
           id,
@@ -605,21 +719,10 @@ function swarmTool(dir) {
         );
       }
 
-      // Collisions with seams that are already live outside this swarm.
+      // The index is read here for its error only: the authoritative read, the
+      // landed check and the collision proof all happen inside the lock below.
       const read = indexOf(dir);
       if (read.error) return ok(`Refused. ${read.error}\n\nNothing was written.`);
-      const incoming = new Set(ids);
-      const external = [];
-      for (const seam of prepared) {
-        for (const hit of collisions(seam, read.index.filter((b) => !incoming.has(b.id)))) {
-          external.push(`- \`${seam.id}\` vs live \`${hit.id}\`: ${hit.why} (${hit.files.join(', ')})`);
-        }
-      }
-      if (external.length) {
-        return ok(
-          ['Refused. These seams collide with work already in flight.', '', ...external, '', 'Land or kill the older seam first. Nothing was written.'].join('\n'),
-        );
-      }
 
       // Build every body before touching the disk, so a bad seam cannot leave a
       // half-written swarm.
@@ -630,44 +733,75 @@ function swarmTool(dir) {
         return ok(`Refused. Building the swarm failed: ${err.message}\n\nNothing was written.`);
       }
 
-      const writtenFiles = [];
+      // One locked transaction: read the index, prove the whole swarm against
+      // that read, then write every body and the index. The lock covers the
+      // proof as well as the write, because two swarms that each prove against
+      // an unlocked index both commit.
+      let outcome;
       try {
-        for (const item of built) {
-          writeAtomic(item.file, item.body);
-          writtenFiles.push(item.file);
-        }
-      } catch (err) {
-        for (const file of writtenFiles) {
-          try {
-            fs.unlinkSync(file);
-          } catch {
-            /* already gone */
-          }
-        }
-        return ok(
-          `Refused. Writing the swarm failed: ${err.message}\n\nThe bodies already written were deleted and the index was left untouched.`,
-        );
-      }
-
-      let committed;
-      try {
-        committed = withLock(dir, () => {
+        outcome = withLock(dir, () => {
           const index = readJson(dir, PATHS.briefsIndex, []);
-          const replacing = new Set(built.map((b) => b.id));
-          writeJson(dir, PATHS.briefsIndex, [...index.filter((b) => !replacing.has(b.id)), ...built.map((b) => b.record)]);
+          const incoming = new Set(ids);
+
+          const replays = prepared
+            .map((seam) => index.find((b) => b.id === seam.id))
+            .filter(Boolean)
+            .map((b) => ({ id: b.id, status: str(b.status) || 'unknown' }));
+          if (replays.length && !force.value) return { refusal: reBriefRefusal(replays) };
+
+          const external = [];
+          for (const seam of prepared) {
+            for (const hit of collisions(seam, index.filter((b) => !incoming.has(b.id)))) {
+              external.push(`- \`${seam.id}\` vs live \`${hit.id}\`: ${hit.why} (${hit.files.join(', ')})`);
+            }
+          }
+          if (external.length) {
+            return {
+              refusal: [
+                'Refused. These seams collide with work already in flight.',
+                '',
+                ...external,
+                '',
+                'Land or kill the older seam first. Nothing was written.',
+              ].join('\n'),
+            };
+          }
+
+          const previous = new Map();
+          const written = [];
+          try {
+            for (const item of built) {
+              previous.set(item.file, fs.existsSync(item.file) ? fs.readFileSync(item.file, 'utf8') : null);
+              writeAtomic(item.file, item.body);
+              written.push(item.file);
+            }
+            const replacing = new Set(built.map((b) => b.id));
+            writeJson(dir, PATHS.briefsIndex, [...index.filter((b) => !replacing.has(b.id)), ...built.map((b) => b.record)]);
+          } catch (err) {
+            // Leave the directory as it was: restore an overwritten body, delete
+            // a new one, and never touch the index.
+            for (const file of written) {
+              try {
+                const before = previous.get(file);
+                if (before === null) fs.unlinkSync(file);
+                else writeAtomic(file, before);
+              } catch {
+                /* best effort: the original error is the one worth reporting */
+              }
+            }
+            return {
+              refusal: `Refused. Writing the swarm failed: ${err.message}\n\nThe bodies this swarm wrote were rolled back and the index was left untouched.`,
+            };
+          }
+
           log(dir, 'SWARM', `${built.length} seams briefed: ${built.map((b) => b.id).join(', ')}`);
-          return built.map((b) => ({ id: b.id, record: b.record }));
+          return { committed: built.map((b) => ({ id: b.id, record: b.record })) };
         });
       } catch (err) {
-        for (const file of writtenFiles) {
-          try {
-            fs.unlinkSync(file);
-          } catch {
-            /* already gone */
-          }
-        }
-        return ok(`Refused. Indexing the swarm failed: ${err.message}\n\nNothing was indexed.`);
+        return ok(`Refused. The swarm was not written: ${err.message}\n\nNothing was written.`);
       }
+      if (outcome.refusal) return ok(outcome.refusal);
+      const committed = outcome.committed;
 
       return ok(
         [
@@ -774,9 +908,20 @@ function checkTool(dir) {
         return ok(describeChecks(previous.value, dir));
       }
 
-      const { corrupt, all } = configuredChecks(dir);
+      const { corrupt, all, problems } = configuredChecks(dir);
       if (corrupt) {
         return ok(`${PATHS.config} is not valid JSON, so there is nothing to run. Fix it, then op=init.`);
+      }
+      if (problems.length) {
+        return ok(
+          [
+            'Refused. A configured command would not run where it was written, so running it would certify something else:',
+            '',
+            ...problems.map((p) => `- ${p}`),
+            '',
+            'Nothing was run, so nothing is green.',
+          ].join('\n'),
+        );
       }
       const wanted = str(input.name);
       const chosen = wanted ? all.filter((c) => c.name === wanted) : all;
@@ -1006,11 +1151,15 @@ function readyTool(dir) {
       }
 
       const currentHead = head(dir);
-      const { corrupt, all } = configuredChecks(dir);
+      const { corrupt, all, problems } = configuredChecks(dir);
       if (corrupt) {
         reasons.push(`${PATHS.config} is not valid JSON, so no check can be trusted. Fix it, then run \`check\` op=init.`);
       } else if (!all.length) {
         reasons.push(`no proving check is configured in ${PATHS.config}. Readiness without a command is UNPROVEN, not green.`);
+      } else if (problems.length) {
+        // A command that would run somewhere other than where it was written
+        // proves a different thing than the brief claims, so it is not run.
+        reasons.push(...problems);
       } else if (process.env.OC_STACKED_NO_EXEC === '1') {
         reasons.push(
           'execution is disabled by OC_STACKED_NO_EXEC=1, so this gate cannot re-run the checks. Readiness is UNPROVEN.',

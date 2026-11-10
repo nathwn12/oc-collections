@@ -18,7 +18,7 @@ import { readSkills, skillsDir } from './lib/content.js';
 import { bootstrap, MARKER } from './lib/bootstrap.js';
 import { toolDefinitions } from './lib/tools.js';
 import { seedStack, tryReadJson, withLock, writeJson, log } from './lib/state.js';
-import { closeReasons, invalidateClose, preflight, readClose } from './lib/close.js';
+import { ARMED_PATH, closeReasons, invalidateClose, preflight, readClose } from './lib/close.js';
 import { head } from './lib/git.js';
 import { intentOf, statusOf, stripStatus, withStatus } from './lib/title.js';
 
@@ -190,6 +190,36 @@ const NUDGE_META = 'oc-stacked-status-nudge';
 // A close loop is bounded on purpose: six continuations, then a recorded ASK
 // and a parked session. A bounded stop is not a success, and it is never [done].
 const CLOSE_CAP = 6;
+// A host that never settles `compact` must not take the seal with it: the race
+// resolves at the deadline, and the timer that lost is always cleared so it
+// never keeps the process alive.
+const COMPACT_TIMEOUT = 15000;
+const TIMED_OUT = Symbol('oc-stacked-timed-out');
+// A close is one transaction per session: a second idle that arrives while the
+// first is inside it returns at once, so the seal cannot compact twice or write
+// [done] twice.
+const inFlight = new Set();
+const idleKey = (dir, sessionID) => `${path.resolve(dir)}\u0000${sessionID}`;
+// The one-shot marker a successful close writes after its receipt (its path is
+// the producer's, imported above). afterTool consumes it, so `show`, `preflight`,
+// and a refused `run` - which never write one - cannot arm a session from a GO
+// they did not earn.
+const ARM_WINDOW_MS = 120000;
+
+/** Race one host call against a deadline, clearing the timer either way. */
+async function withinDeadline(call, ms) {
+  let timer = null;
+  try {
+    return await Promise.race([
+      call(),
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve(TIMED_OUT), ms);
+      }),
+    ]);
+  } finally {
+    if (timer !== null) clearTimeout(timer);
+  }
+}
 // The prefixes of this plugin's own synthetic messages. A synthetic message may
 // arrive as a prompt; it must never be read as the owner asking to resume.
 const SYNTHETIC_MARKS = [
@@ -202,6 +232,20 @@ const SYNTHETIC_MARKS = [
 // which spelling reaches a hook depends on the surface, so all three are
 // accepted. `ctx.tool.hook` names it in whatever form the host used.
 const RENAME_TOOLS = new Set(['opencode_session_rename', 'opencode.session_rename', 'session_rename']);
+// This plugin's tools, by their registered name. The host prefixes a namespace
+// with whatever separator the surface uses - `stack_close`, `stack.close`,
+// `oc_stack_close`, `oc.stack.close` - so the name is the last segment, and the
+// segment that namespaces it has to be `stack`: an unrelated `foo.close` is not
+// this plugin's close. A bare name is accepted where the surface omits the
+// namespace altogether, because the tool was registered under exactly that name.
+const STACK_TOOLS = new Set(['ledger', 'brief', 'swarm', 'check', 'scope', 'ready', 'clean', 'close']);
+function stackToolOf(tool) {
+  const parts = String(tool).split(/[._]/);
+  const name = parts.pop();
+  if (!STACK_TOOLS.has(name)) return null;
+  if (parts.length && parts[parts.length - 1] !== 'stack') return null;
+  return name;
+}
 const STATUS_EVENTS = [
   'session.created',
   'session.renamed',
@@ -311,6 +355,42 @@ function sealToken(dir) {
 }
 
 /**
+ * Consume the one-shot marker a successful `run` writes after its receipt: it
+ * must name that receipt, that HEAD, and be this fresh. Missing, unparseable,
+ * stale, or bound to another receipt arms nothing. Deleting it is part of the
+ * answer - a marker left on disk would arm a later `show` on this GO - so a
+ * failed delete also arms nothing.
+ */
+function takeArmMarker(dir) {
+  const file = path.join(dir, ARMED_PATH);
+  let marker;
+  try {
+    marker = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return false;
+  }
+  const receipt = readClose(dir).value;
+  const at = Date.parse(marker?.at);
+  const fresh = Number.isFinite(at) && Math.abs(Date.now() - at) <= ARM_WINDOW_MS;
+  const matches =
+    marker &&
+    typeof marker.receipt_id === 'string' &&
+    typeof marker.head === 'string' &&
+    receipt &&
+    receipt.go === true &&
+    marker.receipt_id === receipt.receipt_id &&
+    marker.head === receipt.head;
+  if (!fresh || !matches) return false;
+  try {
+    fs.rmSync(file, { force: true });
+  } catch (err) {
+    note('close marker could not be consumed:', err?.message || err);
+    return false;
+  }
+  return true;
+}
+
+/**
  * A seal is the brief report, not a bare token: the token, plus either the two
  * headings the report must carry or 200 characters of assistant text. A
  * one-line `SEALED abc1234` is a claim, and the gate asks for the report again.
@@ -394,22 +474,34 @@ function targetStatus(dir, sessionID, activity) {
 const recentDone = new Map();
 
 /** Write the computed prefix, and never write when it is already there. */
-async function applyTitle(ctx, dir, sessionID, status, record = null) {
+async function applyTitle(ctx, dir, sessionID, status, record = null, { replaceBare = false } = {}) {
   if (typeof ctx?.session?.update !== 'function') return false;
   const live = record || (await liveSession(ctx, sessionID, dir));
   if (!live) return false;
   const current = typeof live.title === 'string' ? live.title : '';
   // An empty title means the host has not named the session yet: writing a bare
   // prefix here would beat its auto-title. The first session.renamed prefixes it.
-  if (!stripStatus(current)) return false;
+  // A title that is only a claim is not empty: replacing it is the point, and
+  // only a caller that has decided the claim is baseless asks for that.
+  if (!stripStatus(current) && !(replaceBare && statusOf(current))) return false;
   const next = withStatus(current, status);
   if (next === current) return false;
+  try {
+    await ctx.session.update({ sessionID, title: next });
+  } catch (err) {
+    // A host that refuses the rename costs the owner a status, never the session:
+    // say so and leave the store untouched, so a caller owing a retry still has
+    // something to retry.
+    note('session title update failed:', err?.message || err);
+    return false;
+  }
   if (status === 'done') {
+    // Only a written title is remembered, so a refused write cannot make a later
+    // foreign [done] read as this plugin's own echo.
     if (recentDone.size > 512) recentDone.clear();
     recentDone.set(sessionID, next);
+    setOverride(dir, sessionID, 'done');
   }
-  await ctx.session.update({ sessionID, title: next });
-  if (status === 'done') setOverride(dir, sessionID, 'done');
   return true;
 }
 
@@ -541,10 +633,24 @@ async function onTitleEvent(ctx, dir, event) {
  * The stop gate. `experimental.idle` runs just before the session would go
  * idle, and input admitted here continues the same execution - so an open
  * close intent is re-stated here, not after the turn is already over.
+ *
+ * Two idles for one session can land together; the work inside is the seal, so
+ * the second returns without waiting rather than replaying it.
  */
 async function onIdle(ctx, dir, event) {
   const sessionID = event?.sessionID;
   if (!sessionID) return;
+  const key = idleKey(dir, sessionID);
+  if (inFlight.has(key)) return;
+  inFlight.add(key);
+  try {
+    await idleOnce(ctx, dir, sessionID);
+  } finally {
+    inFlight.delete(key);
+  }
+}
+
+async function idleOnce(ctx, dir, sessionID) {
   const record = await liveSession(ctx, sessionID, dir);
   if (!record) return;
 
@@ -563,13 +669,21 @@ async function onIdle(ctx, dir, event) {
       // that throws, never blocks the seal: [done] is the owner's status.
       if (token && sealReport(last, token)) {
         try {
-          if (typeof ctx?.session?.compact === 'function') await ctx.session.compact({ sessionID });
+          if (typeof ctx?.session?.compact === 'function') {
+            const settled = await withinDeadline(() => ctx.session.compact({ sessionID }), COMPACT_TIMEOUT);
+            if (settled === TIMED_OUT) {
+              note(`session compaction for ${sessionID} did not settle within ${COMPACT_TIMEOUT} ms; sealing anyway`);
+            }
+          }
         } catch (err) {
           note('session compaction failed:', err?.message || err);
         }
       }
-      await applyTitle(ctx, dir, sessionID, 'done', record);
-      clearIntent(dir, sessionID);
+      const sealed = await applyTitle(ctx, dir, sessionID, 'done', record);
+      // The intent is the receipt that the seal still owes a title. A host that
+      // refused the rename keeps it, so the next idle retries the seal instead
+      // of the close being lost.
+      if (sealed || statusOf(record.title) === 'done') clearIntent(dir, sessionID);
       return;
     }
     if (intent.attempts >= CLOSE_CAP) {
@@ -622,6 +736,17 @@ async function onPrompt(ctx, dir, event) {
   if (event?.metadata?.[NUDGE_META] || SYNTHETIC_MARKS.some((mark) => said.trimStart().startsWith(mark))) return;
   const record = await liveSession(ctx, sessionID, dir);
   if (!record) return;
+
+  // A done title with nothing sealed behind it does not survive new work. A
+  // title that is only the prefix has no subject for applyTitle to rewrite, so
+  // its empty-title guard would leave the claim standing: this is the one caller
+  // allowed past it, and only once the claim is baseless. A valid receipt at
+  // this HEAD still lets [done] stand.
+  if (statusOf(record.title) === 'done' && !intentFor(dir, sessionID) && closeState(dir).length) {
+    if (await applyTitle(ctx, dir, sessionID, 'active', record, { replaceBare: true })) {
+      record.title = withStatus(record.title, 'active');
+    }
+  }
 
   // The block carries its own intent, so a second pass over the same text
   // cannot read "CLOSE INTENT." as a resume and undo it.
@@ -677,15 +802,25 @@ async function afterTool(ctx, dir, event) {
   const tool = event?.tool;
   if (typeof tool !== 'string') return;
   const isRename = RENAME_TOOLS.has(tool);
-  if (!isRename && !tool.startsWith('stack_')) return;
+  const stackTool = stackToolOf(tool);
+  if (!isRename && !stackTool) return;
   const sessionID = event?.sessionID;
   if (!sessionID) return;
   const record = await liveSession(ctx, sessionID, dir);
   if (!record) return;
   // Only onIdle may apply [done], after the seal token. A rename was already
-  // normalised by the gate, so this hook leaves it alone; any other stack_* tool
+  // normalised by the gate, so this hook leaves it alone; any other stack tool
   // leaves the session working - [active], or [parked] under the owner's hold.
   if (isRename) return;
+  // The close tool arms its own intent: a successful run leaves a one-shot
+  // marker naming the receipt it just wrote, and that is the only proof this
+  // turn may seal. `show`, `preflight`, and a refused `run` - which preserves an
+  // earlier receipt by design - write no marker, so none of them can arm a
+  // session from a GO they did not earn. The marker is consumed whether or not
+  // it arms, and an existing intent keeps its attempt count.
+  if (stackTool === 'close' && takeArmMarker(dir) && !intentFor(dir, sessionID)) {
+    writeIntent(dir, sessionID, { attempts: 0, at: new Date().toISOString(), head: head(dir) });
+  }
   const status = overrideOf(dir, sessionID) === 'parked' ? 'parked' : 'active';
   await applyTitle(ctx, dir, sessionID, status, record);
 }

@@ -37,10 +37,18 @@ export function slug(title) {
  * Minimal glob matcher for seam ownership.
  * Supports `*` (no separator), `**` (any depth), `?`, and a trailing `/` for a directory prefix.
  * Paths are normalised to forward slashes before matching.
+ *
+ * Windows resolves `Readme.md` and `readme.md` to one file, so a matcher that
+ * treats them as two makes `ready` and `scope` disagree about one untouched
+ * path: the gate says in, the auditor says OUT. Matching folds case only where
+ * the filesystem does; POSIX stays case-sensitive.
  */
+const CASELESS = process.platform === 'win32';
+const fold = (value) => (CASELESS ? value.toLowerCase() : value);
+
 export function matchesGlob(pattern, file) {
-  const target = file.replace(/\\/g, '/').replace(/^\.\//, '');
-  let p = pattern.replace(/\\/g, '/').replace(/^\.\//, '').trim();
+  const target = fold(file.replace(/\\/g, '/').replace(/^\.\//, ''));
+  let p = fold(pattern.replace(/\\/g, '/').replace(/^\.\//, '').trim());
   if (!p) return false;
   if (p.endsWith('/')) p += '**';
 

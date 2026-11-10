@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { seedStack } from '../../lib/state.js';
+import { detectChecks, seedStack } from '../../lib/state.js';
 import { toolDefinitions } from '../../lib/tools.js';
 
 export async function register(ctx) {
@@ -38,6 +38,38 @@ export async function register(ctx) {
     return 'Needs you / New / In progress';
   });
 
+  // ---------------------------------------------------------------- check detection
+  const detector = (files) => {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-stacked-detect-'));
+    for (const [name, text] of Object.entries(files)) fs.writeFileSync(path.join(d, name), text);
+    return d;
+  };
+
+  await checkAsync('an empty virtual cargo workspace declares no check', async () => {
+    const d = detector({ 'Cargo.toml': '[workspace]\nmembers = []\n' });
+    const checks = detectChecks(d);
+    assert(!checks.some((c) => c.name === 'cargo'), `an empty virtual workspace invented a cargo check: ${JSON.stringify(checks)}`);
+    assert(!checks.some((c) => c.command === 'cargo test'), `an empty virtual workspace invented cargo test: ${JSON.stringify(checks)}`);
+    fs.rmSync(d, { recursive: true, force: true });
+    return 'members = [] adds nothing';
+  });
+
+  await checkAsync('a cargo package declares one test check', async () => {
+    const d = detector({ 'Cargo.toml': '[package]\nname = "x"\nversion = "0.1.0"\n' });
+    const checks = detectChecks(d);
+    assert(checks.some((c) => c.name === 'cargo' && c.command === 'cargo test'), `a [package] manifest produced no cargo test: ${JSON.stringify(checks)}`);
+    fs.rmSync(d, { recursive: true, force: true });
+    return 'cargo test';
+  });
+
+  await checkAsync('a cargo workspace with members declares one test check', async () => {
+    const d = detector({ 'Cargo.toml': '[workspace]\nmembers = ["a", "b"]\n' });
+    const checks = detectChecks(d);
+    assert(checks.some((c) => c.name === 'cargo' && c.command === 'cargo test'), `a workspace with members produced no cargo test: ${JSON.stringify(checks)}`);
+    fs.rmSync(d, { recursive: true, force: true });
+    return 'cargo test';
+  });
+
   // ---------------------------------------------------------------- seeding, objective, audit
   await checkAsync('a project is seeded and re-seeded without losing a hand-written check', async () => {
     const d = tmpRepo();
@@ -59,6 +91,51 @@ export async function register(ctx) {
 
     fs.rmSync(d, { recursive: true, force: true });
     return 'detected, preserved, idempotent';
+  });
+
+  await checkAsync('a trimmed check list is not re-imposed by a second seed', async () => {
+    const d = tmpRepo();
+    fs.writeFileSync(
+      path.join(d, 'package.json'),
+      JSON.stringify({ name: 'x', scripts: { test: 'node -e "process.exit(0)"', build: 'node -e "process.exit(0)"' } }),
+    );
+    seedStack(d);
+    const cfgFile = path.join(d, '.stack', 'config.json');
+    const seeded = JSON.parse(fs.readFileSync(cfgFile, 'utf8'));
+    assert(seeded.checks.some((c) => c.name === 'build'), `the fixture never detected build, so the trim proves nothing: ${JSON.stringify(seeded.checks)}`);
+    fs.writeFileSync(cfgFile, JSON.stringify({ ...seeded, checks: [{ name: 'test', command: 'node -e "process.exit(0)"', timeout: 240000 }] }, null, 2));
+    seedStack(d);
+    seedStack(d);
+    const after = JSON.parse(fs.readFileSync(cfgFile, 'utf8'));
+    assert(
+      after.checks.length === 1 && after.checks[0].name === 'test',
+      `the trim was re-imposed: ${JSON.stringify(after.checks)}`,
+    );
+    fs.rmSync(d, { recursive: true, force: true });
+    return 'one check stays one across two seeds';
+  });
+
+  await checkAsync('a missing or corrupt config still installs the detected checks', async () => {
+    for (const label of ['missing', 'corrupt']) {
+      const d = tmpRepo();
+      fs.writeFileSync(
+        path.join(d, 'package.json'),
+        JSON.stringify({ name: 'x', scripts: { test: 'node -e "process.exit(0)"', build: 'node -e "process.exit(0)"' } }),
+      );
+      if (label === 'corrupt') {
+        fs.mkdirSync(path.join(d, '.stack'), { recursive: true });
+        fs.writeFileSync(path.join(d, '.stack', 'config.json'), '{ not json');
+      }
+      const result = seedStack(d);
+      assert(result.ok, `seed refused a repo with a ${label} config`);
+      const cfg = JSON.parse(fs.readFileSync(path.join(d, '.stack', 'config.json'), 'utf8'));
+      assert(
+        cfg.checks.map((c) => c.name).sort().join(',') === 'build,test',
+        `a ${label} config did not install the detected checks: ${JSON.stringify(cfg.checks)}`,
+      );
+      fs.rmSync(d, { recursive: true, force: true });
+    }
+    return 'missing and corrupt both install detected checks';
   });
 
   await checkAsync('a directory that is not a project is left alone', async () => {

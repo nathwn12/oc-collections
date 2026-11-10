@@ -9,10 +9,11 @@
  *
  * Split out of scripts/check.mjs; the runner is scripts/check/index.mjs.
  */
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { CLOSE_PATH, closeReasons, invalidateClose, preflight } from '../../lib/close.js';
+import { CLOSE_PATH, closeReasons, invalidateClose, preflight, signReceipt } from '../../lib/close.js';
 import { head } from '../../lib/git.js';
 
 export async function register(ctx) {
@@ -21,28 +22,52 @@ export async function register(ctx) {
   const closeFile = (d) => path.join(d, ...CLOSE_PATH.split('/'));
   const shut = (d) => fs.rmSync(d, { recursive: true, force: true });
 
-  /** A receipt that is a GO the moment it is written, for the cases that need one. */
-  const receiptFor = (d) => {
-    const sha = head(d);
-    return {
+  /**
+   * A receipt the current close would accept: a real uuid, this repo's HEAD, a
+   * check run bound to that HEAD, a passing preflight, and a signature from the
+   * same key the writer uses. A fixture the code refuses on its own shape can
+   * never prove anything about the behaviour under test.
+   *
+   * `head` overrides the bound head for the cases about a head the close must
+   * refuse (a prefix, a short sha, a missing one); `sealed` and the check run
+   * follow it, so the head is the only fact those cases get to be wrong about.
+   */
+  const receiptFor = (d, { head: override } = {}) => {
+    const sha = override === undefined ? head(d) : override;
+    const bound = typeof sha === 'string' ? sha : '';
+    const at = new Date().toISOString();
+    const body = {
       go: true,
-      receipt_id: 'fixture-receipt',
-      sealed: sha ? sha.slice(0, 7) : 'no-head',
-      at: new Date().toISOString(),
+      receipt_id: randomUUID(),
+      sealed: bound.slice(0, 7),
+      at,
       head: sha,
       branch: 'main',
       tree: [],
       criteria: [{ id: 'preflight', status: 'pass', evidence: [] }],
-      checks: { at: new Date().toISOString(), head: sha, results: [{ name: 'ok', ok: true, code: 0, ms: 1 }] },
+      checks: { at, head: bound, results: [{ name: 'ok', ok: true, code: 0, ms: 1 }] },
       sweep: { removed: [], kept: [] },
       junk: [],
       atlas: { status: 'not configured', code: null, ms: 0 },
       lesson: 'a fixture receipt, written by the check itself',
     };
+    return { ...body, sig: signReceipt(body) };
   };
-  const writeReceipt = (d) => {
+  const writeReceipt = (d, options) => {
     fs.mkdirSync(path.join(d, '.stack', 'state'), { recursive: true });
-    fs.writeFileSync(closeFile(d), JSON.stringify(receiptFor(d), null, 2));
+    fs.writeFileSync(closeFile(d), JSON.stringify(receiptFor(d, options), null, 2));
+  };
+  /**
+   * A refusal replaces the receipt with a tombstone instead of deleting it, so
+   * the contract is "no GO survives", which is what this asserts. A refusal that
+   * left a readable GO behind would still pass a check that only looked for the
+   * file's absence.
+   */
+  const refusalOnDisk = (d) => {
+    assert(fs.existsSync(closeFile(d)), `the refusal left no record at ${CLOSE_PATH}`);
+    const record = JSON.parse(fs.readFileSync(closeFile(d), 'utf8'));
+    assert(record && record.go === false, `the refusal left a GO on disk (go: ${JSON.stringify(record && record.go)})`);
+    return record;
   };
   const writeIndex = (d, briefs) => {
     fs.mkdirSync(path.join(d, '.stack', 'state'), { recursive: true });
@@ -115,13 +140,15 @@ export async function register(ctx) {
     const sealed = await seal(d, 'a close without a HEAD has nothing to bind');
     assert(NO_GO.test(sealed), `a non-git directory sealed:\n${sealed}`);
     assert(/not a git repository/.test(sealed), `the refusal did not name the missing HEAD:\n${sealed}`);
-    assert(!fs.existsSync(closeFile(d)), 'a non-git close left a receipt on disk');
+    const refused = refusalOnDisk(d);
+    assert(/not a git repository/.test(refused.reasons.join('; ')), `the refusal record does not name the missing HEAD: ${refused.reasons.join('; ')}`);
+    assert(/the last close was refused/.test(closeReasons(d)[0]), 'the refusal record still read as a GO');
     shut(d);
     return 'not a git repository';
   });
 
   // ---------------------------------------------------------------- NO-GO
-  await checkAsync('a red check refuses the seal and deletes the earlier receipt', async () => {
+  await checkAsync('a red check refuses the seal and leaves no GO behind', async () => {
     const d = configuredRepo('node -e "process.exit(3)"');
     writeReceipt(d);
     assert(!closeReasons(d).length, 'the fixture receipt was not a GO before the run');
@@ -129,16 +156,17 @@ export async function register(ctx) {
     const text = await seal(d, 'a red check must not seal');
     assert(NO_GO.test(text), `a red check was sealed:\n${text}`);
     assert(/check is RED/.test(text), `the red check was not the named reason:\n${text}`);
-    assert(!fs.existsSync(closeFile(d)), 'the earlier GO survived a failed close');
+    const refused = refusalOnDisk(d);
+    assert(/check is RED/.test(refused.reasons.join('; ')), `the refusal record does not name the red check: ${refused.reasons.join('; ')}`);
 
     const reasons = closeReasons(d);
-    assert(reasons.length, 'a deleted receipt still reads as a GO');
-    assert(/no close receipt/.test(reasons[0]), `the missing receipt was not named: ${reasons[0]}`);
+    assert(reasons.length, 'a refused close still reads as a GO');
+    assert(/the last close was refused/.test(reasons[0]), `the refusal was not named: ${reasons[0]}`);
     shut(d);
-    return 'RED, receipt deleted';
+    return 'RED, receipt replaced by a refusal';
   });
 
-  await checkAsync('a check that writes a file after the preflight is a NO-GO with no receipt', async () => {
+  await checkAsync('a check that writes a file after the preflight is a NO-GO with no GO receipt', async () => {
     // The check is green and writes dirty.txt: only the post-check recheck can
     // see that the tree the receipt would cover is not the tree that was proved.
     const d = configuredRepo(`node -e "require('fs').writeFileSync('dirty.txt','x')"`);
@@ -148,12 +176,13 @@ export async function register(ctx) {
     const text = await seal(d, 'a check that dirties the tree is not evidence');
     assert(NO_GO.test(text), `a check that wrote a file still sealed:\n${text}`);
     assert(/dirty\.txt/.test(text), `the path the check wrote was not named:\n${text}`);
-    assert(!fs.existsSync(closeFile(d)), 'a close whose own check dirtied the tree wrote a receipt');
+    const refused = refusalOnDisk(d);
+    assert(refused.reasons.some((r) => /dirty\.txt/.test(r)), `the refusal record does not name the path the check wrote: ${refused.reasons.join('; ')}`);
     shut(d);
-    return 'dirty.txt named, no receipt';
+    return 'dirty.txt named, no GO';
   });
 
-  await checkAsync('a check that commits its own work is a NO-GO with no receipt', async () => {
+  await checkAsync('a check that commits its own work is a NO-GO with no GO receipt', async () => {
     // The check is green and leaves a clean tree: only the HEAD it started at
     // catches a command that committed the tree it was supposed to prove.
     const d = configuredRepo(
@@ -166,23 +195,26 @@ export async function register(ctx) {
     assert(head(d) !== before, 'the fixture check did not move HEAD, so this case proved nothing');
     assert(NO_GO.test(text), `a check that committed its own work still sealed:\n${text}`);
     assert(/HEAD moved/.test(text), `the moved HEAD was not the named reason:\n${text}`);
-    assert(!fs.existsSync(closeFile(d)), 'a close whose check committed under it wrote a receipt');
+    const refused = refusalOnDisk(d);
+    assert(refused.reasons.some((r) => /HEAD moved/.test(r)), `the refusal record does not name the moved HEAD: ${refused.reasons.join('; ')}`);
     shut(d);
-    return 'HEAD moved named, no receipt';
+    return 'HEAD moved named, no GO';
   });
 
-  await checkAsync('a close with no lesson is refused before any work and leaves the receipt alone', async () => {
+  await checkAsync('a close with no lesson is refused before any work and leaves no GO behind', async () => {
     const d = configuredRepo();
     writeReceipt(d);
-    const before = fs.readFileSync(closeFile(d), 'utf8');
+    assert(!closeReasons(d).length, 'the fixture receipt was not a GO before the run');
 
     const text = await seal(d);
     assert(NO_GO.test(text), `a close with no lesson sealed:\n${text}`);
     assert(/needs `lesson`/.test(text), `the missing lesson was not named:\n${text}`);
-    assert(/left alone/.test(text), `the refusal does not say what it did to the old receipt:\n${text}`);
-    assert(fs.readFileSync(closeFile(d), 'utf8') === before, 'a refusal before work touched the receipt');
+    assert(/Refused before any work/.test(text), `the refusal does not say it happened before any work:\n${text}`);
+    const refused = refusalOnDisk(d);
+    assert(refused.reasons.some((r) => /needs `lesson`/.test(r)), `the refusal record does not name the missing lesson: ${refused.reasons.join('; ')}`);
+    assert(/the last close was refused/.test(closeReasons(d)[0]), 'the refusal record still read as a GO');
     shut(d);
-    return 'refused before work';
+    return 'refused before work, no GO';
   });
 
   // ---------------------------------------------------------------- why a receipt stops being a GO
@@ -210,6 +242,46 @@ export async function register(ctx) {
     assert(/unreadable/.test(corrupt[0]), `a corrupt receipt was not named as corrupt: ${corrupt[0]}`);
     shut(d);
     return 'moved, invalidated, corrupt';
+  });
+
+  await checkAsync('a head the close never writes is refused for its own reason, not for a missing signature', async () => {
+    const d = configuredRepo();
+    const sha = head(d);
+
+    // The fixture is signed throughout, so the only reason left is the head. A
+    // prefix and a short sha share one reason; a null head is its own.
+    const cases = [
+      ['a prefix head', { head: sha.slice(0, 7) }, /not a full 40-character lowercase sha/],
+      ['a short sha', { head: sha.slice(0, 12) }, /not a full 40-character lowercase sha/],
+      ['a null head', { head: null }, /records no HEAD/],
+    ];
+    for (const [label, options, reason] of cases) {
+      writeReceipt(d, options);
+      const reasons = closeReasons(d);
+      assert(reasons.length === 1, `${label} drew ${reasons.length} reasons, not the one under test: ${reasons.join('; ')}`);
+      assert(reason.test(reasons[0]), `${label} was not refused for its own reason: ${reasons[0]}`);
+    }
+    shut(d);
+    return 'prefix, short and null refused by name';
+  });
+
+  await checkAsync('a signed GO edited by one byte is refused for its signature, not its shape', async () => {
+    const d = configuredRepo();
+    writeReceipt(d);
+    assert(!closeReasons(d).length, `the signed fixture is not a GO: ${closeReasons(d).join('; ')}`);
+
+    // One byte: the same receipt with a capital letter in a field no other rule
+    // reads, so the signature is the only gate that can still refuse it.
+    const raw = fs.readFileSync(closeFile(d), 'utf8');
+    const tampered = raw.replace('a fixture receipt', 'A fixture receipt');
+    assert(tampered !== raw, 'the tamper changed nothing, so this case would prove nothing');
+    fs.writeFileSync(closeFile(d), tampered);
+
+    const reasons = closeReasons(d);
+    assert(reasons.length === 1, `an edited receipt drew ${reasons.length} reasons, not the signature alone: ${reasons.join('; ')}`);
+    assert(/no valid signature: the body does not match `sig`/.test(reasons[0]), `the signature was not the named reason: ${reasons[0]}`);
+    shut(d);
+    return 'one byte, signature named';
   });
 
   await checkAsync('an edit after a GO makes the receipt stale, and op=show says so', async () => {
@@ -403,8 +475,9 @@ export async function register(ctx) {
 
     writeReceipt(d);
     const sha = head(d);
+    const written = JSON.parse(fs.readFileSync(closeFile(d), 'utf8'));
     const shown = await runIn(d, 'close', { op: 'show' });
-    assert(GO.test(shown) && /fixture-receipt/.test(shown), `a valid receipt did not read as itself:\n${shown}`);
+    assert(GO.test(shown) && shown.includes(written.receipt_id), `a valid receipt did not read as itself:\n${shown}`);
     assert(shown.includes(`SEALED ${sha.slice(0, 7)}`), `the shown receipt carries no token:\n${shown}`);
 
     fs.writeFileSync(path.join(d, 'work.ts'), 'export const moved = 1;\n');

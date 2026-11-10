@@ -1,7 +1,7 @@
 # oc-stacked
 
 A three-rung agent stack for OpenCode: **one lead, a fresh employee per seam, and an auditor that wrote none of it.**
-Local-first, zero MCP, seven tools, no runtime dependencies.
+Local-first, zero MCP, eight tools, no runtime dependencies.
 
 ![oc-stacked](preview/readme-hero.png)
 
@@ -79,9 +79,19 @@ A pass is not closed until it is swept and written down: `clean` `sweep` removes
 |---|---|---|
 | `[active]` | work is moving in this session | a new session starts, any `stack_*` tool runs, or a new normal prompt resumes |
 | `[parked]` | work exists but is not moving | the owner says stop/halt/freeze/pause/park, an execution is interrupted, or the session idles with no valid receipt |
-| `[done]` | genuinely finished, closing remarks written | `stack_close` op=run returns GO and the receipt is sealed |
+| `[done]` | genuinely finished, closing remarks written | the sealed report is present: a `close` op=run returned GO and the idle gate applied `[done]` |
 
-The plugin owns the prefix. Say "close session", "wrap it up", "we’re done", "seal it" — or any close intent — and the plugin appends the directive: run `stack_close` op=preflight, settle every ticket it names (land, kill, answer, or record an ASK and park), then `stack_close` op=run with one lesson. `op=run` refuses while a ticket is open, and a hand-typed `[done]` without a GO receipt is refused. The receipt lives at `state/close.json` (`op=show` reads it back). A session that cannot clear a ticket parks instead of closing. The gate is bounded: the intent persists until the tool prints `SEALED <sha>`, and the final message ends with that exact token — no tools run after it. Compaction is the digest, written before the report. An attempt to end with "done" or a bare summary while the intent is open gets the next exact action injected and the same execution continues; after 6 failed continuations the session parks and an ASK is recorded. The gate never says done. The receipt is local and tamper-evident, not signed.
+The plugin owns the prefix. A close intent ("close session", "wrap it up", "we're done", "seal it") appends one directive: run `close` op=preflight, settle every ticket it names (land, kill, answer, or record an ASK and park), then `close` op=run with one lesson of at least 8 characters. `op=run` refuses while a ticket is open, and a hand-typed `[done]` without a GO receipt is refused. The receipt lives at `state/close.json` (`op=show` reads it back). A session that cannot clear a ticket parks instead of closing. The gate is bounded: the intent persists until the tool prints `SEALED <sha>`, and the final message ends with that exact token — no tools run after it. An attempt to end with "done" or a bare summary while the intent is open gets the next exact action injected and the same execution continues; after 6 failed continuations the session parks and an ASK is recorded. The gate never says done.
+
+A `close` op=run that returns GO arms the close itself: it writes a one-shot arm record, and the idle gate then applies `[done]` from the sealed report with no phrase. `show`, `preflight`, and a refused `run` arm nothing. No typed phrase is required; the seal is the report.
+
+The receipt is signed. It binds the full 40-hex HEAD it was written at (`sealed` is its first 7 characters), a uuid `receipt_id`, a check run at that HEAD whose every result is `ok` with exit 0, a passing `preflight` criterion, an `at` inside the commit's window, and a lesson of at least 8 characters. `sig` is HMAC-SHA256 over the body, keyed by `~/.config/opencode/oc-stacked.secret`. The signature stops a typed receipt; it does not stop someone with read access to the secret.
+
+Every NO-GO writes a tombstone: `close.json` becomes `{ go: false, ... }`. Nothing is deleted, because Windows refuses a delete while a handle is open. A refused close therefore destroys an earlier GO on purpose — including a `close` run typed with no lesson. A receipt older than the run is never overwritten by a later refusal; a newer refusal replaces an older GO; two simultaneous runs end with the later receipt.
+
+Sealing fires one real session compaction (`ctx.session.compact`) with a 15-second deadline; a failed or timed-out compaction does not stop the seal. The digest is rewritten from the ledger before the report, and is not the compaction. The ceremony order is checks, sweep, junk report, lesson, digest, atlas.
+
+All four spellings reach the same tool: `stack_close`, `stack.close`, `oc_stack_close`, `oc.stack.close` (plus the bare `close` where the surface omits the namespace).
 
 ---
 
@@ -98,9 +108,9 @@ All local. Files and `git` only; no network call, no daemon, no MCP handshake.
 | `scope` | — | Compare every touched path with the brief's `Owns`. | Names every path that left the seam. |
 | `ready` | — | Gate a seam for landing. | `NO-GO` with one named reason per failure: no report, red check, stale check, dirty tree, out-of-scope path. |
 | `clean` | `sweep` `report` | Remove the stack's own leftovers, then name junk it did not create. | Never deletes outside `.stack`, never follows a symlink, never deletes a path it cannot claim as its own. |
-| `close` | `preflight` `run` `show` | Seal the session: list open tickets, run the closing ceremony, read the receipt. | Refuses while a ticket is open; a failed close deletes the receipt. |
+| `close` | `preflight` `run` `show` | Seal the session: list open tickets, run the closing ceremony, read the receipt. | Refuses while a ticket is open; a failed close writes a refusal record (`go: false`) that destroys the earlier GO. |
 
-`check init` looks for the obvious manifests (`package.json` scripts, `pyproject.toml`, `go.mod`, `Cargo.toml`, a `Makefile` `test` target) and writes the four cheapest honest checks, so the first run is not an empty config. Until at least one check exists, readiness is `UNPROVEN`, not green.
+`check init` looks for the obvious manifests (`package.json` scripts, `pyproject.toml`, `go.mod`, `Cargo.toml`, a `Makefile` `test` target) and writes the four cheapest honest checks, so the first run is not an empty config. `Cargo.toml` yields `cargo test` only when it declares a `[package]` table or a `[workspace]` naming at least one member; an empty virtual workspace adds nothing. Until at least one check exists, readiness is `UNPROVEN`, not green.
 
 ---
 
@@ -194,7 +204,7 @@ It does not rewrite your `opencode.jsonc`. To wire it by hand instead, add the d
 "plugins": ["Q:\\PROJECTS\\PERSONAL\\oc-stacked"]
 ```
 
-On first sight of a real project (a repository or a build manifest), the plugin seeds `.stack/` and detects the repo's proving commands. It only ever adds: a hand-written check survives every re-seed, and a new test script is picked up on the next start.
+On first sight of a real project (a repository or a build manifest), the plugin seeds `.stack/` and detects the repo's proving commands. Detected checks are installed once, when the config is created or corrupt — never appended afterwards, so a trimmed list stays trimmed. A hand-written check survives every re-seed; a new test script in an existing valid config is not picked up on the next start. Delete or corrupt the config to re-detect from scratch.
 
 Restart OpenCode, then prove it loaded:
 
@@ -257,6 +267,12 @@ node bin/stack.js ledger digest
 | Green means green *here* | `check` stores the HEAD; `ready` refuses a result from another HEAD and names both shas. |
 | No quiet scope creep | `scope` maps every changed path against `Owns`; `ready` fails on anything outside it. |
 | No two workers touch one file | `swarm` and `brief` compare exact `files` across every live seam and refuse a collision; same folder is allowed, same file is not. |
+| One proof at a time | `brief` and `swarm` run the file-disjointness check inside the state lock, so two writers cannot both pass against different indexes. |
+| A seam cannot take a device or the seal | `con`, `prn`, `aux`, `nul`, `com1`–`com9`, `lpt1`–`lpt9` are refused as seam ids, and no seam may claim `.stack/state/**`. |
+| An override is explicit or absent | `force` is `true` or absent; any other value is refused. Statuses are a closed set: `briefed`, `building`, `ready`, `landed`, `killed`. |
+| A check runs where it was written | An unquoted absolute path with a space in a configured check command is refused rather than silently split. |
+| A shim still starts on Windows | `npm`, `npx`, `pnpm`, `yarn`, `corepack` route through the shell; a failed direct spawn falls back to the shell. |
+| A busy file still writes | `writeAtomic` retries `EPERM`/`EACCES`/`EBUSY`; a lock records its pid so a dead holder is recovered immediately. A leading BOM in a JSON state file is ignored, not treated as corruption. |
 | A worker cannot multiply | The employee agent's permissions deny `subagent`; the dispatch template forbids it. |
 | Verdicts are independent | The auditor runs the check itself and may not edit; its skill forbids fixing the code it judges. |
 | Nothing is lost to compaction | The ledger is append-only and the digest is derived from it, not hand-maintained. |

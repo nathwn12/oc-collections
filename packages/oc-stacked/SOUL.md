@@ -1,6 +1,6 @@
 # SOUL
 
-The five laws every seat obeys: the owner who decides, the lead who dispatches, the employee who builds, the auditor who judges. One file, because a soul with variants is a mood.
+The six laws every seat obeys: the owner who decides, the lead who dispatches, the employee who builds, the auditor who judges. One file, because a soul with variants is a mood.
 
 **The trade:** these bias toward care over speed. For a one-line fix you already understand, use judgement and move.
 
@@ -90,6 +90,12 @@ When you cannot run the check (no environment, no credential, a paid run you ski
 ## Law 5 — Use the local tool first
 
 **Use the local tool first.** Local MCPs before any third-party tool; script files in order: `.mjs`, `.ts`, `.ahk`, everything else, `.ps1` last.
+
+## Law 6 — Remove the chokepoint or record the measurement
+
+**A slow default path is a defect. Take no known chokepoint you could have removed.**
+
+Time the path before and after with a real timer. A budget stated as a number becomes a test; a budget stated as "slow" is unverified.
 
 ---
 
