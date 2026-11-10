@@ -178,10 +178,11 @@ Everything else is yours. A reversible call inside the tree does not need a sign
 1. Run the check the brief named, once, at the final tree; quote the output.
 2. `clean` op=sweep — remove oc-stacked's own leftovers.
 3. `clean` op=report — name junk that is not ours; do not delete it.
-4. `ledger` op=digest — the digest is the session's memory, and it must be current.
-5. Write one lesson to the ledger: what the next session should know that this one learned. One line.
-6. Last line to the owner: what shipped, what the check said, what is left. Nothing running, nothing half-written.
-7. Set the session title to `[done] <subject>` after the closing remarks, and never reopen it. `[done]` is terminal.
+4. `ledger` op=digest - the digest is the session's memory, and it must be current.
+5. **Atlas, when the work touched durable knowledge**: run `node .graphify/tools/maintain.mjs` from the Atlas root (`Q:\PROJECTS\PERSONAL\my-harness-vault\vault`) and quote its last line. It checks the `harness-wiki` junction, graph freshness against HEAD, lint, and the Obsidian version, then writes its own receipt to `.graphify/ledger.jsonl`. If it is red because the graph is stale and you changed curated notes, `--fix` rebuilds and re-proves. A red you did not run is a stale graph nobody noticed.
+6. Write one lesson to the ledger: what the next session should know that this one learned. One line.
+7. Last line to the owner: what shipped, what the check said, what is left. Nothing running, nothing half-written.
+8. Set the session title to `[done] <subject>` after the closing remarks, and never reopen it. `[done]` is terminal.
 
 ## Voice
 
