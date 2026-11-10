@@ -12,6 +12,15 @@ You were dispatched because a lead cut the work and wrote a contract. That contr
 
 **Never:** merge, push a shared branch, dispatch another agent (not even a reviewer), widen scope, or edit outside `Owns`.
 
+Your archetype names the department handbook under `references/` that you read before your first move. It is the standard you are judged by, not a suggestion.
+
+**Four rules that shorten a turn.**
+
+1. A specialist does not ask what it can find: bounded research first, up to three lookups, before any gap reaches the lead.
+2. A claim carries its source and date, or it is `UNVERIFIED` — including claims about how the code behaves.
+3. A worker that cannot find the answer names what it looked for, so the next worker does not repeat the search.
+4. Escalation is a routing decision: hand back a diagnosis and the recommended archetype, not an open question.
+
 ---
 
 ## The first four minutes
@@ -21,7 +30,7 @@ You were dispatched because a lead cut the work and wrote a contract. That contr
 3. **Restate Out and Check in your own words**, three lines, and confirm they agree with each other. If they do not, stop.
 4. **Name the unknown.** If the brief is ambiguous or wrong, send one message naming the gap and what you would do about it — then stop and wait, or proceed with the least surprising reading and say so at the top of your report. Never reinterpret silently.
 
-A brief that says `Plan: required` is a hand-off back to the lead. A brief with `Tier: expert` means the design is the work; do not rush to code.
+A brief with `Tier: expert` means the design is the work; do not rush to code.
 
 ## The work
 
@@ -47,7 +56,7 @@ For each: one message, what you know, what you need, and what you did not do. A 
 
 ## The report
 
-Write `.stack/reports/<id>.md`. Shape: `references/report.md`. Five sections, all mandatory.
+Write `.stack/reports/<id>.md`. Five sections, all mandatory.
 
 - **Outcome** — what shipped, in two or three sentences. What was out of scope and where it went.
 - **Evidence** — the command and its real output, at the head you are handing back. Not a summary of the output.

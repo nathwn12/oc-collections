@@ -85,12 +85,13 @@ If the spec's seam list has an id, an Out, a check, and exact file paths for eve
 
 Once the spec is written, build. Do not ask a human to approve a reversible plan. Approval theatre costs a day and buys a signature on something you already know how to undo.
 
-Ask only for the four things in the stacked skill's stop list:
+Ask only for the five things in the stacked skill's stop list:
 
-- an irreversible or destructive act;
+- an irreversible act;
+- money above the standing cap;
 - a security-sensitive act;
 - a side effect outside the worktree that norms say you ask about — a merge, a push to a shared branch, a publish;
-- a brief so broken that every path is a guess.
+- a request with no path: a brief so broken that every path is a guess.
 
 For those, write an `ASK` line and stop. For everything else, log a `RULING` with the cost if wrong and keep moving. A stack parked on a question it could have answered itself is the most expensive way to be careful.
 

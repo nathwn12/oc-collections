@@ -59,17 +59,11 @@ If it refuses, the refusal is the finding. Do not hand-write the briefs around i
 
 ## Dispatch shape
 
-One employee per brief. The prompt carries three things and nothing else:
-
-```text
-Seam: <id>
-Brief: .stack/briefs/<id>.md — read this first. It is your requirements.
-Report: .stack/reports/<id>.md — then return one paragraph: outcome, commits, check result, concerns.
-```
+One employee per brief. Use the dispatch block `brief` or `swarm` printed, verbatim. Add one `Interfaces:` line only when the brief cannot know a signature from a seam that already landed.
 
 No session history. No summary of the other seams. No plan for the whole swarm. Every pasted byte is re-read on every later turn of that worker, and a worker who knows the other seams will start "helping" with them.
 
-Set the model per seam, not once for the batch.
+Choose the tier per seam, not once for the batch.
 
 | Tier | Use it when |
 |---|---|

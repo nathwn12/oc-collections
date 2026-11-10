@@ -16,7 +16,7 @@ A ship is a seam that leaves the room with evidence attached. Everything before 
 
 ## The pre-flight
 
-Four things must be true at the head you are landing. Not near it. At it.
+Four checks must be true at the head you are landing. Not near it. At it.
 
 - [ ] `scope` — every touched path is inside the brief's `Owns`, or the report names the exception and you approved it in writing.
 - [ ] `check` — green, run by you, at this exact HEAD. A green result bound to an older SHA is a green result about different code.
@@ -25,7 +25,7 @@ Four things must be true at the head you are landing. Not near it. At it.
 
 If one is missing, it is not a ship. It is a push with a nicer name.
 
-`ready` op=run aggregates the mechanical ones and names each reason it is not landable. It cannot read the report for you, and it cannot see a verdict nobody asked for.
+`check` op=run, then `ready`. Between them they aggregate the mechanical checks and name each reason it is not landable. `ready` cannot read the report for you, and it cannot see a verdict nobody asked for.
 
 ## The commit
 

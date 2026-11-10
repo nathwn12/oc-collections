@@ -8,7 +8,7 @@ URL: https://github.com/garrytan/gstack
 License: MIT
 
 - **What we learned.** Work that spans a day is a hierarchy, not a prompt: one controller cuts the work, workers own lanes, one authority merges. Readiness is a contract — a seam is landable only when a check is green at the head being landed. Notes are append-only, each lane reports in a fixed shape, and a digest with ages makes a stalled seam visible without asking anyone.
-- **What we rewrote.** Three rungs instead of a roster: CEO, LEAD, EMPLOYEE, plus an AUDIT that wrote none of the work. State is five plain files under `.stack/` rather than a tool suite, and every rule is enforced by a tool that refuses — `brief` refuses a missing Out/Check/Owns, `ready` refuses an unnamed reason — instead of prose a model may skip under pressure.
+- **What we rewrote.** Three rungs instead of a roster: LEAD, EMPLOYEE, plus an AUDIT that wrote none of the work, with the owner deciding what only the owner can. State is five plain files under `.stack/` rather than a tool suite, and every rule is enforced by a tool that refuses — `brief` refuses a missing Out/Check/Owns, `ready` refuses an unnamed reason — instead of prose a model may skip under pressure.
 - **What we did not take.** The role catalogue and the multi-tool surface. One loop, five verbs.
 
 ## andrej-karpathy-skills — multica-ai

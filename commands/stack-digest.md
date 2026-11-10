@@ -1,6 +1,6 @@
 ---
 description: Rewrite the digest and report the top open item
-agent: stacked-lead
+agent: lead
 ---
 
 # Digest
@@ -13,3 +13,4 @@ agent: stacked-lead
 6. Name the single next action: the one seam or decision that unblocks the most. If a live seam has not moved in six hours, that is the next action, not the owner's problem.
 
 Return: the digest body, then one line, `Next: <action>`.
+

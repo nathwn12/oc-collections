@@ -15,7 +15,7 @@ A review is a request for evidence about a claim, not a request for approval. Bo
 
 ## Asking well
 
-A good request makes the reviewer's first minute productive. It carries four things:
+A good request makes the reviewer's first minute productive. It carries four items:
 
 | Field | Why it is there |
 |---|---|

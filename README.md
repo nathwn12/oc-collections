@@ -1,11 +1,19 @@
 # oc-stacked
 
-A three-rung agent stack for OpenCode: **one CEO, one lead, a fresh employee per seam, and an auditor that wrote none of it.**
-Local-first, zero MCP, six tools, no runtime dependencies.
+A three-rung agent stack for OpenCode: **one lead, a fresh employee per seam, and an auditor that wrote none of it.**
+Local-first, zero MCP, seven tools, no runtime dependencies.
 
 ![oc-stacked](preview/readme-hero.png)
 
 A static preview lives at [`preview/index.html`](preview/index.html). Open it in any browser; it needs no server and no network.
+
+## Terms
+
+| Term | Means |
+|---|---|
+| **BARE** | the host harness as it ships, no plugins |
+| **OC-STACKED** | this plugin — the only thing installed into the harness |
+| **`.stack/`** | the plugin's per-project memory, created and maintained by the plugin, never by hand |
 
 ---
 
@@ -20,26 +28,27 @@ oc-stacked answers both with structure rather than exhortation: **seats** with h
 
 ---
 
-## The four seats
+## The three seats
 
 | Seat | Agent id | Owns | May never |
 |---|---|---|---|
-| **CEO** | `stacked-ceo` | direction, priority, spend, irreversible calls, the verdict on what ships | edit files, run a build, approve without evidence |
-| **LEAD** | `stacked-lead` | cutting seams, writing briefs, dispatching, reconciling, landing, the digest | take a seam it already dispatched, land on a worker's word alone |
-| **EMPLOYEE** | `stacked-employee` | one seam, one brief, one check, one report | merge, push a shared branch, widen scope, dispatch anyone |
-| **AUDIT** | `stacked-auditor` | the verdict on work it did not write | edit what it judges, accept the author's check as the verdict |
+| **LEAD** | `lead` | deciding everything reversible: cutting seams, writing briefs, dispatching, reconciling, landing, the digest | take a seam it already dispatched, land on a worker's word alone, decide what the owner owns |
+| **EMPLOYEE** | `employee` | one seam, one brief, one check, one report | merge, push a shared branch, widen scope, dispatch anyone |
+| **AUDIT** | `auditor` | the verdict on work it did not write | edit what it judges, accept the author's check as the verdict |
 
-Each seat is pinned to a model, so a delegated seam lands on the right one without anyone choosing it in the moment:
+The owner is the CEO; the lead speaks for them. The lead decides everything reversible and asks only for the five stops.
+
+Each seat gets its model from the session unless it is a delegated seat measured in its own right:
 
 | Seat | Model |
 |---|---|
-| CEO, LEAD | opencode-go/muse-spark-1.3-contributor |
+| LEAD | the session model — no pin, whatever you pick in the TUI |
 | EMPLOYEE | opencode-go/deepseek-v4.1-flash |
 | AUDIT | openai/gpt-6.1-terra |
 
-The primary session is yours: whatever model you pick in the TUI stays picked. The pins apply to delegated seats, and the auditor is deliberately a different model family from the employee that wrote the code.
+The TUI selection always wins for the lead. EMPLOYEE pins `deepseek-v4.1-flash` because a seam is mechanical enough to standardise; AUDIT pins `gpt-6.1-terra` so the verdict comes from a different family than the code it judges. Those pins are applied, not shipped: every agent file in the repository carries no `model:` line, and `scripts/install.mjs` writes the routing from `routing.json` onto the copies it installs, with `lead` always inheriting.
 
-The prohibitions are enforced, not suggested: the employee agent denies the `subagent` action outright, and the CEO and auditor agents deny `edit`.
+The prohibitions are enforced, not suggested: the employee agent denies the `subagent` action outright, and the auditor agent denies `edit`.
 
 ---
 
@@ -56,11 +65,15 @@ The prohibitions are enforced, not suggested: the employee agent denies the `sub
 | 7 | **Digest** | `.stack/digest.md` is rewritten from the ledger: **Needs you / New / In progress**, every row aged. |
 | 8 | **Audit** | A context that wrote none of the work gives `PASS` / `PASS WITH NOTES` / `FAIL`, with each reason named. |
 
-Rulings, not stalls. A running stack decides and records `RULING · what — why — cost if wrong`. Four things still stop it: an irreversible act, a security-sensitive act, a side effect outside the worktree that norms say you ask about, and a brief so broken every path is a guess.
+Rulings, not stalls. A running stack decides and records `RULING · what — why — cost if wrong`. Five things still stop it: an irreversible act, money above the standing cap, a security-sensitive act, a side effect outside the worktree that norms say you ask about, and a brief so broken every path is a guess.
+
+### Closing a pass
+
+A pass is not closed until it is swept and written down: `clean` `sweep` removes the stack's own leftovers, `clean` `report` names junk it did not create and deletes none of it, `ledger` `digest` refreshes the digest from the record, and one lesson goes to the ledger for the next session.
 
 ---
 
-## The six tools
+## The seven tools
 
 All local. Files and `git` only; no network call, no daemon, no MCP handshake.
 
@@ -72,6 +85,7 @@ All local. Files and `git` only; no network call, no daemon, no MCP handshake.
 | `check` | `init` `run` `show` | Detect or run the repo's proving commands, bind the result to HEAD. | Reports `RED` on failure and marks a result stale when HEAD moved. |
 | `scope` | — | Compare every touched path with the brief's `Owns`. | Names every path that left the seam. |
 | `ready` | — | Gate a seam for landing. | `NO-GO` with one named reason per failure: no report, red check, stale check, dirty tree, out-of-scope path. |
+| `clean` | `sweep` `report` | Remove the stack's own leftovers, then name junk it did not create. | Never deletes outside `.stack`, never follows a symlink, never deletes a path it cannot claim as its own. |
 
 `check init` looks for the obvious manifests (`package.json` scripts, `pyproject.toml`, `go.mod`, `Cargo.toml`, a `Makefile` `test` target) and writes the four cheapest honest checks, so the first run is not an empty config. Until at least one check exists, readiness is `UNPROVEN`, not green.
 
@@ -85,7 +99,7 @@ Thirteen. They are ordinary `SKILL.md` files with front matter; the plugin regis
 |---|---|
 | `stacked` | Always. It is also the injected bootstrap: which rung you are on and what it may not do. |
 | `stacked-soul` | The four laws. Registered from the single canonical [`SOUL.md`](SOUL.md) at the repo root, not a copy. |
-| `stacked-ceo` | The request is a decision, not a task, or someone asks "is this good?" |
+| `stacked-pls` | The request is half-shaped: decide the gaps as the owner would, deepen the goal one rung, then work it to green. |
 | `stacked-lead` | Work spans files, decisions, or more than one sitting. |
 | `stacked-employee` | You were dispatched a seam and have a brief path. |
 | `stacked-audit` | A seam is ready to land, or a branch needs a verdict from outside. |
@@ -152,7 +166,7 @@ node scripts/install.mjs
 The installer:
 
 1. Junctions the repository to `%USERPROFILE%\.config\opencode\plugins\oc-stacked`. Edits here are live after a restart; there is no copy step for the plugin.
-2. Copies the four agents into `%USERPROFILE%\.config\opencode\agents\`.
+2. Copies the three agents into `%USERPROFILE%\.config\opencode\agents\`.
 3. Copies the four commands into `%USERPROFILE%\.config\opencode\commands\`.
 4. Runs the self-test and fails loudly if anything is wrong.
 
@@ -223,7 +237,7 @@ node scripts/install.mjs --remove
 - **OpenCode 2.0.4 or newer**, verified on 2.2.6. A V1-compatible export is kept for older hosts (skills and bootstrap; the tool domain does not exist there).
 - **Node 20 or newer.** No build step, no transpiler, no dependencies.
 - **git is optional.** Without a repository, `scope` says it cannot audit and `ready` gates on brief, report, and checks only. It says so rather than assuming clean.
-- **No model pinning.** A brief records a tier (`cheap`, `standard`, `expert`); which model backs it is your choice. Nothing inherits a surprise.
+- **Two pins, no surprises.** The lead inherits the session model, so the TUI selection always wins. EMPLOYEE is pinned to `deepseek-v4.1-flash` and AUDIT to `gpt-6.1-terra`; a brief records a tier (`cheap`, `standard`, `expert`) and the delegated seat supplies the model.
 - **No GitHub coupling.** Nothing reads or writes a remote, a PR, or an issue.
 - **No telemetry.** The only files written are inside the project's `.stack/` and the OpenCode config directory at install time.
 - **`check` is code execution by design.** It runs the shell commands in `.stack/config.json`. That file is repo-controlled, so treat a cloned project's config the way you treat a `Makefile` or a `package.json` script: read it before you run it. `check` prints every command and its exit code, and refuses to run at all when `OC_STACKED_NO_EXEC=1`.

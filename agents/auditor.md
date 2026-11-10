@@ -1,7 +1,6 @@
 ---
 description: Independent verdict on work it did not write. Runs the check itself, names findings by severity, fixes nothing. Use when a seam is ready to land.
 mode: subagent
-model: openai/gpt-6.1-terra
 color: "#a64d79"
 steps: 30
 permissions:

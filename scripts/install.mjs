@@ -64,26 +64,96 @@ function isLink(p) {
   }
 }
 
-function copyDir(from, to) {
+function copyDir(from, to, pins) {
   if (!fs.existsSync(from)) return 0;
   fs.mkdirSync(to, { recursive: true });
   let n = 0;
   for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
     if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
-    fs.copyFileSync(path.join(from, entry.name), path.join(to, entry.name));
+    const source = path.join(from, entry.name);
+    const target = path.join(to, entry.name);
+    const text = fs.readFileSync(source, 'utf8');
+    const model = pins ? pins[entry.name.replace(/\.md$/, '')] : undefined;
+    fs.writeFileSync(target, withModel(text, model));
     n += 1;
   }
   return n;
 }
 
-function clearDir(target) {
-  if (!fs.existsSync(target)) return 0;
-  const ours = fs
-    .readdirSync(target)
-    .filter((f) => f.endsWith('.md'))
-    .filter((f) => /^(ceo|lead|employee|auditor|stack|stack-check|stack-ready|stack-digest)\.md$/.test(f));
-  for (const f of ours) fs.unlinkSync(path.join(target, f));
-  return ours.length;
+/**
+ * The routing lives in one file and is applied to the copy, never to the repo.
+ * A missing entry, or `null` for the lead, leaves the agent unpinned so the TUI
+ * selection wins.
+ */
+const routing = (() => {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(repo, 'routing.json'), 'utf8'));
+  } catch (err) {
+    warn(`routing.json could not be read (${err.message}); agents install unpinned`);
+    return {};
+  }
+})();
+
+function withModel(text, model) {
+  if (!model) return text;
+  const end = text.indexOf('\n---', 3);
+  if (!text.startsWith('---') || end < 0) return text;
+  const head = text.slice(0, end);
+  if (/^model:/m.test(head)) return text;
+  const lines = head.split('\n');
+  const at = lines.findIndex((line) => /^mode:/.test(line));
+  lines.splice(at < 0 ? 1 : at + 1, 0, `model: ${model}`);
+  return lines.join('\n') + text.slice(end);
+}
+
+/** One line per agent: what it will run on once OpenCode restarts. */
+function reportPins() {
+  for (const entry of fs.readdirSync(path.join(repo, 'agents')).sort()) {
+    if (!entry.endsWith('.md')) continue;
+    const id = entry.replace(/\.md$/, '');
+    const model = routing[id];
+    ok(`${id} = ${model ? model.split('/').pop() : 'inherit'}`);
+  }
+}
+
+/**
+ * Remove only the files this repository actually ships, by exact name, so a
+ * user's own `lead.md` or `stack.md` is never swept up with ours.
+ */
+function removeShipped(from, to) {
+  if (!fs.existsSync(from) || !fs.existsSync(to)) return 0;
+  let n = 0;
+  for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
+    const target = path.join(to, entry.name);
+    if (!fs.existsSync(target)) continue;
+    fs.unlinkSync(target);
+    n += 1;
+  }
+  return n;
+}
+
+/**
+ * Files an earlier install created that this one no longer ships. The current
+ * repo cannot list them — they are deleted — so they are named here, and both
+ * `install` and `--remove` prune them. An upgrade must not leave a ghost seat
+ * in the TUI.
+ */
+const OBSOLETE = {
+  agents: ['ceo.md', 'stacked-ceo.md', 'employee.md'],
+  commands: [],
+};
+
+/** Delete obsolete names from a directory this repo owns, by exact name. */
+function removeObsolete(dir, names) {
+  let n = 0;
+  for (const name of names) {
+    const target = path.join(dir, name);
+    if (!fs.existsSync(target)) continue;
+    fs.unlinkSync(target);
+    n += 1;
+  }
+  return n;
 }
 
 if (remove) {
@@ -94,8 +164,12 @@ if (remove) {
     else fs.rmSync(linkPath, { recursive: true, force: true });
     ok(`removed ${linkPath}`);
   } else warn('plugin link was not present');
-  ok(`removed ${clearDir(agentsDir)} agent file(s) from ${agentsDir}`);
-  ok(`removed ${clearDir(commandsDir)} command file(s) from ${commandsDir}`);
+  ok(`removed ${removeShipped(path.join(repo, 'agents'), agentsDir)} agent file(s) from ${agentsDir}`);
+  ok(`removed ${removeShipped(path.join(repo, 'commands'), commandsDir)} command file(s) from ${commandsDir}`);
+  for (const [key, dir] of Object.entries({ agents: agentsDir, commands: commandsDir })) {
+    const n = removeObsolete(dir, OBSOLETE[key]);
+    if (n) ok(`removed ${n} obsolete ${key} file(s) that this repo no longer ships`);
+  }
   say('\nRestart OpenCode. The plugin is gone; any .stack/ folders in projects are untouched.');
   process.exit(0);
 }
@@ -108,18 +182,25 @@ if (!fs.existsSync(path.join(repo, 'index.js'))) {
 }
 
 if (linkDirectory(repo, linkPath)) ok(`plugin → ${linkPath}`);
-ok(`${copyDir(path.join(repo, 'agents'), agentsDir)} agent file(s) → ${agentsDir}`);
+ok(`${copyDir(path.join(repo, 'agents'), agentsDir, routing)} agent file(s) → ${agentsDir}`);
+reportPins();
 ok(`${copyDir(path.join(repo, 'commands'), commandsDir)} command file(s) → ${commandsDir}`);
+for (const [key, dir] of Object.entries({ agents: agentsDir, commands: commandsDir })) {
+  const n = removeObsolete(dir, OBSOLETE[key]);
+  if (n) ok(`pruned ${n} obsolete ${key} file(s) from a previous install`);
+}
 
 say(`
 Done. Three things happen on next launch:
 
   1. OpenCode loads the package at
      ${linkPath}
-  2. Thirteen skills register: stacked, stacked-soul, stacked-ceo, stacked-lead,
-     stacked-employee, stacked-audit, stacked-plan, stacked-swarm, stacked-debug,
-     stacked-tdd, stacked-review, stacked-ship, stacked-deepen
-  3. Four agents appear: ceo, lead, employee, auditor
+  2. Thirteen skills register: stacked, stacked-soul, stacked-pls,
+     stacked-lead, stacked-employee, stacked-audit, stacked-plan,
+     stacked-swarm, stacked-debug, stacked-tdd, stacked-review,
+     stacked-ship, stacked-deepen
+  3. Twenty-four agents appear: lead, auditor, and twenty-two archetypes
+     across seven departments, pinned by routing.json
 
 Restart OpenCode, then prove it loaded:
 
@@ -142,3 +223,4 @@ if (probe.status !== 0) {
   process.exit(probe.status || 1);
 }
 say(probe.stdout.trim().split('\n').slice(-3).join('\n'));
+

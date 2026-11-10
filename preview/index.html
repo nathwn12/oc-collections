@@ -126,7 +126,7 @@
   .r-audit .name i { background: var(--audit); }
 
   /* ---------- loop ---------- */
-  .loop { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  .loop { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
   .step { background: var(--ink-2); padding: 20px; }
   .step b { font-family: var(--mono); font-size: 11px; color: var(--lead); letter-spacing: .1em; display: block; margin-bottom: 10px; }
   .step h3 { margin: 0 0 6px; font-size: 15.5px; font-weight: 580; }
@@ -217,12 +217,12 @@
       <a href="#refuses">gates</a>
       <a href="#state">state</a>
     </nav>
-    <span>v0.1.0 · private</span>
+    <span>v0.2.0 · private</span>
   </div>
 
   <header class="hero">
     <div class="eyebrow">OpenCode plugin · zero MCP · Windows-first</div>
-    <h1>One CEO.<br><span class="thin">A lead.</span><br>A stack of employees.</h1>
+    <h1>One lead.<br><span class="thin">A stack of</span><br>employees.</h1>
     <p class="lede">
       One agent doing everything holds context it does not need, approves its own work,
       and forgets what it finished the moment context compacts.
@@ -231,35 +231,29 @@
     </p>
     <div class="install">
       <div class="cmd"><span class="sigil">›</span><span>node scripts/install.mjs</span><span class="dim"># junction, restart, done</span></div>
-      <div class="pill"><span class="dot"></span>41 / 41 self-tests green</div>
+      <div class="pill"><span class="dot"></span>suite green</div>
     </div>
   </header>
 
   <section id="shape">
     <div class="sec-head"><span class="sec-num">01</span><h2>The shape</h2></div>
-    <p class="sec-sub">Four seats. Every seat has one job and one thing it may never do. The prohibition is what makes the seat real.</p>
-    <p class="sec-sub" style="margin-top:14px">Models, pinned per seat: <span class="mono">muse-spark-1.3-contributor</span> decides and leads, <span class="mono">deepseek-v4.1-flash</span> builds, <span class="mono">gpt-6.1-terra</span> judges. The TUI pick stays yours.</p>
+    <p class="sec-sub">Three seats. Every seat has one job and one thing it may never do. The prohibition is what makes the seat real.</p>
+    <p class="sec-sub" style="margin-top:14px">Models: <span class="mono">lead</span> inherits the session model, so the TUI pick wins; <span class="mono">employee</span> pins <span class="mono">deepseek-v4.1-flash</span>, <span class="mono">auditor</span> pins <span class="mono">gpt-6.1-terra</span>.</p>
     <div class="rungs">
-      <div class="rung r-ceo">
-        <div class="n">01</div>
-        <div><div class="name"><i></i>CEO</div><div class="role">decides</div></div>
-        <div><span class="label">owns</span>direction, priority, spend, irreversible calls, the verdict on what ships</div>
-        <div><span class="label">may never</span>write code, run a build, or approve without evidence</div>
-      </div>
       <div class="rung r-lead">
-        <div class="n">02</div>
-        <div><div class="name"><i></i>LEAD</div><div class="role">dispatches</div></div>
-        <div><span class="label">owns</span>cutting seams, writing briefs, dispatching, reconciling, landing, the digest</div>
+        <div class="n">01</div>
+        <div><div class="name"><i></i>LEAD</div><div class="role">decides and dispatches</div></div>
+        <div><span class="label">owns</span>direction, seams, briefs, dispatch, reconciliation, landing, the digest</div>
         <div><span class="label">may never</span>take a seam it already dispatched, or land on a worker's word alone</div>
       </div>
       <div class="rung r-emp">
-        <div class="n">03</div>
+        <div class="n">02</div>
         <div><div class="name"><i></i>EMPLOYEE</div><div class="role">builds</div></div>
         <div><span class="label">owns</span>one seam, one brief, one check, one report</div>
         <div><span class="label">may never</span>merge, push a shared branch, widen scope, or dispatch anyone</div>
       </div>
       <div class="rung r-audit">
-        <div class="n">04</div>
+        <div class="n">03</div>
         <div><div class="name"><i></i>AUDIT</div><div class="role">judges</div></div>
         <div><span class="label">owns</span>the verdict on work it did not write</div>
         <div><span class="label">may never</span>edit what it judges, or accept the author's own check as the verdict</div>
@@ -269,7 +263,7 @@
 
   <section id="loop">
     <div class="sec-head"><span class="sec-num">02</span><h2>The loop</h2></div>
-    <p class="sec-sub">Eight steps, one direction. The state that survives a compaction is on disk, not in the conversation.</p>
+    <p class="sec-sub">Nine steps, one direction. The state that survives a compaction is on disk, not in the conversation.</p>
     <div class="loop">
       <div class="step"><b>01</b><h3>Intake</h3><p>Restate the objective in one sentence. Name the unknowns you would otherwise guess.</p></div>
       <div class="step"><b>02</b><h3>Rank</h3><p>Cut into seams. Score value × risk ÷ effort. Keep three live; park the rest with a reason.</p></div>
@@ -279,11 +273,12 @@
       <div class="step"><b>06</b><h3>Land</h3><p>One commit, plain words, the check output in the body. Mark the seam landed.</p></div>
       <div class="step"><b>07</b><h3>Digest</h3><p>Needs you / New / In progress. Every row aged, so a stall is visible without asking.</p></div>
       <div class="step"><b>08</b><h3>Audit</h3><p>A context that wrote none of it gives the verdict. The author's check is smoke.</p></div>
+      <div class="step"><b>09</b><h3>Close</h3><p>Sweep the plugin's own leftovers, name junk that is not its, refresh the digest, write one lesson.</p></div>
     </div>
   </section>
 
   <section id="tools">
-    <div class="sec-head"><span class="sec-num">03</span><h2>Six tools, no infrastructure</h2></div>
+    <div class="sec-head"><span class="sec-num">03</span><h2>Seven tools, no infrastructure</h2></div>
     <p class="sec-sub">Local files and git. No MCP handshake, no daemon, no network call, no dependencies. Each tool can refuse, which is the point.</p>
     <div class="tools">
       <div class="tool"><span class="tname">ledger</span><p>Appends one stamped line. Reads the tail. Rewrites the digest from the record instead of from memory.</p><span class="verb">append-only</span></div>
@@ -292,6 +287,7 @@
       <div class="tool"><span class="tname">check</span><p>Runs the repo's proving commands and binds pass or fail to a specific HEAD.</p><span class="verb">binds</span></div>
       <div class="tool"><span class="tname">scope</span><p>Compares every touched path with the brief's Owns list and names what left the seam.</p><span class="verb">audits</span></div>
       <div class="tool"><span class="tname">ready</span><p>The landing gate. GO or NO-GO, with every failing reason named in a sentence you can act on.</p><span class="verb">gates</span></div>
+      <div class="tool"><span class="tname">clean</span><p>The closing sweep. Removes only what the plugin itself left under <span class="mono">.stack/</span>, and names the junk that is not its own without deleting it.</p><span class="verb">sweeps</span></div>
     </div>
   </section>
 
@@ -373,3 +369,4 @@
 </div>
 </body>
 </html>
+

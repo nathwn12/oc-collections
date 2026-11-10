@@ -88,7 +88,7 @@ async function registerTools(ctx, dir) {
         if (typeof editor.namespace === 'function') {
           editor.namespace({
             name: 'stack',
-            description: 'The stacked workbench: memory, seam briefs, proving checks, scope audits, and the landing gate.',
+            description: 'The stacked workbench: memory, seam briefs, atomic swarm fan-out, proving checks, scope audits, the landing gate, and the closing sweep.',
           });
         }
       } catch {
