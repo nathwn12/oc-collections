@@ -16,7 +16,7 @@ The close seals itself, and the receipt is evidence.
 
 **Changed.** All four spellings reach the same tool (`stack_close`, `stack.close`, `oc_stack_close`, `oc.stack.close`). `brief` and `swarm` prove file-disjointness inside the state lock. Reserved Windows device names are refused as seam ids, and no seam may claim `.stack/state/**`. `force` is `true` or absent; statuses are a closed set; an unquoted absolute path with a space in a check command is refused rather than silently split.
 
-**Changed.** Detected checks are installed once, when the config is created or corrupt — never appended afterwards, so a trimmed list stays trimmed. `Cargo.toml` yields `cargo test` only when it declares a `[package]` table or a `[workspace]` naming at least one member.
+**Changed.** Detected checks are installed once, when the config is created or corrupt — never appended afterwards, so a trimmed list stays trimmed. `Cargo.toml` yields `cargo test` only when there is Rust code to test — a package with a `src/` directory or a declared lib/bin path that exists, or a workspace member that resolves to a real manifest — so an empty virtual workspace, a member that does not exist, and a manifest with no code all add nothing. The manifest syntax validator is gone: two audits showed that shape validation could not be trusted, and a filesystem fact cannot be spelled wrong.
 
 **Fixed.** On Windows, `npm`/`npx`/`pnpm`/`yarn`/`corepack` route through the shell, and a failed direct spawn falls back to the shell. Atomic writes retry on a busy file, a lock names its holder so a dead one is recovered at once, and a leading BOM in a JSON state file is ignored instead of treated as corruption.
 

@@ -110,7 +110,7 @@ All local. Files and `git` only; no network call, no daemon, no MCP handshake.
 | `clean` | `sweep` `report` | Remove the stack's own leftovers, then name junk it did not create. | Never deletes outside `.stack`, never follows a symlink, never deletes a path it cannot claim as its own. |
 | `close` | `preflight` `run` `show` | Seal the session: list open tickets, run the closing ceremony, read the receipt. | Refuses while a ticket is open; a failed close writes a refusal record (`go: false`) that destroys the earlier GO. |
 
-`check init` looks for the obvious manifests (`package.json` scripts, `pyproject.toml`, `go.mod`, `Cargo.toml`, a `Makefile` `test` target) and writes the four cheapest honest checks, so the first run is not an empty config. `Cargo.toml` yields `cargo test` only when it declares a `[package]` table or a `[workspace]` naming at least one member; an empty virtual workspace adds nothing. Until at least one check exists, readiness is `UNPROVEN`, not green.
+`check init` looks for the obvious manifests (`package.json` scripts, `pyproject.toml`, `go.mod`, `Cargo.toml`, a `Makefile` `test` target) and writes the four cheapest honest checks, so the first run is not an empty config. `Cargo.toml` yields `cargo test` only when there is code for it to run: a `[package]` with a `src/` directory (or a `[lib]`/`[[bin]]` path that exists), or a `[workspace]` member that resolves to a directory with its own manifest. An empty virtual workspace, a member that does not exist, and a manifest with no code all add nothing — the detector asks what is on disk, not whether the file parses, so a garbage manifest with no `src/` adds nothing either. Until at least one check exists, readiness is `UNPROVEN`, not green.
 
 ---
 
