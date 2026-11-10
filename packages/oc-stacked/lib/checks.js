@@ -17,8 +17,15 @@ export function configuredChecks(dir) {
   return { cfg, corrupt: false, all };
 }
 
-/** Run the chosen checks and bind the result to the HEAD it ran at. */
+/**
+ * Run the chosen checks and bind the result to the HEAD it ran at. `head` is
+ * read BEFORE the first check and `headAfter` after the last: a check that
+ * commits its own work moves the tree it leaves behind, and a result read only
+ * at the end would be bound to a tree that never existed when the first check
+ * started.
+ */
 export async function executeChecks(dir, chosen) {
+  const before = head(dir);
   const results = [];
   for (const c of chosen) {
     const r = await commandAsync(c.command, {
@@ -35,7 +42,7 @@ export async function executeChecks(dir, chosen) {
       tail: r.display.split('\n').slice(-12).join('\n'),
     });
   }
-  return { at: stamps().iso, head: head(dir), branch: branch(dir), results };
+  return { at: stamps().iso, head: before, headAfter: head(dir), branch: branch(dir), results };
 }
 
 /**
@@ -46,9 +53,19 @@ export async function executeChecks(dir, chosen) {
  */
 export function checkRecordReasons(record, configured) {
   const results = record.results;
+  const reasons = [];
   if (results.length !== configured.length) {
-    return [`the check run recorded ${results.length} of ${configured.length} checks; a partial result set is not evidence of green.`];
+    reasons.push(`the check run recorded ${results.length} of ${configured.length} checks; a partial result set is not evidence of green.`);
+  } else {
+    const failed = results.filter((r) => !r.ok);
+    if (failed.length) reasons.push(`check is RED: ${failed.map((r) => r.name).join(', ')}.`);
   }
-  const failed = results.filter((r) => !r.ok);
-  return failed.length ? [`check is RED: ${failed.map((r) => r.name).join(', ')}.`] : [];
+  // HEAD is read on both sides of the run: a check that commits changes the
+  // tree the plugin is about to seal, so its green is not evidence for any tree.
+  if (record.headAfter && record.head && record.headAfter !== record.head) {
+    reasons.push(
+      `HEAD moved during the check run (before ${record.head}, after ${record.headAfter}); the result is not bound to a tree.`,
+    );
+  }
+  return reasons;
 }

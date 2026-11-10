@@ -123,6 +123,24 @@ const idsNamed = (text) =>
     .split(/[^a-z0-9._-]+/)
     .filter(Boolean);
 
+const PASS = /\bPASS\b/i;
+const FAIL = /\bFAIL\b/i;
+
+/**
+ * What one AUDIT line says, as a word and not as a substring. `bypass:
+ * inconclusive, needs work` mentions neither verdict, and a `/pass/i` test read
+ * it as a pass. A line with both words, or with neither, is not a verdict and
+ * blocks: only a standalone FAIL blocks, only a standalone PASS clears.
+ */
+const verdictOf = (text) => {
+  const pass = PASS.test(text);
+  const fail = FAIL.test(text);
+  if (pass && fail) return 'both';
+  if (pass) return 'pass';
+  if (fail) return 'fail';
+  return 'none';
+};
+
 /**
  * The open tickets, read without changing anything. The close refuses on a
  * blocker and never on a note: an unpushed commit, a junk file and a missing
@@ -176,12 +194,16 @@ export async function preflight(dir, { lesson = '', atlas: runAtlas = true } = {
         if (audit === undefined) {
           blockers.push(`seam ${brief.id} landed with no AUDIT line naming it.`);
           rows.push(['seam', `${brief.id} — landed, unaudited`, 'record an AUDIT line naming it']);
-        } else if (/fail/i.test(audit)) {
+          continue;
+        }
+        const verdictOfAudit = verdictOf(audit);
+        if (verdictOfAudit === 'fail') {
           blockers.push(`the latest AUDIT for ${brief.id} is FAIL.`);
           rows.push(['seam', `${brief.id} — latest AUDIT is FAIL`, 'fix what the audit found, then audit it again']);
-        } else if (!/pass/i.test(audit)) {
-          blockers.push(`the latest AUDIT for ${brief.id} is ambiguous: it says neither PASS nor FAIL.`);
-          rows.push(['seam', `${brief.id} — latest AUDIT is ambiguous`, 'record an AUDIT that ends in a verdict']);
+        } else if (verdictOfAudit !== 'pass') {
+          const said = verdictOfAudit === 'both' ? 'it says both PASS and FAIL' : 'it says neither PASS nor FAIL';
+          blockers.push(`the latest AUDIT for ${brief.id} is ambiguous: ${said}.`);
+          rows.push(['seam', `${brief.id} — latest AUDIT is ambiguous`, 'record an AUDIT that ends in one verdict']);
         }
       }
     }
@@ -239,8 +261,12 @@ export async function preflight(dir, { lesson = '', atlas: runAtlas = true } = {
   if (cfg && cfg.atlas === undefined) notes.push(`atlas — not configured; no memory check ran`);
 
   const verdict = blockers.length ? 'BLOCKED' : 'GO';
+  // The head this preflight read. A caller binding a receipt to it must know
+  // which tree the answers above describe, so it is returned, never re-read.
+  const headAt = head(dir);
+  const branchAt = branch(dir);
   const text = [
-    `## ${verdict} — preflight${blockers.length ? ` on ${blockers.length} blocker${blockers.length === 1 ? '' : 's'}` : ''} at ${shortSha(head(dir))} (${branch(dir) || 'detached'})`,
+    `## ${verdict} — preflight${blockers.length ? ` on ${blockers.length} blocker${blockers.length === 1 ? '' : 's'}` : ''} at ${shortSha(headAt)} (${branchAt || 'detached'})`,
     '',
     ...(blockers.length ? ['Why:', '', ...blockers.map((b) => `- ${b}`), ''] : []),
     rows.length
@@ -255,7 +281,7 @@ export async function preflight(dir, { lesson = '', atlas: runAtlas = true } = {
       : 'Nothing stands in the way. The ceremony is `close` op=run with one lesson.',
   ].join('\n');
 
-  return { blockers, notes, text, atlas, dirty, junk };
+  return { blockers, notes, text, atlas, dirty, junk, head: headAt, branch: branchAt };
 }
 
 /** A refusal made before any work: no receipt is written and none is deleted. */
@@ -316,8 +342,8 @@ export async function runClose(dir, { lesson } = {}) {
   const proven = checkRecordReasons(record, all);
   if (proven.length) {
     reasons.push(...proven);
-  } else if (record.head !== head(dir)) {
-    reasons.push(`checks ran at ${shortSha(record.head)} but HEAD is ${shortSha(head(dir))}. Re-run the close at the head you want to seal.`);
+  } else if (pre.head !== record.head) {
+    reasons.push(`the preflight read ${shortSha(pre.head)} but the checks ran at ${shortSha(record.head)}: HEAD moved between them. Re-run the close at the head you want to seal.`);
   } else {
     done.push(`checks green at ${shortSha(record.head)}: ${record.results.map((r) => r.name).join(', ')}`);
   }
@@ -348,7 +374,7 @@ export async function runClose(dir, { lesson } = {}) {
   const post = await preflight(dir, { lesson: said, atlas: false });
   if (post.blockers.length) reasons.push(...post.blockers);
   const nowHead = head(dir);
-  if (nowHead !== record.head || post.dirty.length) {
+  if (nowHead !== record.head || post.head !== record.head || post.dirty.length) {
     reasons.push(
       `the tree or HEAD changed after the checks ran: checks at ${shortSha(record.head)}, HEAD ${shortSha(nowHead)}${post.dirty.length ? `, ${post.dirty.length} path(s) dirty` : ''}.`,
     );
@@ -356,8 +382,10 @@ export async function runClose(dir, { lesson } = {}) {
 
   if (reasons.length) return { ...red(reasons, done), preflight: pre };
 
-  // 9. Every step green: the receipt that makes [done] possible.
-  const receiptHead = head(dir);
+  // 9. Every step green: the receipt that makes [done] possible. The head is the
+  // one the checks started at, never a fresh read: a check that moved HEAD has
+  // already refused above, and reading again here would hide it.
+  const receiptHead = record.head;
   const receipt = {
     go: true,
     receipt_id: crypto.randomUUID(),
