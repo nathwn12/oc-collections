@@ -175,10 +175,12 @@ async function ensureProjectStack(dir) {
 // every transition - the renamed title, the prompt's plain English, tool
 // activity, execution events and idle - so no path can disagree with another.
 //
-// Precedence, everywhere: a parked override; then active while working, parked
-// at rest. [done] has exactly one writer: the idle gate, once the receipt exists
-// and the final message carries the seal report. A receipt alone is never
-// enough, and a title that arrives claiming [done] is never accepted.
+// Precedence, everywhere: a parked override; a done override while the receipt
+// is still a GO; then active while working, parked at rest. [done] has exactly
+// one writer: the idle gate, once the receipt exists and the final message
+// carries the seal report. The gate records [done] in the status override so
+// the idles that follow the seal keep it. A receipt alone is never enough, and
+// a title that arrives claiming [done] is never accepted.
 // Every path filters to a top-level session living in this project, and every
 // failure is contained by note() except the rename refusal, which is the gate.
 
@@ -237,7 +239,7 @@ function overrideOf(dir, sessionID) {
   return entry && typeof entry === 'object' && typeof entry.status === 'string' ? entry.status : null;
 }
 
-/** `status` is 'parked', 'closing', or null to clear. Read-modify-write under the stack lock. */
+/** `status` is 'parked', 'closing', 'done', or null to clear. Read-modify-write under the stack lock. */
 function setOverride(dir, sessionID, status) {
   withLock(dir, () => {
     const all = overrides(dir);
@@ -375,9 +377,15 @@ async function liveSession(ctx, sessionID, dir) {
 }
 
 /** Receipt, then a parked override, then the activity the caller reports.
- *  Never `done`: only the idle gate may write that, after the sealed report. */
+ *  A done override holds only while the receipt is still a GO: the idles after
+ *  the seal must keep [done], and a new turn that invalidates the receipt takes
+ *  it away. Never `done` without both, so only the idle gate can write it. */
 function targetStatus(dir, sessionID, activity) {
-  if (overrideOf(dir, sessionID) === 'parked') return 'parked';
+  const override = overrideOf(dir, sessionID);
+  if (override === 'parked') return 'parked';
+  // Read the receipt only when the override claims it: closeState costs a git
+  // snapshot, and this runs on every event and tool call.
+  if (override === 'done' && closeState(dir).length === 0) return 'done';
   return activity === 'working' ? 'active' : 'parked';
 }
 
@@ -401,7 +409,7 @@ async function applyTitle(ctx, dir, sessionID, status, record = null) {
     recentDone.set(sessionID, next);
   }
   await ctx.session.update({ sessionID, title: next });
-  if (status === 'done') setOverride(dir, sessionID, null);
+  if (status === 'done') setOverride(dir, sessionID, 'done');
   return true;
 }
 
@@ -550,6 +558,16 @@ async function onIdle(ctx, dir, event) {
     const token = sealToken(dir);
     const last = await lastAssistantText(ctx, sessionID);
     if (!token || sealReport(last, token)) {
+      // The seal ends the session, so its finished work is folded into the
+      // context once, at this moment. A host without `compact`, or a compaction
+      // that throws, never blocks the seal: [done] is the owner's status.
+      if (token && sealReport(last, token)) {
+        try {
+          if (typeof ctx?.session?.compact === 'function') await ctx.session.compact({ sessionID });
+        } catch (err) {
+          note('session compaction failed:', err?.message || err);
+        }
+      }
       await applyTitle(ctx, dir, sessionID, 'done', record);
       clearIntent(dir, sessionID);
       return;

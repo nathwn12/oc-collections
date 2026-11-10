@@ -62,12 +62,14 @@ export async function register(ctx) {
 
   /**
    * A host with the surfaces setup() registers against. `titles` seeds the
-   * sessions; every call the plugin makes is recorded in `calls`.
+   * sessions; every call the plugin makes is recorded in `calls`. `compactError`
+   * makes the one host call that can fail on its own fail, because a compaction
+   * that throws must not take the seal with it.
    */
-  const fixture = ({ titles = { ses_a: 'retry budget' }, messages = [] } = {}) => {
+  const fixture = ({ titles = { ses_a: 'retry budget' }, messages = [], compactError = null } = {}) => {
     const d = configuredRepo();
     const hooks = new Map();
-    const calls = { get: 0, update: [], synthetic: [], context: 0, subscribe: 0 };
+    const calls = { get: 0, update: [], synthetic: [], context: 0, subscribe: 0, compact: [], log: [] };
     const records = new Map(Object.entries(titles).map(([id, title]) => [id, { id, title, directory: d }]));
     // The event loop is driven by this queue, so a check can deliver the host
     // events a real session sends (a rename echo, a new turn) and then wait for
@@ -98,9 +100,18 @@ export async function register(ctx) {
         },
         update: async (input) => {
           calls.update.push(input);
+          calls.log.push('update');
           const record = records.get(input.sessionID);
           if (record && typeof input.title === 'string') record.title = input.title;
           return true;
+        },
+        // The real compaction is a host call that returns an inbox item, not a
+        // summary: recording it is the whole evidence that the seal asked.
+        compact: async (input) => {
+          calls.compact.push(input);
+          calls.log.push('compact');
+          if (compactError) throw compactError;
+          return { queued: true };
         },
         context: async () => {
           calls.context += 1;
@@ -427,6 +438,88 @@ export async function register(ctx) {
     assert(!f.calls.synthetic.length, 'the gate nudged a session that already reported');
     f.shut();
     return token;
+  });
+
+  await checkAsync('the [done] seal survives the idle that follows the compaction', async () => {
+    const f = fixture();
+    await plugin.setup(f.ctx);
+    writeReceipt(f.dir);
+    writeIntent(f.dir, 'ses_a', 1);
+    const token = `SEALED ${head(f.dir).slice(0, 7)}`;
+
+    f.messages.push(
+      { type: 'user', content: [{ type: 'text', text: 'close the session' }] },
+      {
+        type: 'assistant',
+        content: [
+          {
+            type: 'text',
+            text: `## Outcome\nThe retry budget is sealed.\n\n## Evidence\nnode -e "process.exit(0)" exited 0.\n\n${token}`,
+          },
+        ],
+      },
+    );
+
+    await f.hook('session.experimental.idle')({ sessionID: 'ses_a' });
+    assert(f.titleOf('ses_a') === '[done] retry budget', `the sealed report did not write [done]: ${f.titleOf('ses_a')}`);
+    // The digest is the compaction: the sealed report asks the host for one real
+    // compaction, before the title says done, and exactly one - the report is the
+    // last thing the session says, so a second pass would summarise nothing.
+    assert(f.calls.compact.length === 1, `the seal fired ${f.calls.compact.length} compaction(s), not one`);
+    assert(f.calls.compact[0].sessionID === 'ses_a', `the compaction was for ${JSON.stringify(f.calls.compact[0])}`);
+    assert(
+      f.calls.log.join(',') === 'compact,update',
+      `the [done] write did not follow one compaction: ${f.calls.log.join(',')}`,
+    );
+
+    // The host then runs an idle of its own with no close intent left. The seal
+    // therefore has to be durable: without a [done] override the at-rest
+    // transition parks the session the plugin has just sealed.
+    await f.hook('session.experimental.idle')({ sessionID: 'ses_a' });
+    assert(
+      f.titleOf('ses_a') === '[done] retry budget',
+      `the idle after the seal regressed the title to ${JSON.stringify(f.titleOf('ses_a'))}`,
+    );
+    assert(f.calls.compact.length === 1, `the idle after the seal fired ${f.calls.compact.length} compaction(s)`);
+    assert(!f.calls.synthetic.length, 'the idle after the seal nudged the session');
+    f.shut();
+    return 'one compaction, then [done] held';
+  });
+
+  await checkAsync('a compaction that throws still seals the session', async () => {
+    const f = fixture({ compactError: new Error('the host refused to compact') });
+    await plugin.setup(f.ctx);
+    writeReceipt(f.dir);
+    writeIntent(f.dir, 'ses_a', 1);
+    const token = `SEALED ${head(f.dir).slice(0, 7)}`;
+    f.messages.push(
+      { type: 'user', content: [{ type: 'text', text: 'close the session' }] },
+      {
+        type: 'assistant',
+        content: [
+          {
+            type: 'text',
+            text: `## Outcome\nThe retry budget is sealed.\n\n## Evidence\nnode -e "process.exit(0)" exited 0.\n\n${token}`,
+          },
+        ],
+      },
+    );
+
+    let escaped = null;
+    try {
+      await f.hook('session.experimental.idle')({ sessionID: 'ses_a' });
+    } catch (err) {
+      escaped = err;
+    }
+    // A closed session whose memory could not be summarised is still closed: the
+    // seal is the receipt and the report, and the compaction is not a gate.
+    assert(!escaped, `a failed compaction escaped the idle gate: ${escaped && escaped.message}`);
+    assert(f.calls.compact.length === 1, `the seal fired ${f.calls.compact.length} compaction(s), not one`);
+    assert(f.titleOf('ses_a') === '[done] retry budget', `a failed compaction left the title ${JSON.stringify(f.titleOf('ses_a'))}`);
+    assert(!fs.existsSync(intentFile(f.dir)), 'a failed compaction left the close intent open');
+    assert(!f.calls.synthetic.length, 'a failed compaction nudged the session');
+    f.shut();
+    return 'seal survives a compaction error';
   });
 
   await checkAsync('a bare seal token is not a report: the instruction is issued and [done] is withheld', async () => {
