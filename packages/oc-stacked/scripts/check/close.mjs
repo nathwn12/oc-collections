@@ -10,6 +10,7 @@
  * Split out of scripts/check.mjs; the runner is scripts/check/index.mjs.
  */
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { CLOSE_PATH, closeReasons, invalidateClose, preflight } from '../../lib/close.js';
 import { head } from '../../lib/git.js';
@@ -90,11 +91,33 @@ export async function register(ctx) {
     assert(written.go === true, 'the receipt is not a GO');
     assert(written.head === sha, `the receipt is bound to ${written.head}, HEAD is ${sha}`);
     assert(written.sealed === sha.slice(0, 7), `sealed is ${written.sealed}, not the first 7 of HEAD`);
+    assert(Array.isArray(written.tree) && !written.tree.length, `a GO receipt carries a dirty tree: ${JSON.stringify(written.tree)}`);
 
     const reasons = closeReasons(d);
     assert(!reasons.length, `a fresh GO still has reasons: ${reasons.join('; ')}`);
     shut(d);
     return `SEALED ${written.sealed}`;
+  });
+
+  await checkAsync('a non-git directory cannot close: no HEAD, no receipt, no [done]', async () => {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-stacked-nongit-'));
+    const text = await preflightOf(d);
+    assert(BLOCKED.test(text), `a non-git directory was not a blocker:\n${text}`);
+    assert(/not a git repository/.test(text), `the missing HEAD was not named:\n${text}`);
+
+    // A receipt can be written by anything. Without a repository there is no
+    // HEAD to bind it to, so it can never be the empty-reasons GO [done] needs.
+    writeReceipt(d);
+    const reasons = closeReasons(d);
+    assert(reasons.length, 'a receipt in a non-git directory read as a GO');
+    assert(/not a git repository/.test(reasons.join('; ')), `the missing HEAD was not the reason: ${reasons.join('; ')}`);
+
+    const sealed = await seal(d, 'a close without a HEAD has nothing to bind');
+    assert(NO_GO.test(sealed), `a non-git directory sealed:\n${sealed}`);
+    assert(/not a git repository/.test(sealed), `the refusal did not name the missing HEAD:\n${sealed}`);
+    assert(!fs.existsSync(closeFile(d)), 'a non-git close left a receipt on disk');
+    shut(d);
+    return 'not a git repository';
   });
 
   // ---------------------------------------------------------------- NO-GO
@@ -113,6 +136,21 @@ export async function register(ctx) {
     assert(/no close receipt/.test(reasons[0]), `the missing receipt was not named: ${reasons[0]}`);
     shut(d);
     return 'RED, receipt deleted';
+  });
+
+  await checkAsync('a check that writes a file after the preflight is a NO-GO with no receipt', async () => {
+    // The check is green and writes dirty.txt: only the post-check recheck can
+    // see that the tree the receipt would cover is not the tree that was proved.
+    const d = configuredRepo(`node -e "require('fs').writeFileSync('dirty.txt','x')"`);
+    assert(GO.test(await preflightOf(d)), 'the fixture was not GO before the checks ran');
+    assert(!fs.existsSync(path.join(d, 'dirty.txt')), 'the check ran before the ceremony');
+
+    const text = await seal(d, 'a check that dirties the tree is not evidence');
+    assert(NO_GO.test(text), `a check that wrote a file still sealed:\n${text}`);
+    assert(/dirty\.txt/.test(text), `the path the check wrote was not named:\n${text}`);
+    assert(!fs.existsSync(closeFile(d)), 'a close whose own check dirtied the tree wrote a receipt');
+    shut(d);
+    return 'dirty.txt named, no receipt';
   });
 
   await checkAsync('a close with no lesson is refused before any work and leaves the receipt alone', async () => {
@@ -154,6 +192,26 @@ export async function register(ctx) {
     assert(/unreadable/.test(corrupt[0]), `a corrupt receipt was not named as corrupt: ${corrupt[0]}`);
     shut(d);
     return 'moved, invalidated, corrupt';
+  });
+
+  await checkAsync('an edit after a GO makes the receipt stale, and op=show says so', async () => {
+    const d = configuredRepo();
+    const text = await seal(d, 'a GO covers the tree the checks proved and nothing else');
+    assert(GO.test(text), `the fixture did not seal:\n${text}`);
+    assert(!closeReasons(d).length, `a fresh GO has reasons: ${closeReasons(d).join('; ')}`);
+
+    // The receipt was written for a clean tree. One touch outside .stack is an
+    // edit no check covered, so [done] would be stale the moment it is read.
+    fs.writeFileSync(path.join(d, 'after-go.ts'), 'export const later = 1;\n');
+    const reasons = closeReasons(d);
+    assert(reasons.length, 'an edited tree still read as a GO');
+    assert(/outside \.stack/.test(reasons.join('; ')), `the edit was not the reason: ${reasons.join('; ')}`);
+
+    const shown = await runIn(d, 'close', { op: 'show' });
+    assert(NO_GO.test(shown), `op=show read a stale receipt as GO:\n${shown}`);
+    assert(/Not valid at HEAD|outside \.stack/.test(shown), `the staleness was not named:\n${shown}`);
+    shut(d);
+    return 'GO, then stale after one edit';
   });
 
   // ---------------------------------------------------------------- the blocker matrix
@@ -203,6 +261,28 @@ export async function register(ctx) {
     assert(GO.test(clear), `an AUDIT naming the seam did not clear it:\n${clear}`);
     shut(d);
     return 'prefix refused, exact id accepted';
+  });
+
+  await checkAsync('a landed brief is blocked by a FAIL audit, and only a later PASS clears it', async () => {
+    const d = configuredRepo();
+    writeIndex(d, [{ id: 'audit-gate', status: 'landed' }]);
+
+    // No line: landed and unaudited is the same blocker.
+    const none = await preflightOf(d);
+    assert(BLOCKED.test(none), `a landed brief with no AUDIT was not a blocker:\n${none}`);
+    assert(/landed with no AUDIT line naming it/.test(await blockersOf(d)), 'an unaudited landing is not a named blocker');
+
+    // A FAIL is a verdict: it blocks until a later line says PASS.
+    await runIn(d, 'ledger', { op: 'log', kind: 'AUDIT', text: 'audit-gate: FAIL, three bypasses stand' });
+    const failed = await preflightOf(d);
+    assert(BLOCKED.test(failed), `a FAIL audit did not block the close:\n${failed}`);
+    assert(/latest AUDIT for audit-gate is FAIL/.test(await blockersOf(d)), 'a FAIL audit is not a named blocker');
+
+    await runIn(d, 'ledger', { op: 'log', kind: 'AUDIT', text: 'audit-gate: PASS, the bypasses are closed' });
+    const passed = await preflightOf(d);
+    assert(GO.test(passed), `a later PASS did not clear the FAIL:\n${passed}`);
+    shut(d);
+    return 'no line blocks, FAIL blocks, PASS clears';
   });
 
   await checkAsync('an unanswered ASK blocks the close, and an ANSWER clears it', async () => {

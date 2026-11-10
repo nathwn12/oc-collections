@@ -69,6 +69,13 @@ export async function register(ctx) {
     const hooks = new Map();
     const calls = { get: 0, update: [], synthetic: [], context: 0, subscribe: 0 };
     const records = new Map(Object.entries(titles).map(([id, title]) => [id, { id, title, directory: d }]));
+    // The event loop is driven by this queue, so a check can deliver the host
+    // events a real session sends (a rename echo, a new turn) and then wait for
+    // the one effect it can see. Nothing is replayed: an event emitted before
+    // setup subscribes is still delivered, because the generator reads the queue.
+    const queue = [];
+    const emitted = [];
+    let wake = null;
 
     const host = {
       location: { directory: d },
@@ -105,10 +112,19 @@ export async function register(ctx) {
         },
       },
       event: {
-        // Yields nothing and returns: setup must subscribe, and the check must
-        // not wait on a host that never sends an event.
+        // Yields queued events and returns nothing on its own: setup must
+        // subscribe, and the check must not wait on a host that never sends one.
         subscribe: async function* () {
           calls.subscribe += 1;
+          for (;;) {
+            if (!queue.length) {
+              await new Promise((resolve) => {
+                wake = resolve;
+              });
+              continue;
+            }
+            yield queue.shift();
+          }
         },
       },
     };
@@ -119,6 +135,24 @@ export async function register(ctx) {
       records,
       calls,
       messages,
+      /** Deliver one host event to the plugin's subscription. */
+      emit: (event) => {
+        emitted.push(event);
+        queue.push(event);
+        if (wake) {
+          const resume = wake;
+          wake = null;
+          resume();
+        }
+      },
+      /** Wait (bounded) for a visible effect of the plugin's event handling. */
+      until: async (predicate, what) => {
+        for (let i = 0; i < 400; i += 1) {
+          if (predicate()) return;
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
+        throw new Error(`${what} (events: ${emitted.map((e) => e.type).join(', ') || 'none'})`);
+      },
       hook: (name) => {
         const handler = hooks.get(name);
         assert(handler, `setup did not register ${name}`);
@@ -234,27 +268,83 @@ export async function register(ctx) {
   });
 
   // ---------------------------------------------------------------- the rename gate
-  await checkAsync('[done] is refused without a receipt and normalises to [done] with one', async () => {
+  await checkAsync('[done] is refused with or without a receipt, and a receipt never promotes a rename', async () => {
     const f = fixture();
     await plugin.setup(f.ctx);
     const before = f.hook('tool.execute.before');
+    const REFUSED = /\[done\]/;
 
     await throws(
       () => before({ tool: 'session_rename', sessionID: 'ses_a', input: { title: '[done] retry budget' } }),
-      /\[done\] refused/,
+      REFUSED,
       'a [done] rename with no receipt was allowed',
     );
 
+    // The receipt is half the seal and the sealed report is the other half, so a
+    // valid GO does not license the type: only the idle gate writes [done].
     writeReceipt(f.dir);
-    const accepted = { title: '[done] retry budget' };
-    await before({ tool: 'session_rename', sessionID: 'ses_a', input: accepted });
-    assert(accepted.title === '[done] retry budget', `a legitimate [done] was rewritten to ${accepted.title}`);
+    const typed = { title: '[done] retry budget' };
+    const message = await throws(
+      () => before({ tool: 'session_rename', sessionID: 'ses_a', input: typed }),
+      REFUSED,
+      'a [done] rename with a valid receipt was allowed',
+    );
+    assert(typed.title === '[done] retry budget', `a refused rename was rewritten to ${typed.title}`);
+    assert(!isDone(f.titleOf('ses_a')), `a refused rename wrote the host title: ${f.titleOf('ses_a')}`);
 
+    // Every other rename under a GO is normalised to active, never to done.
     const parked = { title: '[parked] retry budget' };
     await before({ tool: 'session_rename', sessionID: 'ses_a', input: parked });
-    assert(parked.title === '[done] retry budget', `a GO receipt did not outrank the parked claim: ${parked.title}`);
+    assert(parked.title === '[active] retry budget', `a GO receipt outranked a non-done rename: ${parked.title}`);
+    assert(!isDone(parked.title), `a rename was normalised to done: ${parked.title}`);
+    assert(!f.calls.update.length, `the gate wrote a title instead of rewriting the input: ${JSON.stringify(f.calls.update)}`);
     f.shut();
-    return 'refused, then normalised';
+    return message;
+  });
+
+  await checkAsync('a foreign [done] rename event is parked, and the plugin own done write survives its echo', async () => {
+    const f = fixture();
+    await plugin.setup(f.ctx);
+    writeReceipt(f.dir);
+
+    // Any other surface can rename: the event carries a claim, never an author.
+    // With a valid receipt the old code promoted it to [done] - it must be parked.
+    f.emit({ type: 'session.renamed', data: { sessionID: 'ses_a', title: '[done] retry budget' } });
+    await f.until(() => f.titleOf('ses_a') === '[parked] retry budget', 'a foreign [done] event stood with a valid receipt');
+
+    // The idle path is the one writer: [done] after the sealed report. The host
+    // echoes that exact title back, and the plugin must not undo its own write.
+    writeIntent(f.dir, 'ses_a', 1);
+    f.messages.push(
+      { type: 'user', content: [{ type: 'text', text: 'close the session' }] },
+      {
+        type: 'assistant',
+        content: [
+          {
+            type: 'text',
+            text: `## Outcome\nThe close is sealed.\n\n## Evidence\nnode -e "process.exit(0)" exited 0.\n\nSEALED ${head(f.dir).slice(0, 7)}`,
+          },
+        ],
+      },
+    );
+    await f.hook('session.experimental.idle')({ sessionID: 'ses_a' });
+    assert(f.titleOf('ses_a') === '[done] retry budget', `the sealed report did not write [done]: ${f.titleOf('ses_a')}`);
+
+    const written = f.titleOf('ses_a');
+    f.emit({ type: 'session.renamed', data: { sessionID: 'ses_a', title: written } });
+    // A new turn follows the echo, so the check can prove the echo produced no
+    // rewrite of its own: exactly three writes - the foreign event's parked,
+    // the seal's [done], then the turn's [active] - and never a parked between.
+    f.emit({ type: 'session.execution.started', data: { sessionID: 'ses_a' } });
+    await f.until(() => f.titleOf('ses_a') === '[active] retry budget', 'the turn after the echo did not run');
+
+    const titles = f.calls.update.map((u) => u.title);
+    assert(
+      titles.length === 3 && titles[1] === '[done] retry budget' && titles[2] === '[active] retry budget',
+      `the plugin's own [done] echo was rewritten: ${JSON.stringify(titles)}`,
+    );
+    f.shut();
+    return 'foreign parked, own echo kept';
   });
 
   // ---------------------------------------------------------------- the idle loop
@@ -290,6 +380,21 @@ export async function register(ctx) {
     assert(intentsOf(f.dir).ses_a.attempts === 1, 'the attempt was not counted');
     f.shut();
     return 'the one command that seals';
+  });
+
+  await checkAsync('idle with a valid receipt but no close intent parks the session, never [done]', async () => {
+    const f = fixture();
+    await plugin.setup(f.ctx);
+    writeReceipt(f.dir);
+
+    await f.hook('session.experimental.idle')({ sessionID: 'ses_a' });
+    assert(f.titleOf('ses_a') === '[parked] retry budget', `a receipt with no intent ended ${f.titleOf('ses_a')}`);
+    assert(!isDone(f.titleOf('ses_a')), 'an ordinary idle with a receipt wrote [done]');
+    assert(!f.calls.synthetic.length, `the at-rest transition nudged the session (${f.calls.synthetic.length} message(s))`);
+    const last = f.calls.update[f.calls.update.length - 1];
+    assert(last && last.title === '[parked] retry budget', `the written title was ${JSON.stringify(f.calls.update)}`);
+    f.shut();
+    return 'parked, no nudge';
   });
 
   await checkAsync('a valid receipt, the seal token, and both report headings set [done] and clear the intent', async () => {
