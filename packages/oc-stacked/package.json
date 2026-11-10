@@ -1,6 +1,6 @@
 {
   "name": "oc-stacked",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "A three-rung agent stack for OpenCode: one lead, a fresh employee per seam, and an auditor who wrote none of it. The owner is the CEO; the lead speaks for them. Local-first, zero MCP, Windows-native.",
   "type": "module",
   "license": "MIT",

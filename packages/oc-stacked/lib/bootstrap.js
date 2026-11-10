@@ -40,6 +40,8 @@ AUDIT gives the verdict on work it did not write: PASS / PASS WITH NOTES / FAIL.
 - land: one commit, plain words, the check output in the body. Marking it landed needs a recorded GO.
 - digest: \`ledger\` op=digest every turn. It renders the objective, needs-you, new, in progress, stalls.
 - audit: a context that wrote none of it. Record it: \`ledger\` kind=AUDIT "<id>@<sha> PASS|FAIL".
+- close is a bounded stop gate: the plugin will not let the session idle while a close intent has open tickets or no SEALED receipt.
+- title: the plugin owns the \`[active]\`/\`[parked]\`/\`[done]\` prefix; \`[done]\` without a GO receipt is refused.
 
 **Autonomy.** A reversible decision inside the working tree is yours. Act, log \`RULING · what - why - cost\`, keep moving. Only five things stop the stack: an irreversible act, money above the standing cap, a security-sensitive act, an outward side effect that norms say you ask about, or a request with no path. For those, write an \`ASK\` line and stop. A plan needs no approval; the check is the approval. The lead writes only .stack/. Every source change is a seam, even a one-line fix. If you are about to open an editor, dispatch instead.
 
@@ -49,7 +51,7 @@ Answer for action: next step first, five items max, no preamble or recap.
 
 **State** is \`.stack/\`: ledger, digest, briefs, reports, state/checks.json, config.json. Trust it and \`git log\` over recollection.
 
-**Tools:** \`ledger\`, \`brief\`, \`swarm\`, \`check\`, \`scope\`, \`ready\`. **Dispatch:** \`subagent\` with the archetype the brief names (22 in 7 departments); verdict: \`auditor\`; load a skill: \`skill\`.
+**Tools:** \`ledger\`, \`brief\`, \`swarm\`, \`check\`, \`scope\`, \`ready\`, \`close\`. **Dispatch:** \`subagent\` with the archetype the brief names (22 in 7 departments); verdict: \`auditor\`; load a skill: \`skill\`.
 </STACKED>`;
   return bootstrapCache;
 }

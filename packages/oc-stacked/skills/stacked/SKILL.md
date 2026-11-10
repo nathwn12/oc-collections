@@ -38,7 +38,8 @@ The soul binds all of them: `stacked-soul`.
 5. **Reconcile.** Read the report before chat. Re-run the cheap check yourself. A worker's claim is not evidence.
 6. **Land.** `ready` gates it. One commit, plain words, the check output in the body. Then mark the seam landed, which needs a recorded GO — `brief op=status status=landed` refuses without one.
 7. **Digest.** Rewrite `.stack/digest.md` every turn: Needs you / New / In progress, every row aged. A pass is not closed until `clean` reports and the digest is current.
-8. **Audit.** A context that wrote none of the work gives the verdict. The author's own check is smoke.
+8. **Close.** `stack_close` op=preflight, settle every ticket, then op=run: only the GO receipt in `state/close.json` makes `[done]` possible.
+9. **Audit.** A context that wrote none of the work gives the verdict. The author's own check is smoke.
 
 ## Autonomy, not ceremony
 

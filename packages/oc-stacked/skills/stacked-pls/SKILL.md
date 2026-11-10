@@ -175,14 +175,11 @@ Everything else is yours. A reversible call inside the tree does not need a sign
 
 ## Close
 
-1. Run the check the brief named, once, at the final tree; quote the output.
-2. `clean` op=sweep — remove oc-stacked's own leftovers.
-3. `clean` op=report — name junk that is not ours; do not delete it.
-4. `ledger` op=digest - the digest is the session's memory, and it must be current.
-5. **Atlas, when the work touched durable knowledge**: run `node .graphify/tools/maintain.mjs` from the Atlas root (`Q:\PROJECTS\PERSONAL\my-harness-vault\vault`) and quote its last line. It checks the `harness-wiki` junction, graph freshness against HEAD, lint, and the Obsidian version, then writes its own receipt to `.graphify/ledger.jsonl`. If it is red because the graph is stale and you changed curated notes, `--fix` rebuilds and re-proves. A red you did not run is a stale graph nobody noticed.
-6. Write one lesson to the ledger: what the next session should know that this one learned. One line.
-7. Last line to the owner: what shipped, what the check said, what is left. Nothing running, nothing half-written.
-8. Set the session title to `[done] <subject>` after the closing remarks, and never reopen it. `[done]` is terminal.
+The close is one fixed path, not a list of suggestions. Run `stack_close` op=preflight first and settle every ticket it names — land, kill, answer, or record an ASK and park — then run `stack_close` op=run with one lesson: it runs the check at the final tree, sweep, report, digest, lesson and atlas, and writes `state/close.json`. `op=run` refuses while a ticket is open. A NO-GO names the reason to fix, not wording to soften. Only a GO makes `[done]` possible: the plugin sets the prefix, the agent never types it. `stack_close` op=show reads the receipt. After GO the final message is the brief report and the closing remarks, the digest is the compaction, and there is nothing after it; a session that cannot clear a ticket parks instead. Last line to the owner: what shipped, what the check said, what is left. Nothing running, nothing half-written.
+
+Close intent is the owner’s plain English — "close session", "wrap it up", "finish up", "seal it", "call it done", "we’re done", "shut it down", "closing ceremony" — and park intent is "stop", "halt", "freeze", "pause", "park", "stand down", "hold it" at the start of a prompt. The plugin detects either and appends the directive; the path above is fixed.
+
+The gate is bounded. A close intent persists until the receipt exists: the tool prints `SEALED <sha>` on GO, and the final message is the brief report plus the closing remarks ending with that exact token — no tools run after it. Compaction is the digest, written before the report. Ending with "done" or a bare summary while the intent is open makes the plugin inject the next exact action and continue the same execution; after 6 failed continuations the session parks and an ASK goes to the ledger. The gate never says done. The receipt is local and tamper-evident, not signed: `state/close.json` is valid only at its HEAD, and a failed close deletes it.
 
 ## Voice
 

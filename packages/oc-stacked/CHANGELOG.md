@@ -2,6 +2,14 @@
 
 One entry per landed pass. Written in plain words; internals live in the commit bodies.
 
+## 0.4.0
+
+The close is a command, not advice.
+
+**Added.** The session title carries the live status: `[active]` while work moves, `[parked]` when the owner says stop (or a run is interrupted), `[done]` only when the close returns GO. Say "close session", "wrap it up", "we’re done" or "seal it" and the plugin appends the directive: `stack_close` op=preflight first — it lists every open ticket (unanswered ASK, unlanded brief, missing audit, dirty tree, no checks, failing atlas) — settle each one, then op=run with one lesson. It runs the check at the final tree, sweep, report, digest, lesson and atlas, and seals the GO receipt in `state/close.json`; op=show reads it back. A hand-typed `[done]` without a valid receipt is refused.
+
+**Changed.** The `stacked-pls` Close is one fixed path now: preflight, settle, run — a NO-GO names the reason to fix, and only a GO makes `[done]` possible.
+
 ## 0.3.0
 
 The release that became a company.

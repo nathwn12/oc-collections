@@ -73,9 +73,19 @@ Rulings, not stalls. A running stack decides and records `RULING · what — why
 
 A pass is not closed until it is swept and written down: `clean` `sweep` removes the stack's own leftovers, `clean` `report` names junk it did not create and deletes none of it, `ledger` `digest` refreshes the digest from the record, and one lesson goes to the ledger for the next session.
 
+### Session status and the close
+
+| Prefix | Means | Set when |
+|---|---|---|
+| `[active]` | work is moving in this session | a new session starts, any `stack_*` tool runs, or a new normal prompt resumes |
+| `[parked]` | work exists but is not moving | the owner says stop/halt/freeze/pause/park, an execution is interrupted, or the session idles with no valid receipt |
+| `[done]` | genuinely finished, closing remarks written | `stack_close` op=run returns GO and the receipt is sealed |
+
+The plugin owns the prefix. Say "close session", "wrap it up", "we’re done", "seal it" — or any close intent — and the plugin appends the directive: run `stack_close` op=preflight, settle every ticket it names (land, kill, answer, or record an ASK and park), then `stack_close` op=run with one lesson. `op=run` refuses while a ticket is open, and a hand-typed `[done]` without a GO receipt is refused. The receipt lives at `state/close.json` (`op=show` reads it back). A session that cannot clear a ticket parks instead of closing. The gate is bounded: the intent persists until the tool prints `SEALED <sha>`, and the final message ends with that exact token — no tools run after it. Compaction is the digest, written before the report. An attempt to end with "done" or a bare summary while the intent is open gets the next exact action injected and the same execution continues; after 6 failed continuations the session parks and an ASK is recorded. The gate never says done. The receipt is local and tamper-evident, not signed.
+
 ---
 
-## The seven tools
+## The eight tools
 
 All local. Files and `git` only; no network call, no daemon, no MCP handshake.
 
@@ -88,6 +98,7 @@ All local. Files and `git` only; no network call, no daemon, no MCP handshake.
 | `scope` | — | Compare every touched path with the brief's `Owns`. | Names every path that left the seam. |
 | `ready` | — | Gate a seam for landing. | `NO-GO` with one named reason per failure: no report, red check, stale check, dirty tree, out-of-scope path. |
 | `clean` | `sweep` `report` | Remove the stack's own leftovers, then name junk it did not create. | Never deletes outside `.stack`, never follows a symlink, never deletes a path it cannot claim as its own. |
+| `close` | `preflight` `run` `show` | Seal the session: list open tickets, run the closing ceremony, read the receipt. | Refuses while a ticket is open; a failed close deletes the receipt. |
 
 `check init` looks for the obvious manifests (`package.json` scripts, `pyproject.toml`, `go.mod`, `Cargo.toml`, a `Makefile` `test` target) and writes the four cheapest honest checks, so the first run is not an empty config. Until at least one check exists, readiness is `UNPROVEN`, not green.
 
