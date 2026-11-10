@@ -411,7 +411,7 @@ async function nudge(ctx, dir, sessionID, subject, text) {
 /** The open tickets the close would refuse on, named for the model. */
 async function closeTickets(dir) {
   try {
-    const pre = await preflight(dir, {});
+    const pre = await preflight(dir, { atlas: false });
     if (!pre.blockers.length) return ['every blocker was cleared, but the ceremony never wrote a GO receipt'];
     const shown = pre.blockers.slice(0, 4);
     if (pre.blockers.length > shown.length) shown.push(`+${pre.blockers.length - shown.length} more ticket(s)`);
@@ -564,7 +564,7 @@ async function onIdle(ctx, dir, event) {
       await exhaust(ctx, dir, sessionID, record, tickets);
       return;
     }
-    const pre = await preflight(dir, {});
+    const pre = await preflight(dir, { atlas: false });
     writeIntent(dir, sessionID, { ...intent, attempts: intent.attempts + 1, at: new Date().toISOString(), head: head(dir) });
     const text = pre.blockers.length
       ? `Close is blocked on ${pre.blockers.length} ticket(s): ${ticketsLine(pre.blockers)}. Settle each - land, kill, answer, or record an ASK and park - then run stack_close op=preflight again. Do not reply done.`
@@ -651,10 +651,11 @@ async function afterTool(ctx, dir, event) {
   if (!sessionID) return;
   const record = await liveSession(ctx, sessionID, dir);
   if (!record) return;
-  // A GO close writes its receipt before this hook runs, but the turn still owes
-  // a final report. Only the idle gate may apply [done], after the seal token.
-  const open = Boolean(intentFor(dir, sessionID));
-  const status = open ? 'active' : targetStatus(dir, sessionID, 'working');
+  // Only onIdle may apply [done], after the seal token. A rename was already
+  // normalised by the gate, so this hook leaves it alone; any other stack_* tool
+  // leaves the session working - [active], or [parked] under the owner's hold.
+  if (isRename) return;
+  const status = overrideOf(dir, sessionID) === 'parked' ? 'parked' : 'active';
   await applyTitle(ctx, dir, sessionID, status, record);
 }
 
