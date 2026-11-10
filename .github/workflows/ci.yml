@@ -1,17 +1,24 @@
-# The gate. Three jobs on two lanes: `static` runs the no-install checks on
+# The gate. Four jobs on three lanes: `static` runs the no-install checks on
 # Windows (index files, structural + selftest, vocabulary, docs + selftest);
-# `workspaces` installs on Windows and runs the real per-workspace checks
-# through the root wrapper; `posix` runs janua's own tests on Ubuntu, where
-# its POSIX pipe path executes instead of skipping. `static` and `workspaces`
-# run in parallel: the fast lane fails in about a second on a missing file,
-# the slow lane proves the tree installs and checks green.
+# `plan` derives the per-package check matrix from the shared plan;
+# `check` runs one leg per workspace on Windows through the scoped wrapper
+# (`node scripts/workspace-run.mjs check --package <name>`), so a red package
+# fails its own leg instead of the whole monorepo gate; `posix` runs janua's
+# own tests on Ubuntu, where its POSIX pipe path executes instead of skipping.
+# `static` and `check` run in parallel: the fast lane fails in about a second
+# on a missing file, the matrix proves each package installs and checks green.
 #
-# `npm run check` is the documented root gate: scripts/check-docs.mjs, then its
-# selftest, then scripts/workspace-run.mjs check, which runs each workspace's
-# own `check` exactly as named in scripts/workspace-plan.mjs (fail-closed: a
-# workspace missing from the plan is an error, never a skip). The wrapper is
-# used rather than the raw fan-out so a doc claim that no longer matches the
-# tree fails here too.
+# `npm run check` stays the documented root gate: scripts/check-docs.mjs, then
+# its selftest, then scripts/workspace-run.mjs check, which runs each
+# workspace's own `check` exactly as named in scripts/workspace-plan.mjs
+# (fail-closed: a workspace missing from the plan is an error, never a skip).
+# CI runs the same commands per package rather than the raw fan-out, so the
+# local gate (`npm run check`) and the remote gate prove the same steps: a
+# tree that is green locally has no other step to meet remotely.
+#
+# The matrix legs set OC_CHECK_CACHE=0 on purpose: the content cache exists to
+# make a local re-run cheap, but a gate that skips is not a gate. Every leg
+# proves its package from a clean install.
 #
 # The previous gate ran on ubuntu-latest and only proved four root files were
 # tracked. janua is cross-platform: the Windows jobs keep the full gate, and
@@ -72,14 +79,44 @@ jobs:
           node scripts/check-docs.mjs
           node scripts/check-docs.selftest.mjs
 
-  workspaces:
+  # One leg per workspace, fanned out from the shared plan. A leg proves only
+  # its own package (`--package`), with the content cache off: a gate that
+  # skips is not a gate. Logs stay small because each leg carries one
+  # package's output, and a flake fails its own leg while the rest still
+  # report. The full local gate (`npm run check`) remains the pre-push proof.
+  plan:
     runs-on: windows-latest
-    # A local cold `npm run check` takes ~73s, and oc-harness-setup alone is
-    # ~51s of it (real npm installs plus a packed-tarball install). A Windows
-    # runner is slower than this box and pays a cold npm cache, so 20 minutes
-    # is roughly 10x the observed run while still failing far sooner than the
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Derive the check matrix from the shared plan
+        id: set
+        shell: bash
+        run: |
+          set -euo pipefail
+          matrix="$(node scripts/ci-matrix.mjs)"
+          echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
+          echo "checking ${matrix}"
+
+  check:
+    needs: plan
+    runs-on: windows-latest
+    # oc-harness-setup alone is ~51s locally (real npm installs plus a
+    # packed-tarball install) and a Windows runner is slower than this box,
+    # so 15 minutes bounds one package with headroom instead of the
     # 360-minute default.
-    timeout-minutes: 20
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        package: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
 
@@ -88,44 +125,35 @@ jobs:
           node-version: 22
           cache: npm
 
-      # oc-flight-deck's check is `bun run typecheck && bun test`, so bun is a
-      # gate dependency, not a convenience. Pinned to the version the release
-      # workflow already runs on windows-latest.
+      # oc-flight-deck's check is `bun run typecheck && bun test`, so bun is
+      # a gate dependency for that leg only, pinned to the version the
+      # release workflow already runs.
       - uses: oven-sh/setup-bun@v2
+        if: matrix.package == 'oc-flight-deck'
         with:
           bun-version: 1.4.2
 
-      - name: Cache node_modules
-        id: cache-node
-        uses: actions/cache@v4
-        with:
-          path: node_modules
-          key: ${{ runner.os }}-node-${{ hashFiles('package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-
+      - name: Toolchain versions
+        # Logged, never asserted: when a leg goes red, the first question is
+        # what it ran on, and the answer is in the log, not in a guess.
+        run: |
+          node --version
+          npm --version
+          if (Get-Command bun -ErrorAction SilentlyContinue) { bun --version }
 
-      # Stale entries are rejected by the per-workspace content key inside the script, so a restore from an older commit is safe.
-      - name: Cache check results
-        uses: actions/cache@v4
-        with:
-          path: .cache/checks
-          key: checks-${{ runner.os }}-${{ github.sha }}
-          restore-keys: |
-            checks-${{ runner.os }}-
-
-      # Required: the root manifest declares no dependencies, and each
-      # workspace's check resolves its bins through the hoisted root
-      # node_modules that `npm ci` builds from package-lock.json. Skipped on
-      # a cache hit: the restore above already provides those bytes.
       - name: Install workspaces
-        if: steps.cache-node.outputs.cache-hit != 'true'
+        # The root manifest declares no dependencies, and each workspace's
+        # check resolves its bins through the hoisted root node_modules
+        # that `npm ci` builds from package-lock.json.
         run: npm ci
 
-      - name: Workspace check
-        run: npm run check
+      - name: Check ${{ matrix.package }}
+        env:
+          OC_CHECK_CACHE: 0
+        run: node scripts/workspace-run.mjs check --package "${{ matrix.package }}"
 
   # janua's pipe path has POSIX-only branches: a detached child leading its own
-  # process group, and negative-pid group kills. The Windows workspaces job skips the
+  # process group, and negative-pid group kills. The Windows matrix legs skip the
   # descendant test, so this job runs the pipe test where that branch executes.
   # The upgrade tests run here too: they reach the POSIX branch of the npm command
   # line and the home/pointer/launcher rules, and use an injected installer, so

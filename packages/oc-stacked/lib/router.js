@@ -88,12 +88,15 @@ const normalise = (text) => ` ${String(text).toLowerCase().replace(/[^a-z0-9]+/g
 
 // ------------------------------------------------------------------- loading
 //
-// One parse per directory per process. The key is the directory's mtime: a card
-// added, removed or renamed changes it, and the next prompt sees the new set.
-// A card edited in place does not change the directory mtime, so that edit is
-// picked up on the next process start - the routing corpus is a package file,
-// not hot state, and re-reading 22 files on every prompt is the cost this cache
-// exists to avoid.
+// One parse per directory per process. The key is the directory's mtime plus
+// the sorted file-name set: a card added, removed or renamed changes one of
+// the two, and the next prompt sees the new set. The names are in the key
+// because two writes can land inside one directory-mtime tick (Windows
+// granularity), and the second write must not read as "nothing changed".
+// A card edited in place changes neither, so that edit is picked up on the
+// next process start - the routing corpus is a package file, not hot state,
+// and re-reading 22 files on every prompt is the cost this cache exists to
+// avoid.
 
 const cache = new Map();
 const stats = { reads: 0, hits: 0 };
@@ -119,17 +122,20 @@ export function loadCards(dir) {
     throw new Error(`no card directory at ${rolesDir}: ${err?.message || err}`);
   }
   const hit = cache.get(rolesDir);
-  if (hit && hit.mtime === mtime) {
+  // One readdir per call, no file reads on a hit: the names are the cheap
+  // half of the key, the parse is the expensive half it guards.
+  const files = fs
+    .readdirSync(rolesDir)
+    .filter((file) => file.toLowerCase().endsWith('.md'))
+    .sort();
+  const names = files.join('\0');
+  if (hit && hit.mtime === mtime && hit.names === names) {
     stats.hits += 1;
     return hit.cards;
   }
 
   stats.reads += 1;
   const skipped = [];
-  const files = fs
-    .readdirSync(rolesDir)
-    .filter((file) => file.toLowerCase().endsWith('.md'))
-    .sort();
 
   const cards = [];
   for (const file of files) {
@@ -162,7 +168,7 @@ export function loadCards(dir) {
   // The index is built with the cards, never inside a prompt: the first prompt
   // of a session must not pay for indexing 22 cards.
   indexFor(cards);
-  cache.set(rolesDir, { mtime, cards });
+  cache.set(rolesDir, { mtime, names, cards });
   return cards;
 }
 
