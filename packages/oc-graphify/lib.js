@@ -3,12 +3,12 @@
  *
  * The plugin's only job is orientation: say where the Atlas graph is, how big
  * it is, whether it still matches HEAD, and which verb answers a question. It
- * does not wrap the CLI, register tools, or touch a command: the MCP owns the
- * read verbs and the CLI owns the writes, and a second surface for either one
- * is duplication that drifts.
+ * never wraps the CLI and never touches a command: the six reads answer from
+ * graph.json, and the CLI owns the writes.
  *
- * Everything here is pure except `readGraph` (one file) and `headCommit` (one
- * git call), both of which return null instead of throwing.
+ * Everything here is pure except `readGraph` (one file), `headCommit` (one git
+ * call) and `askFreshness` (one hidden child), all of which return null instead
+ * of throwing.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -78,6 +78,7 @@ export function headCommit(atlas, { exec = execFileSync, timeout = 4000 } = {}) 
     const out = exec('git', ['-C', atlas, 'rev-parse', 'HEAD'], {
       encoding: 'utf8',
       timeout,
+      windowsHide: true,
       stdio: ['ignore', 'pipe', 'ignore'],
     });
     const sha = String(out).trim();
@@ -89,21 +90,60 @@ export function headCommit(atlas, { exec = execFileSync, timeout = 4000 } = {}) 
 
 export const short = (sha) => (typeof sha === 'string' && sha.length >= 7 ? sha.slice(0, 7) : null);
 
+/** A real JavaScript runtime; the compiled host's `opencode.exe` is not one. */
+const JS_RUNTIME = /^(node|bun)(\.exe)?$/i;
+
+export function isJsRuntime(file) {
+  return JS_RUNTIME.test(path.basename(String(file || '')));
+}
+
+/**
+ * The host is a compiled Bun binary: `process.execPath` is `opencode.exe`, not
+ * a JavaScript runtime. Spawning it starts a second OpenCode, which treats the
+ * script path as a directory, dies with `ENOTDIR`, and - because the spawn had
+ * no `windowsHide` - leaves the console it was given as a dead Windows Terminal
+ * window.
+ *
+ * Resolve a real runtime instead: the host's own `Bun.which`, an explicit
+ * `OC_GRAPHIFY_RUNTIME`, or a PATH-resolved `bun`. Never fall back to an
+ * executable that is not node or bun; a missing runtime is "unknown", not a
+ * stray process.
+ */
+export function runtimePath({
+  execPath = process.execPath,
+  env = process.env,
+  which = typeof Bun !== 'undefined' && typeof Bun.which === 'function' ? Bun.which.bind(Bun) : null,
+} = {}) {
+  if (isJsRuntime(execPath)) return execPath;
+  const override = typeof env?.OC_GRAPHIFY_RUNTIME === 'string' ? env.OC_GRAPHIFY_RUNTIME.trim() : '';
+  if (override) return override;
+  if (typeof which === 'function') {
+    const found = which('bun') || which('node');
+    if (found) return found;
+  }
+  return 'bun';
+}
+
 /**
  * Ask the vault's own freshness command. It is the single owner of the verdict
  * - tier inputs, lesson-bearing session notes, the semantic seed, and a dirty
  * working tree all feed it - so this plugin reports its answer instead of
  * re-deciding freshness from commit equality, which over-reports stale.
  *
- * Returns { state: 'fresh'|'stale', detail } or null when the tool is missing
- * or fails for a reason that is not a verdict (a broken tool is not a stale
- * graph).
+ * The child is a real JavaScript runtime, spawned hidden. A missing tool, a
+ * non-JS runtime, or a child that fails for a reason other than a verdict all
+ * return null: a broken probe is not a stale graph.
  */
-export function askFreshness(atlas, { exec = execFileSync, timeout = 8000 } = {}) {
+export function askFreshness(atlas, { exec = execFileSync, timeout = 8000, runtime = runtimePath() } = {}) {
   const tool = path.join(atlas, '.graphify', 'tools', 'graph-freshness.mjs');
-  if (!fs.existsSync(tool)) return null;
+  if (!fs.existsSync(tool) || !isJsRuntime(runtime)) return null;
   try {
-    const out = exec(process.execPath, [tool], { encoding: 'utf8', timeout, stdio: ['ignore', 'pipe', 'pipe'] });
+    const out = exec(runtime, [tool], {
+      encoding: 'utf8',
+      timeout,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
     const line = String(out).trim().split('\n').filter(Boolean).pop() || '';
     return { state: 'fresh', detail: line.replace(/^graph fresh:\s*/, '') };
   } catch (error) {

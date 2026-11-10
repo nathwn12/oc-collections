@@ -21,9 +21,11 @@ import {
   configPath,
   graphFile,
   headCommit,
+  isJsRuntime,
   readConfig,
   readGraph,
   render,
+  runtimePath,
   short,
   stateLine,
   summarize,
@@ -105,7 +107,17 @@ test('stateLine: a stale graph names both commits and says rebuild', () => {
 
 test('headCommit: a 40-hex answer is kept, anything else is null', () => {
   const sha = 'c'.repeat(40);
-  assert.equal(headCommit('Q:\\x', { exec: () => `${sha}\n` }), sha);
+  const calls = [];
+  assert.equal(
+    headCommit('Q:\\x', {
+      exec: (file, args, options) => {
+        calls.push({ file, options });
+        return `${sha}\n`;
+      },
+    }),
+    sha,
+  );
+  assert.equal(calls[0].options.windowsHide, true, 'the git probe must not get a console');
   assert.equal(headCommit('Q:\\x', { exec: () => 'not a sha' }), null);
   assert.equal(
     headCommit('Q:\\x', {
@@ -284,15 +296,23 @@ test('setup: six reads registered, and the hooks land when the tool editor refus
   assert.equal(stillHooked.length, 3, 'a refused tool editor must not cost the injection');
 });
 
-test('freshness: the vault command decides, and a broken tool is not a stale graph', () => {
+test('freshness: the vault command decides, hidden and with a real runtime', () => {
   const atlas = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-graphify-fresh-'));
   fs.mkdirSync(path.join(atlas, '.graphify', 'tools'), { recursive: true });
   fs.writeFileSync(path.join(atlas, '.graphify', 'tools', 'graph-freshness.mjs'), '// stub\n');
 
-  assert.deepEqual(askFreshness(atlas, { exec: () => 'graph fresh: built from abc; no corpus input changed\n' }), {
+  const calls = [];
+  const exec = (file, args, options) => {
+    calls.push({ file, args, options });
+    return 'graph fresh: built from abc; no corpus input changed\n';
+  };
+  assert.deepEqual(askFreshness(atlas, { exec }), {
     state: 'fresh',
     detail: 'built from abc; no corpus input changed',
   });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].options.windowsHide, true, 'the freshness child must never get a console');
+  assert.ok(isJsRuntime(calls[0].file), `spawned ${calls[0].file}, which is not a JS runtime`);
 
   const stale = Object.assign(new Error('exit 1'), {
     status: 1,
@@ -307,6 +327,32 @@ test('freshness: the vault command decides, and a broken tool is not a stale gra
   const broken = Object.assign(new Error('ENOENT'), { status: 127, stdout: '', stderr: 'node: not found' });
   assert.equal(askFreshness(atlas, { exec: () => { throw broken; } }), null, 'a broken tool is not a verdict');
   assert.equal(askFreshness(path.join(os.tmpdir(), 'oc-graphify-absent-atlas')), null);
+  assert.equal(
+    askFreshness(atlas, { exec, runtime: 'C:\\Users\\nathan\\scoop\\persist\\bun\\install\\global\\node_modules\\@opencode\\cli\\bin\\opencode.exe' }),
+    null,
+    'the compiled host binary is not a JavaScript runtime',
+  );
+});
+
+test('runtime: the compiled host binary is never chosen', () => {
+  const host = 'C:\\Users\\nathan\\scoop\\persist\\bun\\install\\global\\node_modules\\@opencode\\cli\\bin\\opencode.exe';
+  assert.equal(isJsRuntime(host), false);
+  assert.equal(isJsRuntime('C:\\Program Files\\nodejs\\node.exe'), true);
+  assert.equal(isJsRuntime('C:\\tools\\bun.exe'), true);
+
+  assert.equal(
+    runtimePath({ execPath: host, env: {}, which: (name) => (name === 'bun' ? 'C:\\tools\\bun.exe' : null) }),
+    'C:\\tools\\bun.exe',
+  );
+  assert.equal(runtimePath({ execPath: host, env: {}, which: () => null }), 'bun', 'PATH resolves bun, never the host');
+  assert.equal(
+    runtimePath({ execPath: 'C:\\Program Files\\nodejs\\node.exe', env: {} }),
+    'C:\\Program Files\\nodejs\\node.exe',
+  );
+  assert.equal(
+    runtimePath({ execPath: host, env: { OC_GRAPHIFY_RUNTIME: ' C:\\tools\\node.exe ' }, which: () => null }),
+    'C:\\tools\\node.exe',
+  );
 });
 
 test('setup: the module shape is what OpenCode 2 loads', () => {

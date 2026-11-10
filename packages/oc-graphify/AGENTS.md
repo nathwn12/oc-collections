@@ -13,8 +13,8 @@ if the rendered text changes, that sample and the byte budget line change here.
 - **No command rewriting.** The plugin registers only `session.hook`. A
   `tool.execute.before` that mutates `input.command` is the vendor behaviour this
   package exists to replace. Do not reintroduce it.
-- **No tools, no rebuild.** The MCP owns the read verbs, the CLI owns the
-  writes. A third surface drifts from both.
+- **No rebuild.** The CLI owns the writes; the six reads answer from
+  `graph.json`. Do not add a write verb.
 - **`node:` imports only.** Zero dependencies, zero build step. The plugin is
   loaded by the host exactly as committed.
 - **One record of the atlas path.** `graphify.json` in the host config directory

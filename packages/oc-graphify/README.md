@@ -8,15 +8,15 @@ answers a question, and whether it still matches `HEAD`.
 <!-- oc-graphify -->
 Graphify Atlas (durable memory): 922 nodes, 1537 edges, 86 communities, graphify 0.9.105.
 Graph: Q:\PROJECTS\PERSONAL\my-harness-vault\vault\graphify-out\graph.json - the same graph Obsidian shows as the harness-wiki vault (graph-room).
-Ask it before grepping: MCP `graphify` (graph_stats, query_graph, get_node, get_neighbors, get_community, god_nodes, shortest_path), or `graphify query "<question>"` with cwd = the atlas.
+Ask it before grepping: `graph_stats`, `graph_node`, `graph_neighbors`, `graph_path`, `graph_god_nodes`, `graph_query` - this plugin's own reads over the same file. `graphify query "<question>"` with cwd = the atlas is the CLI, for when an exact answer matters.
 Rebuild with `node .graphify/tools/sync-corpus.mjs` from the atlas; never from the vault root, never a bare `graphify update`.
-Graph state: fresh at 6517ef3.
+Graph state: fresh - built from 6517ef3; no corpus input changed through HEAD.
 ```
 
-603 bytes, about 90 tokens, injected once per request through the `context`,
-`compaction` and `generate` session hooks. Everything above the last line is
-stable for the life of a build, so the prefix caches; only the state line moves,
-and only when the graph is rebuilt.
+Under the 1200-byte budget the check pins, injected once per request through
+the `context`, `compaction` and `generate` session hooks. Everything above the
+last line is stable for the life of a build, so the prefix caches; only the
+state line moves, and only when the graph is rebuilt.
 
 ## What it replaces
 
@@ -30,13 +30,13 @@ again re-adds the file; the check below fails by name when that happens.
 
 ## What it deliberately does not do
 
-- **No tools.** The MCP `graphify` server owns the read verbs (`query_graph`,
-  `get_node`, `get_neighbors`, `get_community`, `god_nodes`, `graph_stats`,
-  `shortest_path`); the CLI owns the writes (`update`, `cluster-only`, `label`,
-  `export`). A wrapper here would be a third surface that drifts from both.
+- **No write verbs.** The six reads answer from `graph.json`; the CLI owns the
+  writes (`update`, `cluster-only`, `label`, `export`). A second write surface
+  would drift from the CLI.
 - **No rebuild.** Rebuilding costs an extraction pass; the block names the
   sanctioned command instead of running it.
-- **No module.** It imports nothing outside `node:` built-ins.
+- **No third-party module.** It imports only `node:` built-ins and its own
+  sibling files.
 
 ## Install
 
