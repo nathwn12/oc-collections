@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The launcher spawns the provisioned engine with `windowsHide: true`, so a desktop launch no longer opens a console window. The inherited stdio transport is unchanged.
+
 ### Added
 - A payload-vs-schema conformance gate: one `tools/call` per listed tool, each
   `structuredContent` validated against that tool's own declared

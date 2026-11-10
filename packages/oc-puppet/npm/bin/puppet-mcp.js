@@ -539,7 +539,10 @@ function runServer(cacheDir, manifest) {
   // IS the MCP channel; the launcher writes nothing to stdout on this path.
   // Ctrl+C reaches both processes on Windows (shared console), so no
   // signal relay is needed; the exit code is forwarded below.
-  const child = spawn(exe, [], { stdio: 'inherit', env: { ...process.env } });
+  // windowsHide keeps that child from opening its own console window: the
+  // inherited stdio still makes it the MCP channel, there is just no visible
+  // terminal to steal focus on a desktop launch.
+  const child = spawn(exe, [], { stdio: 'inherit', env: { ...process.env }, windowsHide: true });
   child.on('error', (err) => fail(`cannot start ${exe}: ${err.message}`));
   child.on('exit', (code, signal) => {
     if (signal) {
