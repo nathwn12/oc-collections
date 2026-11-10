@@ -116,9 +116,9 @@ Done. Three things happen on next launch:
 
   1. OpenCode loads the package at
      ${linkPath}
-  2. Twelve skills register: stacked, stacked-soul, stacked-ceo, stacked-lead,
+  2. Thirteen skills register: stacked, stacked-soul, stacked-ceo, stacked-lead,
      stacked-employee, stacked-audit, stacked-plan, stacked-swarm, stacked-debug,
-     stacked-tdd, stacked-review, stacked-ship
+     stacked-tdd, stacked-review, stacked-ship, stacked-deepen
   3. Four agents appear: ceo, lead, employee, auditor
 
 Restart OpenCode, then prove it loaded:

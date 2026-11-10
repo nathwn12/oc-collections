@@ -29,6 +29,16 @@ oc-stacked answers both with structure rather than exhortation: **seats** with h
 | **EMPLOYEE** | `stacked-employee` | one seam, one brief, one check, one report | merge, push a shared branch, widen scope, dispatch anyone |
 | **AUDIT** | `stacked-auditor` | the verdict on work it did not write | edit what it judges, accept the author's check as the verdict |
 
+Each seat is pinned to a model, so a delegated seam lands on the right one without anyone choosing it in the moment:
+
+| Seat | Model |
+|---|---|
+| CEO, LEAD | opencode-go/muse-spark-1.3-contributor |
+| EMPLOYEE | opencode-go/deepseek-v4.1-flash |
+| AUDIT | openai/gpt-6.1-terra |
+
+The primary session is yours: whatever model you pick in the TUI stays picked. The pins apply to delegated seats, and the auditor is deliberately a different model family from the employee that wrote the code.
+
 The prohibitions are enforced, not suggested: the employee agent denies the `subagent` action outright, and the CEO and auditor agents deny `edit`.
 
 ---
@@ -69,7 +79,7 @@ All local. Files and `git` only; no network call, no daemon, no MCP handshake.
 
 ## The skills
 
-Twelve. They are ordinary `SKILL.md` files with front matter; the plugin registers them natively at startup. Six are seats and discipline lenses, six are the shelf you pull when the moment matches.
+Thirteen. They are ordinary `SKILL.md` files with front matter; the plugin registers them natively at startup. Six are seats and discipline lenses, seven are the shelf you pull when the moment matches.
 
 | Skill id | Loads when |
 |---|---|
@@ -79,6 +89,7 @@ Twelve. They are ordinary `SKILL.md` files with front matter; the plugin registe
 | `stacked-lead` | Work spans files, decisions, or more than one sitting. |
 | `stacked-employee` | You were dispatched a seam and have a brief path. |
 | `stacked-audit` | A seam is ready to land, or a branch needs a verdict from outside. |
+| `stacked-deepen` | The complaint is about the code, not a feature. |
 | `stacked-plan` | The design is not obvious, or the ask is a feature. |
 | `stacked-swarm` | More than one seam can run at once. |
 | `stacked-debug` | Something throws, hangs, slows, or lies. |
@@ -121,12 +132,11 @@ Conversation memory does not survive compaction. `.stack/` does.
     { "name": "unit", "command": "npm test", "timeout": 240000 },
     { "name": "lint", "command": "npm run lint", "timeout": 60000 }
   ],
-  "ownership": { "ignore": [".stack/**", "dist/**"] },
-  "dispatch": { "live": 10, "cap": 10 }
+  "ownership": { "ignore": [".stack/**", "dist/**"] }
 }
 ```
 
-`dispatch.live` is how many employees may run at once. `dispatch.cap` is the ceiling it may never exceed, matching the host's ten-subagent limit; `swarm` refuses an eleventh seam regardless of config.
+There is no dispatch knob: `swarm` enforces the host's hard ceiling of ten seams, and the lead decides how many it can actually reconcile.
 
 ---
 
@@ -151,6 +161,8 @@ It does not rewrite your `opencode.jsonc`. To wire it by hand instead, add the d
 ```jsonc
 "plugins": ["Q:\\PROJECTS\\PERSONAL\\oc-stacked"]
 ```
+
+On first sight of a real project (a repository or a build manifest), the plugin seeds `.stack/` and detects the repo's proving commands. It only ever adds: a hand-written check survives every re-seed, and a new test script is picked up on the next start.
 
 Restart OpenCode, then prove it loaded:
 
@@ -214,6 +226,8 @@ node scripts/install.mjs --remove
 - **No model pinning.** A brief records a tier (`cheap`, `standard`, `expert`); which model backs it is your choice. Nothing inherits a surprise.
 - **No GitHub coupling.** Nothing reads or writes a remote, a PR, or an issue.
 - **No telemetry.** The only files written are inside the project's `.stack/` and the OpenCode config directory at install time.
+- **`check` is code execution by design.** It runs the shell commands in `.stack/config.json`. That file is repo-controlled, so treat a cloned project's config the way you treat a `Makefile` or a `package.json` script: read it before you run it. `check` prints every command and its exit code, and refuses to run at all when `OC_STACKED_NO_EXEC=1`.
+- **Three environment flags**, for hosts with strict process rules: `OC_STACKED_NO_EXEC=1` (never spawn; print the commands instead), `OC_STACKED_NO_SEED=1` (never create `.stack/`), `OC_STACKED_TRACE=1` (log every child process to stderr).
 
 ---
 

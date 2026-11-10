@@ -89,6 +89,7 @@ Load these when the moment matches; they are lenses, not gates.
 | `stacked-tdd` | behaviour changes and a test surface exists |
 | `stacked-review` | you are asking for, receiving, or looping on a review |
 | `stacked-ship` | the seam is ready to commit, close, or release |
+| `stacked-deepen` | the complaint is about the code, not a feature |
 
 ## Voice
 

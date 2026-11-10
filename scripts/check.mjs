@@ -61,6 +61,7 @@ const mod = await import(new URL('../index.js', import.meta.url));
 const plugin = mod.default;
 const { readSkills, bootstrap, MARKER } = await import(new URL('../lib/skills.js', import.meta.url));
 const { toolDefinitions } = await import(new URL('../lib/tools.js', import.meta.url));
+const { seedStack } = await import(new URL('../lib/state.js', import.meta.url));
 
 check('plugin exports a V2 id', () => {
   assert(plugin && typeof plugin === 'object', 'default export is not an object');
@@ -82,8 +83,8 @@ check('plugin keeps a V1 server export', () => {
 // ---------------------------------------------------------------- skills
 const skills = readSkills();
 
-check('twelve skills register', () => {
-  assert(skills.length === 12, `expected 12, got ${skills.length}: ${skills.map((s) => s.id).join(', ')}`);
+check('thirteen skills register', () => {
+  assert(skills.length === 13, `expected 13, got ${skills.length}: ${skills.map((s) => s.id).join(', ')}`);
   return skills.map((s) => s.id).join(', ');
 });
 
@@ -119,7 +120,8 @@ check('bootstrap is cached, marked, and small', () => {
   assert(a.startsWith(MARKER), 'bootstrap does not start with its marker');
   assert(a.includes('</STACKED>'), 'bootstrap has no closing marker');
   assert(a.length < 9000, `bootstrap is ${a.length} chars; it is paid for on every step`);
-  assert(a.includes('stacked-lead'), 'bootstrap does not name the rung skills');
+  assert(a.includes('stacked-lead') || a.includes('LEAD'), 'bootstrap does not name the rungs');
+  assert(a.length < 3200, `bootstrap is ${a.length} chars; it is paid for on every step`);
   return `${a.length} chars`;
 });
 
@@ -166,6 +168,24 @@ const run = async (name, input) => {
   assert(typeof content === 'string' && content.length, `${name} returned no content`);
   return content;
 };
+const runIn = async (otherDir, name, input) => {
+  const def = toolDefinitions({ dir: otherDir }).find((t) => t.name === name);
+  const result = await def.execute(input, {});
+  const content = typeof result === 'string' ? result : result?.content;
+  assert(typeof content === 'string' && content.length, `${name} returned no content in ${otherDir}`);
+  return content;
+};
+
+// Config is executable content, and the gate treats a config change since the
+// seam began as a finding. So the config exists and is committed before the
+// first brief, exactly as a real project seeds and commits it.
+fs.mkdirSync(path.join(dir, '.stack'), { recursive: true });
+fs.writeFileSync(
+  path.join(dir, '.stack', 'config.json'),
+  JSON.stringify({ checks: [{ name: 'smoke', command: 'node -e "process.exit(0)"', timeout: 30000 }] }, null, 2),
+);
+spawnSync('git', ['add', '-A'], { cwd: dir, windowsHide: true });
+spawnSync('git', ['-c', 'user.email=c@l', '-c', 'user.name=c', 'commit', '-qm', 'seed config'], { cwd: dir, windowsHide: true });
 
 await checkAsync('brief refuses a seam with a hole', async () => {
   const out = await run('brief', { op: 'new', title: 'half a seam', out: 'something', owns: ['src/**'] });
@@ -207,33 +227,35 @@ await checkAsync('ledger appends and the digest is derived from it', async () =>
 });
 
 await checkAsync('check init detects nothing and says so honestly', async () => {
-  const out = await run('check', { op: 'init' });
-  assert(/No check could be detected/i.test(out), `unexpected: ${out.slice(0, 160)}`);
-  const cfg = JSON.parse(fs.readFileSync(path.join(dir, '.stack', 'config.json'), 'utf8'));
+  const emptyDir = tmpRepo();
+  const out = await runIn(emptyDir, 'check', { op: 'init' });
+  assert(/no check could be detected/i.test(out), `unexpected: ${out.slice(0, 160)}`);
+  const cfg = JSON.parse(fs.readFileSync(path.join(emptyDir, '.stack', 'config.json'), 'utf8'));
   assert(Array.isArray(cfg.checks) && cfg.checks.length === 0, 'config was not written with an empty list');
+  fs.rmSync(emptyDir, { recursive: true, force: true });
   return 'empty list, UNPROVEN';
 });
 
 await checkAsync('check runs a configured command and binds it to HEAD', async () => {
-  fs.writeFileSync(
-    path.join(dir, '.stack', 'config.json'),
-    JSON.stringify({ checks: [{ name: 'smoke', command: 'node -e "process.exit(0)"', timeout: 30000 }] }, null, 2),
-  );
   const out = await run('check', { op: 'run' });
   assert(/GREEN/.test(out), `expected GREEN, got: ${out.slice(0, 160)}`);
   const record = JSON.parse(fs.readFileSync(path.join(dir, '.stack', 'state', 'checks.json'), 'utf8'));
   assert(record.results[0].ok === true, 'result not recorded as ok');
   assert('head' in record, 'record is not bound to a HEAD');
-  return 'GREEN at HEAD';
+  assert(out.includes('node -e'), 'the command itself is not printed, so nobody can audit it');
+  return 'GREEN at HEAD, command printed';
 });
 
 await checkAsync('check reports RED, not green, on a failing command', async () => {
+  const redDir = tmpRepo();
+  fs.mkdirSync(path.join(redDir, '.stack'), { recursive: true });
   fs.writeFileSync(
-    path.join(dir, '.stack', 'config.json'),
+    path.join(redDir, '.stack', 'config.json'),
     JSON.stringify({ checks: [{ name: 'broken', command: 'node -e "process.exit(3)"', timeout: 30000 }] }, null, 2),
   );
-  const out = await run('check', { op: 'run' });
+  const out = await runIn(redDir, 'check', { op: 'run' });
   assert(/RED/.test(out) && !/GREEN/.test(out), `a failing command was not called RED: ${out.slice(0, 160)}`);
+  fs.rmSync(redDir, { recursive: true, force: true });
   return 'exit 3 → RED';
 });
 
@@ -256,10 +278,6 @@ await checkAsync('ready is NO-GO while the tree is dirty, and names why', async 
 });
 
 await checkAsync('ready is NO-GO with no report even when the check is green', async () => {
-  fs.writeFileSync(
-    path.join(dir, '.stack', 'config.json'),
-    JSON.stringify({ checks: [{ name: 'smoke', command: 'node -e "process.exit(0)"', timeout: 30000 }] }, null, 2),
-  );
   await run('check', { op: 'run' });
   const out = await run('ready', { id: 'retry-budget' });
   assert(/NO-GO/.test(out), 'a seam with no report was gated GO');
@@ -452,6 +470,169 @@ await checkAsync('landing after a NO-GO is refused, and force records why', asyn
   return 'refused, then forced with a ruling';
 });
 
+// ---------------------------------------------------------------- the gate's memory
+await checkAsync('a commit outside the seam is caught after the tree is clean', async () => {
+  const d = tmpRepo();
+  fs.mkdirSync(path.join(d, '.stack'), { recursive: true });
+  fs.writeFileSync(
+    path.join(d, '.stack', 'config.json'),
+    JSON.stringify({ checks: [{ name: 'ok', command: 'node -e "process.exit(0)"', timeout: 30000 }] }, null, 2),
+  );
+  fs.mkdirSync(path.join(d, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(d, 'src', 'a.ts'), 'export const a = 1;\n');
+  const commit = (m) => {
+    spawnSync('git', ['add', '-A'], { cwd: d, windowsHide: true });
+    spawnSync('git', ['-c', 'user.email=c@l', '-c', 'user.name=c', 'commit', '-qm', m], { cwd: d, windowsHide: true });
+  };
+  commit('base');
+
+  await runIn(d, 'brief', {
+    op: 'new',
+    title: 'only a',
+    out: 'a changes',
+    check: 'node -e "process.exit(0)"',
+    owns: ['src/a.ts'],
+    files: ['src/a.ts'],
+  });
+
+  // The seam is briefed; now commit something it never claimed.
+  fs.writeFileSync(path.join(d, 'src', 'b.ts'), 'export const b = 1;\n');
+  commit('sneak b in');
+  await runIn(d, 'check', { op: 'run' });
+
+  const out = await runIn(d, 'ready', { id: 'only-a', lean: true });
+  assert(/NO-GO/.test(out), `a committed file outside the seam was gated GO:\n${out}`);
+  assert(/src\/b\.ts/.test(out), `the out-of-seam commit was not named:\n${out}`);
+
+  // Widen the brief honestly and the same gate passes.
+  const indexFile = path.join(d, '.stack', 'state', 'briefs.json');
+  const index = JSON.parse(fs.readFileSync(indexFile, 'utf8'));
+  index[0].files = ['src/a.ts', 'src/b.ts'];
+  index[0].owns = ['src/a.ts', 'src/b.ts'];
+  fs.writeFileSync(indexFile, JSON.stringify(index, null, 2));
+  const widened = await runIn(d, 'ready', { id: 'only-a', lean: true });
+  assert(/## GO/.test(widened), `a widened brief did not pass:\n${widened}`);
+
+  fs.rmSync(d, { recursive: true, force: true });
+  return 'caught after commit, then GO when widened';
+});
+
+await checkAsync('editing the check config mid-seam is a finding, not a pass', async () => {
+  const d = tmpRepo();
+  fs.mkdirSync(path.join(d, '.stack'), { recursive: true });
+  const cfg = (cmd) => JSON.stringify({ checks: [{ name: 'ok', command: cmd, timeout: 30000 }] }, null, 2);
+  fs.writeFileSync(path.join(d, '.stack', 'config.json'), cfg('node -e "process.exit(0)"'));
+  spawnSync('git', ['add', '-A'], { cwd: d, windowsHide: true });
+  spawnSync('git', ['-c', 'user.email=c@l', '-c', 'user.name=c', 'commit', '-qm', 'base'], { cwd: d, windowsHide: true });
+
+  await runIn(d, 'brief', {
+    op: 'new',
+    title: 'trusted check',
+    out: 'a thing',
+    check: 'node -e "process.exit(0)"',
+    owns: ['**'],
+    files: ['notes.md'],
+  });
+
+  // The attack: make the check trivially pass, then claim green.
+  fs.writeFileSync(path.join(d, '.stack', 'config.json'), cfg('node -e "process.exit(0)" // tampered'));
+  await runIn(d, 'check', { op: 'run' });
+  const out = await runIn(d, 'ready', { id: 'trusted-check', lean: true });
+  assert(/NO-GO/.test(out), `a tampered check config was gated GO:\n${out}`);
+  assert(/config\.json changed/.test(out), 'the config change was not named');
+
+  fs.rmSync(d, { recursive: true, force: true });
+  return 'config change refused';
+});
+
+await checkAsync('a verdict survives a ledger far past any window', async () => {
+  const d = tmpRepo();
+  fs.mkdirSync(path.join(d, '.stack'), { recursive: true });
+  fs.writeFileSync(
+    path.join(d, '.stack', 'config.json'),
+    JSON.stringify({ checks: [{ name: 'ok', command: 'node -e "process.exit(0)"', timeout: 30000 }] }, null, 2),
+  );
+  spawnSync('git', ['add', '-A'], { cwd: d, windowsHide: true });
+  spawnSync('git', ['-c', 'user.email=c@l', '-c', 'user.name=c', 'commit', '-qm', 'base'], { cwd: d, windowsHide: true });
+  await runIn(d, 'brief', {
+    op: 'new',
+    title: 'old gate',
+    out: 'a thing',
+    check: 'node -e "process.exit(0)"',
+    owns: ['**'],
+    files: ['notes.md'],
+  });
+  await runIn(d, 'check', { op: 'run' });
+  const gate = await runIn(d, 'ready', { id: 'old-gate', lean: true });
+  assert(/## GO/.test(gate), `setup gate failed:\n${gate}`);
+
+  for (let i = 0; i < 350; i += 1) await runIn(d, 'ledger', { op: 'log', kind: 'NOTE', text: `noise ${i}` });
+  const landed = await runIn(d, 'brief', { op: 'status', id: 'old-gate', status: 'landed' });
+  assert(!/Refused/.test(landed), `the gate forgot its own verdict after 350 entries:\n${landed}`);
+
+  fs.rmSync(d, { recursive: true, force: true });
+  return 'GO found at entry 1 of 360';
+});
+
+// ---------------------------------------------------------------- seeding, objective, audit
+await checkAsync('a project is seeded and re-seeded without losing a hand-written check', async () => {
+  const d = tmpRepo();
+  fs.writeFileSync(path.join(d, 'package.json'), JSON.stringify({ name: 'x', scripts: { test: 'node -e "process.exit(0)"' } }));
+  const first = seedStack(d);
+  assert(first.ok, 'seed refused a git repo');
+  assert(fs.existsSync(path.join(d, '.stack', 'config.json')), 'config missing');
+  assert(fs.existsSync(path.join(d, '.stack', 'ledger.md')), 'ledger missing');
+  assert(fs.existsSync(path.join(d, '.stack', 'digest.md')), 'digest missing');
+  const cfg = JSON.parse(fs.readFileSync(path.join(d, '.stack', 'config.json'), 'utf8'));
+  assert(cfg.checks.some((c) => c.name === 'test'), 'the test script was not detected');
+
+  cfg.checks.push({ name: 'mine', command: 'node -e "process.exit(0)"', timeout: 1000 });
+  fs.writeFileSync(path.join(d, '.stack', 'config.json'), JSON.stringify(cfg, null, 2));
+  seedStack(d);
+  const again = JSON.parse(fs.readFileSync(path.join(d, '.stack', 'config.json'), 'utf8'));
+  assert(again.checks.filter((c) => c.name === 'mine').length === 1, 'a hand-written check was lost or duplicated');
+  assert(again.checks.filter((c) => c.name === 'test').length === 1, 'a detected check was duplicated');
+
+  fs.rmSync(d, { recursive: true, force: true });
+  return 'detected, preserved, idempotent';
+});
+
+await checkAsync('a directory that is not a project is left alone', async () => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-stacked-plain-'));
+  const result = seedStack(d);
+  assert(!result.ok, 'seeded a directory with no repository and no manifest');
+  assert(!fs.existsSync(path.join(d, '.stack')), 'it wrote .stack anyway');
+  fs.rmSync(d, { recursive: true, force: true });
+  return 'no .git, no manifest, no writes';
+});
+
+await checkAsync('the digest renders the objective and flags a landed seam with no verdict', async () => {
+  const d = tmpRepo();
+  fs.mkdirSync(path.join(d, '.stack'), { recursive: true });
+  fs.writeFileSync(
+    path.join(d, '.stack', 'config.json'),
+    JSON.stringify({ checks: [{ name: 'ok', command: 'node -e "process.exit(0)"', timeout: 30000 }] }, null, 2),
+  );
+  spawnSync('git', ['add', '-A'], { cwd: d, windowsHide: true });
+  spawnSync('git', ['-c', 'user.email=c@l', '-c', 'user.name=c', 'commit', '-qm', 'base'], { cwd: d, windowsHide: true });
+  await runIn(d, 'ledger', { op: 'log', kind: 'INTAKE', text: 'make webhooks retry honestly' });
+  await runIn(d, 'brief', { op: 'new', title: 'audited seam', out: 'a thing', check: 'node -e "process.exit(0)"', owns: ['**'], files: ['n.md'] });
+  await runIn(d, 'check', { op: 'run' });
+  await runIn(d, 'ready', { id: 'audited-seam', lean: true });
+  await runIn(d, 'brief', { op: 'status', id: 'audited-seam', status: 'landed' });
+
+  const digest = await runIn(d, 'ledger', { op: 'digest' });
+  assert(/\*\*Objective\*\* — make webhooks retry honestly/.test(digest), 'the objective is not in the digest');
+  assert(/Landed, unaudited/.test(digest), 'a landed seam with no verdict was not flagged');
+
+  await runIn(d, 'ledger', { op: 'log', kind: 'AUDIT', text: 'audited-seam@abc1234 PASS spec=ok standards=ok' });
+  const after = await runIn(d, 'ledger', { op: 'digest' });
+  assert(!/Landed, unaudited/.test(after), 'the audit line did not clear the flag');
+
+  fs.rmSync(d, { recursive: true, force: true });
+  return 'objective rendered, audit clears the flag';
+});
+
 // ---------------------------------------------------------------- agents, commands, provenance
 const agentFiles = fs.readdirSync(path.join(repo, 'agents')).filter((f) => f.endsWith('.md'));
 
@@ -465,11 +646,26 @@ check('four agents exist with valid V2 frontmatter', () => {
     assert(/^description:/m.test(fm), `${f} has no description`);
     assert(/^mode:/m.test(fm), `${f} has no mode`);
     assert(!legacy.test(fm), `${f} uses a legacy V1 field`);
-    assert(!/^model:/m.test(fm), `${f} pins a model, which breaks portability`);
     const body = raw.split('---').slice(2).join('---');
     assert(body.trim().length > 400, `${f} body is too thin to steer an agent`);
   }
   return agentFiles.length + ' agents';
+});
+
+check('each seat is pinned to the right model', () => {
+  const expected = {
+    'stacked-ceo.md': 'opencode-go/muse-spark-1.3-contributor',
+    'stacked-lead.md': 'opencode-go/muse-spark-1.3-contributor',
+    'stacked-employee.md': 'opencode-go/deepseek-v4.1-flash',
+    'stacked-auditor.md': 'openai/gpt-6.1-terra',
+  };
+  for (const [file, model] of Object.entries(expected)) {
+    const raw = fs.readFileSync(path.join(repo, 'agents', file), 'utf8');
+    const line = raw.match(/^model:\s*(.+)$/m);
+    assert(line, `${file} has no model line`);
+    assert(line[1].trim() === model, `${file} is ${line[1].trim()}, expected ${model}`);
+  }
+  return 'muse · deepseek · terra';
 });
 
 check('no agent lets an employee dispatch a subagent', () => {

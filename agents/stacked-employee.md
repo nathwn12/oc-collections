@@ -1,6 +1,7 @@
 ---
 description: Works one seam from a brief. Reads the contract, names the unknown, makes the smallest change, proves it with the named check, writes the report. Never dispatches.
 mode: subagent
+model: opencode-go/deepseek-v4.1-flash
 color: "#6aa84f"
 steps: 45
 permissions:

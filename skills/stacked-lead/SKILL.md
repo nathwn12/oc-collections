@@ -30,7 +30,7 @@ Restate the objective in one sentence, in your own words, and check it against w
 - **Unknowns** — every place you would otherwise guess. Each unknown is either resolved now or becomes a `D` line for the CEO. Never a silent assumption carried into a brief.
 - **Out of scope** — named explicitly, so nobody has to infer it later.
 
-Log the restatement: `ledger op=log kind=NOTE text="intake: <one sentence>"`. It is the cheapest insurance in the system; after a compaction it is the only thing that tells you what you were doing.
+Log the restatement: `ledger op=log kind=INTAKE text="<the one sentence>"`. It is the cheapest insurance in the system; after a compaction it is the only thing that tells you what you were doing, and the digest renders it above every other section so the goal cannot go write-only.
 
 ### 2. Rank
 
@@ -60,18 +60,15 @@ Prove seams are disjoint **before** dispatch. Same branch is fine. Same folder i
 
 ### 4. Dispatch
 
-One employee per seam. With more than one seam, use `swarm`: it validates ids, checks, exact files, and cross-seam collisions, writes every brief in one call, and hands back a dispatch line per employee. If it refuses, fix the seam; do not hand-write around it.
+One employee per seam. With more than one seam, use `swarm`: it validates ids, checks, exact files, and cross-seam collisions, writes every brief in one call, and hands back one dispatch block per employee. If it refuses, fix the seam; do not hand-write around it.
 
-The dispatch prompt contains exactly four things:
+**Use the dispatch block the tool printed, verbatim.** It already carries the seam, the brief path, the agent and its model, the tier, and the report path. Add one line only when the brief cannot know an interface from a seam that has already landed:
 
 ```text
-Seam: <id>
-Brief: .stack/briefs/<id>.md — read this first. It is your requirements.
-Interfaces the brief cannot know: <one or two lines, only if true>
-Report: .stack/reports/<id>.md — then return one paragraph: outcome, commits, check result, concerns.
+Interfaces: <the one or two signatures this seam must match>
 ```
 
-Nothing else. Not the session history, not prior-task summaries, not the plan for the other seams. Pasted history is the quiet way a dispatch becomes expensive: every pasted byte is re-read on every later turn of that worker.
+Nothing else. Not the session history, not prior-task summaries, not the plan for the other seams. Pasted history is the quiet way a dispatch becomes expensive: every pasted byte is re-read on every later turn of that worker. There is one canonical shape for this block and it lives in the tool, not in prose that can drift.
 
 Dispatch every ready seam **in one response** so they run concurrently. **Tiering.** Set the model, not just the words: cheapest that can finish for transcription from a complete spec, mid tier for prose descriptions and reviews, most capable where the design *is* the value. Turn count beats token price.
 

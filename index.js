@@ -16,6 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { bootstrap, MARKER, readSkills, skillsDir } from './lib/skills.js';
 import { toolDefinitions } from './lib/tools.js';
+import { seedStack } from './lib/state.js';
 
 const DEBUG = process.env.OC_STACKED_DEBUG === '1';
 const note = (...parts) => {
@@ -34,8 +35,7 @@ function rootOf(ctx, fallback) {
   );
 }
 
-/** A top-level session gets the bootstrap; a child session gets its brief. */
-const childCache = new Map();
+/** A top-level session gets the bootstrap; a child session gets its brief. */const childCache = new Map();
 async function isChild(ctx, sessionID) {
   if (!sessionID) return false;
   if (childCache.has(sessionID)) return childCache.get(sessionID);
@@ -146,6 +146,24 @@ async function inject(event, ctx) {
   }
 }
 
+// Once per directory per process. Seeding never overwrites: it adds the
+// directories, a config with the checks the manifests declare, the ledger
+// header and a digest, so the first tool call in a real repo is not an empty
+// state directory. Opt out with OC_STACKED_NO_SEED=1.
+const seeded = new Set();
+async function ensureProjectStack(dir) {
+  if (process.env.OC_STACKED_NO_SEED === '1' || !dir || seeded.has(dir)) return;
+  seeded.add(dir);
+  try {
+    const result = seedStack(dir);
+    if (result.ok && (result.created.length || result.updated.length)) {
+      note(`seeded ${dir}:`, [...result.created, ...result.updated].join(', '));
+    }
+  } catch (err) {
+    note('stack seeding failed:', err?.message || err);
+  }
+}
+
 async function setup(ctx) {
   // V1 also calls default.setup with a context that has no skill/session domain.
   if (!ctx || typeof ctx?.skill?.transform !== 'function' || typeof ctx?.session?.hook !== 'function') {
@@ -155,6 +173,7 @@ async function setup(ctx) {
   const dir = rootOf(ctx);
   await registerSkills(ctx);
   await registerTools(ctx, dir);
+  await ensureProjectStack(dir);
 
   for (const hook of ['context', 'compaction', 'generate']) {
     try {

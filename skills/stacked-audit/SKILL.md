@@ -86,6 +86,17 @@ Could not verify
 
 A `FAIL` with one precise reason beats a `PASS` with ten hedges. Never downgrade a Critical to keep the peace: the author's schedule is not evidence. Never fail work for taste — "I would have structured it differently" is not a finding. If you cannot tie it to the brief or the house style, it goes under `Minor` as an observation or nowhere at all.
 
+## Record it
+
+The verdict is an artifact, not a message. Speak it, then write it:
+
+```text
+ledger op=log kind=AUDIT text="<seam>@<sha7> PASS spec=ok standards=ok"
+ledger op=log kind=AUDIT text="<seam>@<sha7> FAIL spec=gap: retry count resets on restart"
+```
+
+Bound to a short sha, so the verdict names the bytes it judged. Until this line exists, the digest lists the seam under **Landed, unaudited**, and the work is not done.
+
 ## What is never acceptable
 
 - A verdict with no command run by you.
