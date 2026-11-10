@@ -29,6 +29,8 @@
   "files": [
     "index.js",
     "lib.js",
+    "graph.js",
+    "tools.js",
     "README.md",
     "AGENTS.md"
   ],

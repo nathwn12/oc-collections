@@ -175,6 +175,23 @@ test('manifest: entry points and file list point at files that exist', () => {
   assert.ok(!(manifest.files ?? []).some((file) => file.startsWith('test')), 'the test tree must not ship');
 });
 
+test('manifest: every sibling a shipped file imports is itself shipped', () => {
+  const declared = new Set(manifest.files ?? []);
+  const seen = new Set(['index.js']);
+  const queue = ['index.js'];
+  while (queue.length > 0) {
+    const file = queue.shift();
+    const text = fs.readFileSync(path.join(PKG, file), 'utf8');
+    for (const match of text.matchAll(/^import[^'"]*['"]\.\/([^'"]+)['"]/gm)) {
+      const spec = match[1];
+      if (seen.has(spec)) continue;
+      seen.add(spec);
+      queue.push(spec);
+      assert.ok(declared.has(spec), `${spec} is imported by ${file} but missing from "files": npm pack ships a broken module`);
+    }
+  }
+});
+
 test('source: no third-party imports, so the host loads it as committed', () => {
   for (const file of ['index.js', 'lib.js']) {
     const text = fs.readFileSync(path.join(PKG, file), 'utf8');
