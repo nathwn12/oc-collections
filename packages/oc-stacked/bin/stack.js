@@ -10,11 +10,13 @@ const USAGE = `stack — the gate without the plugin
 
   node bin/stack.js check init | run | show
   node bin/stack.js ready --id <seam> [--lean]
+  node bin/stack.js close [run | preflight | show] [--lesson <text>]
   node bin/stack.js clean [--op sweep | report]
   node bin/stack.js ledger digest
 
 Options:
   --dir <path>   the repository to operate on (default: the working directory)
+  --lesson <text>  the lesson for close run, at least 8 characters
   --help         this text
 
 Exit codes: 0 success, 1 refusal or failure, 2 bad usage.
@@ -32,7 +34,7 @@ if (!argv.length || argv.includes('--help') || argv.includes('-h')) {
 }
 
 let dir = process.cwd();
-const flags = { op: undefined, id: undefined, lean: false };
+const flags = { op: undefined, id: undefined, lesson: undefined, lean: false };
 const positional = [];
 
 for (let i = 0; i < argv.length; i += 1) {
@@ -46,6 +48,7 @@ for (let i = 0; i < argv.length; i += 1) {
   if (arg === '--dir') dir = value();
   else if (arg === '--id') flags.id = value();
   else if (arg === '--op') flags.op = value();
+  else if (arg === '--lesson') flags.lesson = value();
   else if (arg === '--lean') flags.lean = true;
   else if (arg.startsWith('-')) usageError(`unknown option: ${arg}`);
   else positional.push(arg);
@@ -63,9 +66,18 @@ const call = async (name, input) => {
   return typeof result === 'string' ? result : result?.content || '';
 };
 
+/**
+ * A verdict that must reach the shell as exit 1. This is the shape the older
+ * commands always had; `check` prints a `## RED` heading, which this does not
+ * match, and the self-test pins that behaviour, so it is left as it was.
+ */
 const FAILED = /^(NO-GO|RED|Refused)\b/m;
 
+/** close's verdict is a heading; a NO-GO there is the one thing exit 1 is for. */
+const HEADING_VERDICT = /^#{1,6}\s+(?:NO-GO|RED)\b/m;
+
 let text;
+let failed = false;
 if (command === 'check') {
   if (!['init', 'run', 'show'].includes(sub)) usageError('check takes init, run or show');
   text = await call('check', { op: sub });
@@ -73,6 +85,12 @@ if (command === 'check') {
   if (sub) usageError('ready takes no positional argument; use --id');
   if (!flags.id) usageError('ready needs --id <seam>');
   text = await call('ready', { id: flags.id, lean: flags.lean });
+} else if (command === 'close') {
+  const op = sub || 'run';
+  if (!['run', 'preflight', 'show'].includes(op)) usageError('close takes run, preflight or show');
+  if (op === 'run' && !flags.lesson) usageError('close run needs --lesson <text>');
+  text = await call('close', { op, lesson: flags.lesson });
+  failed = HEADING_VERDICT.test(text);
 } else if (command === 'clean') {
   const op = flags.op || 'sweep';
   if (!['sweep', 'report'].includes(op)) usageError('--op takes sweep or report');
@@ -85,4 +103,4 @@ if (command === 'check') {
 }
 
 process.stdout.write(text.endsWith('\n') ? text : `${text}\n`);
-process.exit(FAILED.test(text) ? 1 : 0);
+process.exit(failed || FAILED.test(text) ? 1 : 0);

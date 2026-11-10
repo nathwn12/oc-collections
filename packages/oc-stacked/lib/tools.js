@@ -1,15 +1,15 @@
-// The seven local tools. No network, no MCP, no daemons: files and git only.
+// The local tools. No network, no MCP, no daemons: files and git only.
 import fs from 'node:fs';
 import path from 'node:path';
 import { matchesGlob, slug, stamps, table } from './text.js';
 import { packageRoot } from './content.js';
-import { head, branch, isRepo, snapshot, committedPaths, changedFiles } from './git.js';
-import { commandAsync } from './exec.js';
+import { head, isRepo, snapshot, committedPaths, changedFiles } from './git.js';
+import { checkRecordReasons, configuredChecks, executeChecks } from './checks.js';
+import { CLOSE_PATH, closeReasons, preflight, readClose, runClose } from './close.js';
 import {
   PATHS,
   config,
   ensureStack,
-  isCorruptConfig,
   log,
   ledgerEntries,
   readJson,
@@ -88,7 +88,7 @@ function ledgerTool(dir) {
   return {
     name: 'ledger',
     description:
-      'The stack memory. op=log appends one stamped line (never edits); op=tail reads the last lines; op=digest rewrites .stack/digest.md from the ledger and the brief index and returns it. Kinds: NOTE, ASK, ANSWER, BRIEF, READY, LANDED, RED, RULING, LESSON, INTAKE, AUDIT, SWARM, SEED.',
+      'The stack memory. op=log appends one stamped line (never edits); op=tail reads the last lines; op=digest rewrites .stack/digest.md from the ledger and the brief index and returns it. Kinds: NOTE, ASK, ANSWER, BRIEF, READY, LANDED, RED, RULING, LESSON, INTAKE, AUDIT, SWARM, SEED, CLOSE.',
     input: {
       type: 'object',
       properties: {
@@ -742,49 +742,10 @@ function initConfig(dir) {
   ].join('\n');
 }
 
-/** The configured checks, with corruption named instead of silently empty. */
-function configuredChecks(dir) {
-  const cfg = config(dir);
-  if (isCorruptConfig(cfg)) return { cfg, corrupt: true, all: [] };
-  const all = Array.isArray(cfg.checks) ? cfg.checks.filter((c) => c && c.command) : [];
-  return { cfg, corrupt: false, all };
-}
-
-/** Run the chosen checks and bind the result to the HEAD it ran at. */
-async function executeChecks(dir, chosen) {
-  const results = [];
-  for (const c of chosen) {
-    const r = await commandAsync(c.command, {
-      cwd: str(c.cwd) ? path.join(dir, str(c.cwd)) : dir,
-      timeout: Number(c.timeout) > 0 ? Number(c.timeout) : 180000,
-      env: { ...process.env, CI: process.env.CI ?? '1' },
-    });
-    results.push({
-      name: c.name || c.command,
-      command: c.command,
-      ok: r.ok,
-      code: r.code,
-      ms: r.ms,
-      tail: r.display.split('\n').slice(-12).join('\n'),
-    });
-  }
-  return { at: stamps().iso, head: head(dir), branch: branch(dir), results };
-}
-
-/**
- * What one recorded check run proves. The gate never trusts a stored record —
- * it runs the checks itself — so the only invariant left is that the record it
- * just made covers every configured check. A short record means the run was cut
- * off; a hand-edited `results: []` is caught by the same comparison.
- */
-export function checkRecordReasons(record, configured) {
-  const results = record.results;
-  if (results.length !== configured.length) {
-    return [`the check run recorded ${results.length} of ${configured.length} checks; a partial result set is not evidence of green.`];
-  }
-  const failed = results.filter((r) => !r.ok);
-  return failed.length ? [`check is RED: ${failed.map((r) => r.name).join(', ')}.`] : [];
-}
+// The check runner lives in lib/checks.js so the gate, the close ceremony and
+// this tool are one behaviour. Re-exported here for the callers that already
+// import it from the tool module.
+export { checkRecordReasons };
 
 function checkTool(dir) {
   return {
@@ -1225,6 +1186,77 @@ function cleanTool(dir) {
   };
 }
 
+// ---------------------------------------------------------------- close
+
+/** The receipt, and the one line that decides whether `[done]` is legitimate. */
+function describeClose(dir) {
+  const read = readClose(dir);
+  if (read.error) {
+    return `## NO-GO — close receipt unreadable\n\n\`${CLOSE_PATH}\` cannot be parsed (${read.error.message}). Run \`close\` op=run to replace it.`;
+  }
+  const receipt = read.value;
+  if (!receipt) {
+    return `## NO-GO — no close receipt\n\nNothing at \`${CLOSE_PATH}\`, so there is nothing to verify. Run \`close\` op=run with one lesson to seal this session.`;
+  }
+
+  const results = Array.isArray(receipt.checks?.results) ? receipt.checks.results : [];
+  const reasons = closeReasons(dir);
+  const head7 = shortSha(receipt.head);
+  return [
+    `## ${reasons.length ? 'NO-GO' : 'GO'} — receipt ${receipt.receipt_id || '(no id)'} at ${head7} (${receipt.branch || 'detached'})`,
+    '',
+    table(['Fact', 'Value'], [
+      ['written', receipt.at || '?'],
+      ['head', head7],
+      ['branch', receipt.branch || 'detached'],
+      ['checks', `${results.filter((r) => r.ok).length}/${results.length} green at ${shortSha(receipt.checks?.head)}`],
+      ['atlas', `${receipt.atlas?.status || 'not configured'}${typeof receipt.atlas?.code === 'number' ? ` (exit ${receipt.atlas.code})` : ''}`],
+      ['criteria', receipt.criteria?.status || 'not recorded'],
+      ['tree', (receipt.tree || []).length ? (receipt.tree || []).join(', ') : 'clean outside .stack'],
+      ['sweep', `${(receipt.sweep?.removed || []).length} removed, ${(receipt.sweep?.kept || []).length} kept`],
+      ['junk', (receipt.junk || []).length ? (receipt.junk || []).join(', ') : 'none'],
+      ['lesson', receipt.lesson || '—'],
+    ]),
+    '',
+    reasons.length
+      ? `**Not valid at HEAD:**\n\n${reasons.map((r) => `- ${r}`).join('\n')}`
+      : `valid at HEAD ${head7}. An earlier receipt is not inherited by a tree that moved.`,
+    ...(reasons.length ? [] : ['', `SEALED ${receipt.sealed || head7}`]),
+  ].join('\n');
+}
+
+function closeTool(dir) {
+  return {
+    name: 'close',
+    description:
+      'The close ceremony: one command that either seals the session or names every reason it cannot. op=preflight reads the open tickets and changes nothing: an ASK with no later ANSWER, a seam not landed or killed, a landed seam with no AUDIT line, uncommitted work outside .stack/, no configured check, and a failing atlas command. op=run refuses while any of those stands, then runs the checks, the sweep, the junk report, the lesson, the digest and the atlas, and writes state/close.json only when every one of them is green. op=show prints the receipt and whether it is still valid at HEAD.',
+    input: {
+      type: 'object',
+      properties: {
+        op: { type: 'string', enum: ['run', 'preflight', 'show'], description: 'Operation. Default: run.' },
+        lesson: {
+          type: 'string',
+          description: 'One sentence the next session must not have to rediscover. Required for op=run, at least 8 characters.',
+        },
+      },
+      required: ['op'],
+      additionalProperties: false,
+    },
+    execute: async (input) => {
+      ensureStack(dir);
+      const op = str(input.op) || 'run';
+      if (op === 'preflight') {
+        const pre = await preflight(dir, { lesson: str(input.lesson) });
+        return ok(pre.text);
+      }
+      if (op === 'show') return ok(describeClose(dir));
+      if (op !== 'run') return ok(`Unknown op \`${op}\`. Use \`run\`, \`preflight\` or \`show\`.`);
+      const result = await runClose(dir, { lesson: input.lesson });
+      return ok(result.text);
+    },
+  };
+}
+
 // ---------------------------------------------------------------- export
 
 export function toolDefinitions({ dir }) {
@@ -1236,6 +1268,7 @@ export function toolDefinitions({ dir }) {
     scopeTool(dir),
     readyTool(dir),
     cleanTool(dir),
+    closeTool(dir),
   ];
 }
 
