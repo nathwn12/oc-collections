@@ -20,7 +20,7 @@ import { toolDefinitions } from './lib/tools.js';
 import { seedStack, tryReadJson, withLock, writeJson, log } from './lib/state.js';
 import { closeReasons, invalidateClose, preflight, readClose } from './lib/close.js';
 import { head } from './lib/git.js';
-import { intentOf, statusOf, withStatus } from './lib/title.js';
+import { intentOf, statusOf, stripStatus, withStatus } from './lib/title.js';
 
 const DEBUG = process.env.OC_STACKED_DEBUG === '1';
 const note = (...parts) => {
@@ -201,6 +201,7 @@ const RENAME_TOOLS = new Set(['opencode_session_rename', 'opencode.session_renam
 const STATUS_EVENTS = [
   'session.created',
   'session.renamed',
+  'session.deleted',
   'session.execution.started',
   'session.execution.succeeded',
   'session.execution.failed',
@@ -264,22 +265,33 @@ function closeState(dir) {
 // assistant message carries the token. The loop is bounded at CLOSE_CAP; a
 // cap is a parked session with a recorded ASK, never a seal.
 
-function readIntent(dir) {
-  const { value } = tryReadJson(dir, INTENT_PATH, null);
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  if (typeof value.sessionID !== 'string' || !value.sessionID) return null;
-  return { sessionID: value.sessionID, attempts: Number(value.attempts) || 0, at: value.at || null, head: value.head || null };
+function readIntents(dir) {
+  const { value } = tryReadJson(dir, INTENT_PATH, {});
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 }
 
-function writeIntent(dir, intent) {
-  withLock(dir, () => writeJson(dir, INTENT_PATH, intent));
+/** This session's intent, or null. Keyed by session so two sessions cannot overwrite each other. */
+function intentFor(dir, sessionID) {
+  const entry = readIntents(dir)[sessionID];
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
+  return { attempts: Number(entry.attempts) || 0, at: entry.at || null, head: entry.head || null };
+}
+
+function writeIntent(dir, sessionID, entry) {
+  withLock(dir, () => {
+    const all = readIntents(dir);
+    all[sessionID] = entry;
+    writeJson(dir, INTENT_PATH, all);
+  });
 }
 
 function clearIntent(dir, sessionID) {
   withLock(dir, () => {
-    const current = readIntent(dir);
-    if (!current || (sessionID && current.sessionID !== sessionID)) return;
-    fs.rmSync(path.join(dir, INTENT_PATH), { force: true });
+    const all = readIntents(dir);
+    if (!(sessionID in all)) return;
+    delete all[sessionID];
+    if (Object.keys(all).length) writeJson(dir, INTENT_PATH, all);
+    else fs.rmSync(path.join(dir, INTENT_PATH), { force: true });
   });
 }
 
@@ -310,8 +322,10 @@ async function lastAssistantText(ctx, sessionID) {
   if (!Array.isArray(messages)) return '';
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     const message = messages[i];
-    const role = message?.role ?? message?.info?.role;
-    if (role !== 'assistant') continue;
+    // A projected message is `{type:'assistant'|'user'|'synthetic', content:[...]}`;
+    // the role-keyed shape is kept as a fallback for other hosts.
+    const kind = message?.type ?? message?.role ?? message?.info?.role;
+    if (kind !== 'assistant') continue;
     const body = message?.info ?? message;
     const parts = Array.isArray(body?.content) ? body.content : Array.isArray(body?.parts) ? body.parts : [];
     return parts
@@ -360,6 +374,9 @@ async function applyTitle(ctx, dir, sessionID, status, record = null) {
   const live = record || (await liveSession(ctx, sessionID, dir));
   if (!live) return false;
   const current = typeof live.title === 'string' ? live.title : '';
+  // An empty title means the host has not named the session yet: writing a bare
+  // prefix here would beat its auto-title. The first session.renamed prefixes it.
+  if (!stripStatus(current)) return false;
   const next = withStatus(current, status);
   if (next === current) return false;
   await ctx.session.update({ sessionID, title: next });
@@ -405,11 +422,30 @@ async function nudgeMissingClose(ctx, dir, sessionID) {
   );
 }
 
+/** Drop every trace of a deleted session from this project's stores. */
+function forgetSession(dir, sessionID) {
+  setOverride(dir, sessionID, null);
+  clearIntent(dir, sessionID);
+  for (const key of [...nudged]) {
+    if (key.startsWith(`${sessionID}:`)) nudged.delete(key);
+  }
+}
+
 async function onTitleEvent(ctx, dir, event) {
   const type = event?.type;
   const data = event?.data && typeof event.data === 'object' ? event.data : {};
   const sessionID = data.sessionID || event?.sessionID;
   if (!sessionID) return;
+
+  if (type === 'session.deleted') {
+    // The record may already be gone, so this is the one path that does not
+    // read it. Only this project's stores are cleaned, and only for this dir.
+    const where = event?.location?.directory;
+    if (where && !sameDir(where, dir)) return;
+    forgetSession(dir, sessionID);
+    return;
+  }
+
   const record = await liveSession(ctx, sessionID, dir);
   if (!record) return;
 
@@ -473,8 +509,8 @@ async function onIdle(ctx, dir, event) {
   const record = await liveSession(ctx, sessionID, dir);
   if (!record) return;
 
-  const intent = readIntent(dir);
-  const open = Boolean(intent && intent.sessionID === sessionID);
+  const intent = intentFor(dir, sessionID);
+  const open = Boolean(intent);
   const valid = closeState(dir).length === 0;
 
   // 1. A GO receipt exists but the close is still open: the turn may only end
@@ -491,7 +527,7 @@ async function onIdle(ctx, dir, event) {
       await exhaust(ctx, dir, sessionID, record, [`the final message never carried \`${token}\``]);
       return;
     }
-    writeIntent(dir, { ...intent, attempts: intent.attempts + 1, at: new Date().toISOString(), head: head(dir) });
+    writeIntent(dir, sessionID, { ...intent, attempts: intent.attempts + 1, at: new Date().toISOString(), head: head(dir) });
     await applyTitle(ctx, dir, sessionID, 'active', record);
     await ctx.session.synthetic({
       sessionID,
@@ -510,7 +546,7 @@ async function onIdle(ctx, dir, event) {
       return;
     }
     const pre = await preflight(dir, {});
-    writeIntent(dir, { ...intent, attempts: intent.attempts + 1, at: new Date().toISOString(), head: head(dir) });
+    writeIntent(dir, sessionID, { ...intent, attempts: intent.attempts + 1, at: new Date().toISOString(), head: head(dir) });
     const text = pre.blockers.length
       ? `Close is blocked on ${pre.blockers.length} ticket(s): ${ticketsLine(pre.blockers)}. Settle each - land, kill, answer, or record an ASK and park - then run stack_close op=preflight again. Do not reply done.`
       : `Preflight is clear. Run stack_close op=run lesson="<one sentence>" now. Do not reply done.`;
@@ -545,7 +581,7 @@ async function onPrompt(ctx, dir, event) {
   if (intent === 'close') {
     if (!said.includes('CLOSE INTENT.')) prompt.text = `${said}\n\n${CLOSE_INTENT}`;
     setOverride(dir, sessionID, 'closing');
-    writeIntent(dir, { sessionID, attempts: 0, at: new Date().toISOString(), head: head(dir) });
+    writeIntent(dir, sessionID, { attempts: 0, at: new Date().toISOString(), head: head(dir) });
     await applyTitle(ctx, dir, sessionID, targetStatus(dir, sessionID, 'working'), record);
     return;
   }
@@ -576,7 +612,10 @@ async function beforeTool(ctx, dir, event) {
     if (statusOf(input.title) === 'done' && reasons.length) {
       refusal = `[oc-stacked] [done] refused: ${reasons.join('; ')}. Run stack_close op=run lesson="..." and let the plugin set the prefix.`;
     } else {
-      input.title = withStatus(input.title, targetStatus(dir, sessionID, 'working'));
+      // While a close is open, only the idle gate may apply [done]: the turn
+      // still owes the final report and the seal token.
+      const status = intentFor(dir, sessionID) ? 'active' : targetStatus(dir, sessionID, 'working');
+      input.title = withStatus(input.title, status);
     }
   } catch (err) {
     note('rename gate failed:', err?.message || err);
@@ -593,9 +632,11 @@ async function afterTool(ctx, dir, event) {
   if (!sessionID) return;
   const record = await liveSession(ctx, sessionID, dir);
   if (!record) return;
-  // A close that completed wrote its receipt first, so this reads GO; a close
-  // that failed finds no receipt and leaves the session working.
-  await applyTitle(ctx, dir, sessionID, targetStatus(dir, sessionID, 'working'), record);
+  // A GO close writes its receipt before this hook runs, but the turn still owes
+  // a final report. Only the idle gate may apply [done], after the seal token.
+  const open = Boolean(intentFor(dir, sessionID));
+  const status = open ? 'active' : targetStatus(dir, sessionID, 'working');
+  await applyTitle(ctx, dir, sessionID, status, record);
 }
 
 /** The event loop, started by setup and stopped by the cleanup it returns. */
