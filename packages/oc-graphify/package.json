@@ -36,7 +36,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "test": "node --test test/",
-    "check": "node --test test/"
+    "test": "node --test",
+    "check": "node --test"
   }
 }
