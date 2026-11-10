@@ -10,6 +10,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Six read tools over the atlas: graph_stats, graph_node, graph_neighbors, graph_path, graph_god_nodes, graph_query. The injected block named MCP verbs this host does not configure; it now names these. graph_query is label-token search and says so, rather than claiming the CLI's heuristic.
 
+### Fixed
+
+- The freshness verdict is the vault's, not the plugin's: `graph-freshness.mjs` decides (corpus inputs, lesson-bearing session notes, the semantic seed, a dirty tree), and commit equality is only the fallback when that tool is absent. The plugin had been calling a fresh graph STALE on every non-corpus commit.
+- `setup()` registers six reads again. `graphFile` had been dropped from the import, the registration threw, the outer catch swallowed it, and the six tools vanished from a running host with no error. Two tests now hold the line: setup registers six reads and still hooks when the tool editor refuses; a freshness command that exits 127 is not a verdict.
+- `graph.js` and `tools.js` ship in the tarball. `files` had listed only `index.js` and `lib.js` while `index.js` imported both, so `npm pack` produced a module that died on its first import.
+
 ## [0.1.0] - 2026-11-10
 
 ### Added
