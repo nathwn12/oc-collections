@@ -306,6 +306,17 @@ function sealToken(dir) {
   }
 }
 
+/**
+ * A seal is the brief report, not a bare token: the token, plus either the two
+ * headings the report must carry or 200 characters of assistant text. A
+ * one-line `SEALED abc1234` is a claim, and the gate asks for the report again.
+ */
+function sealReport(text, token) {
+  if (!token || !text.includes(token)) return false;
+  if (text.includes('## Outcome') && text.includes('## Evidence')) return true;
+  return text.length >= 200;
+}
+
 const oneLine = (text) => String(text).replace(/\s+/g, ' ').trim();
 
 function ticketsLine(blockers) {
@@ -490,7 +501,15 @@ async function onTitleEvent(ctx, dir, event) {
     return;
   }
 
-  if (type === 'session.execution.succeeded' || type === 'session.execution.failed' || type === 'session.execution.interrupted') {
+  if (type === 'session.execution.failed' || type === 'session.execution.interrupted') {
+    // An Esc or a failed turn is a halt, not a pause: drop the close intent so a
+    // later idle cannot resume the ceremony, and park the session.
+    clearIntent(dir, sessionID);
+    await applyTitle(ctx, dir, sessionID, 'parked', record);
+    return;
+  }
+
+  if (type === 'session.execution.succeeded') {
     // The stop gate lives in experimental.idle, which runs before the turn can
     // end. Nothing is injected here: a post-hoc nudge would start a fresh
     // execution instead of continuing this one.
@@ -514,11 +533,11 @@ async function onIdle(ctx, dir, event) {
   const valid = closeState(dir).length === 0;
 
   // 1. A GO receipt exists but the close is still open: the turn may only end
-  //    with the seal token in its last assistant message.
+  //    with the seal token inside the brief report - never a bare token.
   if (open && valid) {
     const token = sealToken(dir);
     const last = await lastAssistantText(ctx, sessionID);
-    if (!token || last.includes(token)) {
+    if (!token || sealReport(last, token)) {
       await applyTitle(ctx, dir, sessionID, 'done', record);
       clearIntent(dir, sessionID);
       return;
