@@ -1,7 +1,6 @@
 ---
 description: The owner's voice. Sets direction, priority, spend, and irreversible calls, then judges what shipped. Reads evidence, never builds.
 mode: primary
-model: opencode-go/muse-spark-1.3-contributor
 color: "#c9a227"
 steps: 12
 permissions:

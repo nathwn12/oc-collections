@@ -1,7 +1,6 @@
 ---
 description: Runs the stack. Cuts seams, writes briefs, dispatches employees, reconciles evidence, lands the work, keeps the digest. Never takes a seam it dispatched.
 mode: all
-model: opencode-go/muse-spark-1.3-contributor
 color: "#4f8cc9"
 steps: 60
 permissions:

@@ -652,22 +652,25 @@ check('four agents exist with valid V2 frontmatter', () => {
   return agentFiles.length + ' agents';
 });
 
-check('each seat is pinned to the right model', () => {
+check('each delegated seat is pinned and the primaries inherit', () => {
   const expected = {
-    'stacked-ceo.md': 'opencode-go/muse-spark-1.3-contributor',
-    'stacked-lead.md': 'opencode-go/muse-spark-1.3-contributor',
+    'stacked-ceo.md': null,
+    'stacked-lead.md': null,
     'stacked-employee.md': 'opencode-go/deepseek-v4.1-flash',
     'stacked-auditor.md': 'openai/gpt-6.1-terra',
   };
   for (const [file, model] of Object.entries(expected)) {
     const raw = fs.readFileSync(path.join(repo, 'agents', file), 'utf8');
     const line = raw.match(/^model:\s*(.+)$/m);
-    assert(line, `${file} has no model line`);
-    assert(line[1].trim() === model, `${file} is ${line[1].trim()}, expected ${model}`);
+    if (model === null) {
+      assert(!line, file + ' must inherit the session model, but pins a model');
+      continue;
+    }
+    assert(line, file + ' has no model line');
+    assert(line[1].trim() === model, file + ' is ' + line[1].trim() + ', expected ' + model);
   }
-  return 'muse · deepseek · terra';
+  return 'primaries inherit · deepseek builds · terra judges';
 });
-
 check('no agent lets an employee dispatch a subagent', () => {
   const raw = fs.readFileSync(path.join(repo, 'agents', 'stacked-employee.md'), 'utf8');
   assert(/action:\s*subagent[\s\S]{0,120}effect:\s*deny/.test(raw), 'stacked-employee.md does not deny the subagent action');
