@@ -1,0 +1,42 @@
+{
+  "name": "oc-graphify",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Puts the Graphify Atlas in front of every OpenCode request: counts, path and freshness, injected as context.",
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "graphify",
+    "knowledge-graph",
+    "atlas",
+    "context"
+  ],
+  "license": "MIT",
+  "author": "nathwn12",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nathwn12/oc-collections.git",
+    "directory": "packages/oc-graphify"
+  },
+  "homepage": "https://github.com/nathwn12/oc-collections/tree/main/packages/oc-graphify",
+  "bugs": "https://github.com/nathwn12/oc-collections/issues",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./lib": "./lib.js"
+  },
+  "files": [
+    "index.js",
+    "lib.js",
+    "README.md",
+    "AGENTS.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test test/",
+    "check": "node --test test/"
+  }
+}
