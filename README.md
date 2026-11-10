@@ -21,7 +21,6 @@ Every package is a folder with its own README. Open the one you want; its README
 | oc-harness-setup | CLI | `1.0.2` | Installs the Windows agent harness. | `npx -y oc-harness-setup setup` |
 | oc-plugin-view | plugin | `0.2.0` | Installed plugin list in the OpenCode sidebar. | Add `oc-plugin-view` to your `plugins`. |
 | oc-puppet | MCP | `7.0.2` | Windows desktop-control MCP server; provisions a pinned binary on first run. | `npx -y oc-puppet` (stdio MCP server). |
-| oc-stacked | plugin | `0.3.0` | The three-rung agent stack: lead, one employee per seam, auditor. | Add `oc-stacked` to your `plugins`. |
 | oc-talk | plugin | `0.2.2` | Cross-session talk: list live sessions, send one message to a peer, read its reply. | Add `oc-talk` to your `plugins`. |
 | rea-shim | MCP | `0.2.3` | Launcher for the rea reverse-engineering server. | `npx -y rea-shim --doctor` |
 | oc-collections | repo | — | This index and npm-workspaces monorepo. | — |

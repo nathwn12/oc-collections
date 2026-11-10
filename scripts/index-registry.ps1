@@ -15,6 +15,14 @@ $script:RegistryScope = [ordered]@{
         Scope  = 'released'
         Reason = 'packages/oc-flight-deck; published by this repo''s release workflow.'
     }
+    'oc-gladius' = [pscustomobject]@{
+        Scope  = 'released'
+        Reason = 'packages/oc-gladius; published by this repo''s release workflow.'
+    }
+    'oc-puppet' = [pscustomobject]@{
+        Scope  = 'released'
+        Reason = 'packages/oc-puppet; published by this repo''s release workflow.'
+    }
     'oc-harness-setup' = [pscustomobject]@{
         Scope  = 'released'
         Reason = 'packages/oc-harness-setup; published by this repo''s release workflow.'

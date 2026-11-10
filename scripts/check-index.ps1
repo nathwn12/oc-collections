@@ -82,7 +82,12 @@ $ua = @{ 'User-Agent' = 'oc-collections-index-check/1.0' }
 # failure too, so the table and this list can never both claim the same package.
 # Empty since 2026-10-29: nothing in the tree is withheld from the table. The
 # guard stays for a future private package.
-$Omitted = @{}
+$Omitted = @{
+    # Private, unpublished, and deliberately not in the release allowlist.
+    # A row would claim an install target the registry does not have.
+    'oc-stacked' = 'private: true; developed in-tree until the owner opens the release line'
+    'oc-graphify' = 'private: true; source-only plugin, installed by junction'
+}
 
 # Kinds whose row ships an npm artifact, so a row of that kind with a version
 # pin is an installation target. `repo` is deliberately absent: the index's own
