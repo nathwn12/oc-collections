@@ -16,12 +16,12 @@ $script:RegistryScope = [ordered]@{
         Reason = 'packages/oc-flight-deck; published by this repo''s release workflow.'
     }
     'oc-gladius' = [pscustomobject]@{
-        Scope  = 'released'
-        Reason = 'packages/oc-gladius; published by this repo''s release workflow.'
+        Scope  = 'external'
+        Reason = 'packages/oc-gladius; source imported here, released from the repository that builds its engine.'
     }
     'oc-puppet' = [pscustomobject]@{
-        Scope  = 'released'
-        Reason = 'packages/oc-puppet; published by this repo''s release workflow.'
+        Scope  = 'external'
+        Reason = 'packages/oc-puppet; source imported here, released from the repository that builds its engine.'
     }
     'oc-harness-setup' = [pscustomobject]@{
         Scope  = 'released'

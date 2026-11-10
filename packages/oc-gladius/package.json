@@ -5,10 +5,9 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/nathwn12/oc-collections",
-    "directory": "packages/oc-gladius"
+    "url": "https://github.com/nathwn12/gladius"
   },
-  "homepage": "https://github.com/nathwn12/oc-collections/tree/main/packages/oc-gladius",
+  "homepage": "https://github.com/nathwn12/gladius",
   "engines": {
     "node": ">=22.14.0"
   },
