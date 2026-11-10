@@ -12,17 +12,31 @@ import { toolDefinitions } from '../../lib/tools.js';
 export async function register(ctx) {
   const { check, checkAsync, assert, tmpRepo, configuredRepo, runIn } = ctx;
 
-  // The seven tools, and one committed fixture the brief/ledger chain mutates.
+  // The eight tools, and one committed fixture the brief/ledger chain mutates.
   const dir = tmpRepo();
   const tools = toolDefinitions({ dir });
 
-  check('seven tools are defined', () => {
-    assert(tools.length === 7, `expected 7, got ${tools.length}`);
+  check('eight tools are defined', () => {
+    assert(tools.length === 8, `expected 8, got ${tools.length}`);
     const names = tools.map((t) => t.name);
-    for (const required of ['ledger', 'brief', 'swarm', 'check', 'scope', 'ready', 'clean']) {
+    for (const required of ['ledger', 'brief', 'swarm', 'check', 'scope', 'ready', 'clean', 'close']) {
       assert(names.includes(required), `missing tool: ${required}`);
     }
     return names.join(', ');
+  });
+
+  check('close exposes its three ops and names lesson as required for run', () => {
+    const close = tools.find((t) => t.name === 'close');
+    assert(close, 'the close tool is not defined');
+    const op = close.input.properties.op;
+    assert(op && op.type === 'string', 'close.op is not a string');
+    const ops = Array.isArray(op.enum) ? [...op.enum].sort().join(',') : '';
+    assert(ops === 'preflight,run,show', `close.op is ${ops || '(no enum)'}, not run|preflight|show`);
+    const lesson = close.input.properties.lesson;
+    assert(lesson && lesson.type === 'string', 'close has no lesson property');
+    assert(/required for op=run/i.test(lesson.description || ''), `close.lesson does not say when it is required: ${lesson.description}`);
+    assert(Array.isArray(close.input.required) && close.input.required.includes('op'), 'close does not require op');
+    return 'run, preflight, show';
   });
 
   check('every tool declares a valid, self-consistent input schema', () => {

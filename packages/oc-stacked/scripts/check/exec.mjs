@@ -39,6 +39,13 @@ export async function register(ctx) {
     );
     const init = cliRun(['check', 'init'], d);
     assert(init.status === 0, `check init exited ${init.status}: ${init.stdout}${init.stderr}`);
+    // `init` detects `npm run test`, and `npm` is environment-sensitive inside a
+    // temp repo (-4058). The subject here is the CLI gate, not the npm shim, so
+    // the config is replaced with a direct command before the run.
+    fs.writeFileSync(
+      path.join(d, '.stack', 'config.json'),
+      JSON.stringify({ checks: [{ name: 'ok', command: 'node -e "process.exit(0)"', timeout: 30000 }] }, null, 2),
+    );
     const run = cliRun(['check', 'run'], d);
     assert(run.status === 0, `check run exited ${run.status}: ${run.stdout}${run.stderr}`);
     const refused = cliRun(['ready', '--id', 'missing'], d);

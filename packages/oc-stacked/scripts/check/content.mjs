@@ -221,7 +221,11 @@ export function register(ctx) {
     assert(a.length < 9000, `bootstrap is ${a.length} chars; it is paid for on every step`);
     assert(a.includes('lead') || a.includes('LEAD'), 'bootstrap does not name the rungs');
     assert(!/\bCEO\b|\bceo\b/.test(a), 'bootstrap still names a CEO seat that no longer exists');
-    assert(a.length < 3600, `bootstrap is ${a.length} chars; it is paid for on every step (raised from 3200 when the route table became always-on)`);
+    // Raised from 3600 for the close stop gate: one line, "close is a bounded stop
+    // gate: the plugin will not let the session idle while a close intent has
+    // open tickets or no SEALED receipt" (132 chars), plus `close` in the tool
+    // list. 3763 actual. The 9000 guard above is the real ceiling.
+    assert(a.length < 3900, `bootstrap is ${a.length} chars; it is paid for on every step (raised from 3600 when the close stop gate landed)`);
     return `${a.length} chars`;
   });
 

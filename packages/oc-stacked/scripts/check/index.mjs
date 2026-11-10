@@ -26,6 +26,8 @@ import * as exec from './exec.mjs';
 import * as git from './git.mjs';
 import * as tools from './tools.mjs';
 import * as gate from './gate.mjs';
+import * as close from './close.mjs';
+import * as title from './title.mjs';
 import * as plugin from './plugin.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -107,6 +109,8 @@ await exec.register(ctx);
 await git.register(ctx);
 await tools.register(ctx);
 await gate.register(ctx);
+await close.register(ctx);
+await title.register(ctx);
 await plugin.register(ctx);
 
 const total = pass + failures.length;
