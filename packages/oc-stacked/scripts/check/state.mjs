@@ -54,6 +54,25 @@ export async function register(ctx) {
     return 'members = [] adds nothing';
   });
 
+  // The auditor's case, byte for byte: brackets balance, so the bracket guard
+  // alone let this through and invented `cargo test` from a file that is not a
+  // manifest. Prose after a header must add nothing.
+  await checkAsync('a Cargo.toml that is not TOML declares no check', async () => {
+    const manifest = '[package]\nthis is not toml\n';
+    const d = detector({ 'Cargo.toml': manifest });
+    const checks = detectChecks(d);
+    assert(
+      !checks.some((c) => c.name === 'cargo'),
+      `a non-TOML manifest invented a cargo check: ${JSON.stringify(checks)} from ${JSON.stringify(manifest)}`,
+    );
+    assert(
+      !checks.some((c) => c.command === 'cargo test'),
+      `a non-TOML manifest invented cargo test: ${JSON.stringify(checks)} from ${JSON.stringify(manifest)}`,
+    );
+    fs.rmSync(d, { recursive: true, force: true });
+    return 'prose after [package] adds nothing';
+  });
+
   await checkAsync('a cargo package declares one test check', async () => {
     const d = detector({ 'Cargo.toml': '[package]\nname = "x"\nversion = "0.1.0"\n' });
     const checks = detectChecks(d);
