@@ -1658,6 +1658,51 @@ check('every non-lead agent ends on a subagent deny', () => {
   return `${others.length} agents cannot delegate`;
 });
 
+check('every non-lead agent puts its edit exceptions after the broad allow', () => {
+  const others = agentIds.filter((id) => id !== 'lead');
+  for (const id of others) {
+    const edits = agentPermissions(id).filter((r) => r.action === 'edit');
+    assert(edits.length, `${id}.md has no edit rule`);
+    const last = edits[edits.length - 1];
+    assert(
+      !(last.resource === '*' && last.effect === 'allow'),
+      `${id}.md ends its edit rules on * allow, so every exception written above it is dead`,
+    );
+  }
+  return `${others.length} agents end on an exception`;
+});
+
+check('every edit deny names a path the engine can actually send', () => {
+  let denies = 0;
+  for (const id of agentIds) {
+    for (const rule of agentPermissions(id)) {
+      if (rule.action !== 'edit' || rule.effect !== 'deny') continue;
+      denies += 1;
+      assert(
+        rule.resource === '*' || rule.resource.startsWith('**/'),
+        `${id}.md denies edit to "${rule.resource}" with no **/ prefix; edit resources are absolute, so it never matches`,
+      );
+    }
+  }
+  assert(denies > 0, 'no edit deny rule was found; the sweep is not reading the rules');
+  return `${denies} denies anchored`;
+});
+
+check('every archetype may edit its own handbook', () => {
+  for (const id of archetypes) {
+    const entry = Object.entries(HANDBOOKS).find(([, ids]) => ids.includes(id));
+    assert(entry, `${id}.md is mapped to no handbook`);
+    const [handbook] = entry;
+    const edits = agentPermissions(id).filter((r) => r.action === 'edit');
+    const last = edits[edits.length - 1];
+    assert(
+      last && last.effect === 'allow' && last.resource.endsWith(handbook),
+      `${id}.md has no edit allow for its own handbook references/${handbook} as its last edit rule; a deny below it would win`,
+    );
+  }
+  return `${archetypes.length} archetypes own one handbook each`;
+});
+
 check('the permission sweep covers the roster the agent check asserts', () => {
   assert(agentFiles.length === 24, `the roster is ${agentFiles.length} agents, not 24; change the roster assertion and this sweep together`);
   const swept = agentFiles.filter((f) => {

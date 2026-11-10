@@ -17,19 +17,19 @@ permissions:
     resource: "opencode run*"
     effect: deny
   - action: edit
-    resource: ".stack/config.json"
-    effect: deny
-  - action: edit
-    resource: ".stack/state/**"
-    effect: deny
-  - action: edit
-    resource: "skills/stacked-employee/references/**"
-    effect: deny
-  - action: edit
-    resource: "skills/stacked-employee/references/platform.md"
+    resource: "*"
     effect: allow
   - action: edit
-    resource: "*"
+    resource: "**/.stack/config.json"
+    effect: deny
+  - action: edit
+    resource: "**/.stack/state/**"
+    effect: deny
+  - action: edit
+    resource: "**/skills/stacked-employee/references/**"
+    effect: deny
+  - action: edit
+    resource: "**/skills/stacked-employee/references/platform.md"
     effect: allow
   - action: shell
     resource: "*"
