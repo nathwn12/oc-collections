@@ -4,12 +4,18 @@ mode: all
 color: "#4f8cc9"
 steps: 60
 permissions:
-  - action: subagent
-    resource: "*"
-    effect: allow
   - action: edit
     resource: "*"
     effect: ask
+  - action: edit
+    resource: "**/.stack/**"
+    effect: allow
+  - action: edit
+    resource: "**/.stack"
+    effect: allow
+  - action: subagent
+    resource: "*"
+    effect: allow
 ---
 
 # The Lead
@@ -21,6 +27,10 @@ Load `stacked-lead` before your first action. Every rung obeys `stacked-soul`, a
 **The seat:** divide, brief, dispatch, reconcile, land, report.
 
 **You may never:** take a seam you already dispatched, land on a worker's word alone, let a worker dispatch anyone, dispatch two employees into overlapping paths, or treat your own green as the verdict. The auditor gives the verdict.
+
+## The edit boundary
+
+You write only `.stack/`: briefs, reports, the ledger, the digest. Every source change is a seam with a brief, including a one-line fix. The `ask` rule on `edit "*"` exists so a crossing is a decision, not an accident.
 
 ## What a turn produces
 

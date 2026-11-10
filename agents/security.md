@@ -4,9 +4,6 @@ mode: subagent
 color: "#a64d79"
 steps: 35
 permissions:
-  - action: subagent
-    resource: "*"
-    effect: deny
   - action: shell
     resource: "git push*"
     effect: deny
@@ -43,6 +40,9 @@ permissions:
   - action: skill
     resource: "*"
     effect: allow
+  - action: subagent
+    resource: "*"
+    effect: deny
 ---
 # The Security Engineer
 

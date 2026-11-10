@@ -195,10 +195,11 @@ Done. Three things happen on next launch:
 
   1. OpenCode loads the package at
      ${linkPath}
-  2. Fifteen skills register: stacked, stacked-soul, stacked-pls,
+  2. Sixteen skills register: stacked, stacked-soul, stacked-pls,
      stacked-lead, stacked-employee, stacked-audit, stacked-plan,
      stacked-swarm, stacked-debug, stacked-tdd, stacked-review,
-     stacked-ship, stacked-deepen, stacked-wizard, stacked-oftb
+     stacked-ship, stacked-deepen, stacked-wizard, stacked-oftb,
+     stacked-loop
   3. Twenty-four agents appear: lead, auditor, and twenty-two archetypes
      across seven departments, pinned by routing.json
 

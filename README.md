@@ -50,6 +50,8 @@ The TUI selection always wins for the lead. EMPLOYEE pins `deepseek-v4.1-flash` 
 
 The prohibitions are enforced, not suggested: the employee agent denies the `subagent` action outright, and the auditor agent denies `edit`.
 
+The lead writes only `.stack/`. Every source change is a seam, even a one-line fix: one file and one edit is still dispatched, two or more files are seamed and ranked, work with no file yet goes to the department that owns it, and only a question about the stack itself is answered directly. A lead reaching for an editor dispatches instead, because a lead that does the work grades its own writing.
+
 ---
 
 ## The loop
@@ -93,7 +95,7 @@ All local. Files and `git` only; no network call, no daemon, no MCP handshake.
 
 ## The skills
 
-Fifteen. They are ordinary `SKILL.md` files with front matter; the plugin registers them natively at startup. One is the hub, the rest are seats, discipline lenses, and the shelf you pull when the moment matches.
+Sixteen. They are ordinary `SKILL.md` files with front matter; the plugin registers them natively at startup. One is the hub, the rest are seats, discipline lenses, and the shelf you pull when the moment matches.
 
 | Skill id | Loads when |
 |---|---|
@@ -112,6 +114,9 @@ Fifteen. They are ordinary `SKILL.md` files with front matter; the plugin regist
 | `stacked-ship` | The seam is ready to commit, close, or release. |
 | `stacked-wizard` | oc-stacked is installed but not behaving: seats missing, models unpinned, `.stack/` unseeded, a ghost seat, a check green on a stale tree. Aligns a host that already has its own opinions, by adding only. |
 | `stacked-oftb` | You are blocked. Names which kind of rule is in the way - owner gate, doctrine default, or physics - then climbs six rungs (invert, confine, split, other door, witness, shrink) to reach the same goal without an authorization nobody gave. |
+| `stacked-loop` | "Don't stop until", "keep going", a vague ask that should still land, or any multi-turn job with a check. The goal lives in `.stack/goal.md`; every turn ends with a verdict from a context that did none of the work. |
+
+**Commands are the owner's.** `/stack` and friends are manual by design: the route table decides which seat handles an ask, and the loop never types a command for itself.
 
 ---
 

@@ -20,7 +20,11 @@ The release that became a company.
 
 **Two seats that had no home.** `stacked-wizard` is the doctor and the init: it reads a host that already has its own config, prints a table of `OK` / `FIXABLE` / `OWNER`, and aligns by adding - never by rewriting, never by overwriting a file whose hash differs from the package copy. `stacked-oftb` is the out-of-the-box decision maker: it sorts a block into owner gate, doctrine default or physics, then climbs six rungs before anyone writes an `ASK`. Its honesty floor is the point of it - craft lives in sequencing and observation, never in evidence, and when every route crosses a gate it says "the block is real" in three lines.
 
+**A loop of our own.** `stacked-loop` takes the one idea worth taking from upstream goal loops - completion is judged by a fresh model, not the one doing the work - and puts the goal in `.stack/goal.md` where a compaction cannot eat it: Out, Check, Constraints, Budget, Assumption. Each turn routes, acts small, and ends with a verdict and a reason; the reason becomes the next turn's directive. Two turns with no new evidence stops it, and the groundhog rule stops a seat that keeps returning the same verdict. The route table is in the always-on bootstrap now, so every request is dispatched by signal rather than by habit. Commands stay manual: the loop never types one.
+
 **Two rules that were wrong.** The stop list now has exactly five items, and a savepoint is a commit type rather than a prefix, so an unverified tree is labelled instead of hidden.
+
+**The lead holds the boundary by routing.** The seat's hard line is a rule with a test: the lead writes only `.stack/`, and every source change is a seam, even a one-line fix. One file and one edit is still dispatched, two or more files are seamed and ranked, and a task with no file yet goes to the department that owns it. A lead that reaches for an editor dispatches instead, because work it did itself is work nobody audited.
 
 93 checks, all green.
 

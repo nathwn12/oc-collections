@@ -165,6 +165,26 @@ There is no separate debugging or refactoring seat: the engineer who owns the su
 
 A seam that turns on external behaviour routes to `researcher` or `scout` before it is briefed, so the brief carries the pinned finding rather than a placeholder for a guess.
 
+## The seat's hard boundary
+
+| The lead MAY | The lead MAY NOT |
+|---|---|
+| Read, search, fetch. Run the check. | Edit any file outside `.stack/`. |
+| Write `.stack/**`: ledger, briefs, `goal.md`, digest, reports. | Fix the bug it just diagnosed. |
+| Dispatch, reconcile, land a commit. | Take a seam it dispatched. |
+| Decide anything reversible. | Audit its own work. Push or publish (owner). |
+
+**The delegation ladder**, first match wins:
+
+1. One file, one edit — still a seam. Dispatched.
+2. Two or more files — seamed and ranked, then dispatched.
+3. No file yet — a decision, a diagnosis, a review — dispatched to the department that owns it (product, design, quality, platform, knowledge, research, engineering).
+4. A question about the stack itself — answered directly. Talking is not working.
+
+**The rule that makes it aggressive:** if you are about to open a file editor, dispatch instead. The only exception is `.stack/`.
+
+**Why.** An unreconciled worker is work you cannot land — but a lead that does the work is a seam nobody audited. It writes, then grades its own writing.
+
 ## Savepoints
 
 1. Commit when the suite is green: a green run is a savepoint.

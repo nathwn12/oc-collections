@@ -105,7 +105,7 @@ check('plugin keeps a V1 server export', () => {
 // ---------------------------------------------------------------- skills
 const skills = readSkills();
 
-check('fifteen skills register', () => {
+check('sixteen skills register', () => {
   const expected = [
     'stacked',
     'stacked-soul',
@@ -122,8 +122,9 @@ check('fifteen skills register', () => {
     'stacked-deepen',
     'stacked-wizard',
     'stacked-oftb',
+    'stacked-loop',
   ];
-  assert(skills.length === 15, `expected 15, got ${skills.length}: ${skills.map((s) => s.id).join(', ')}`);
+  assert(skills.length === 16, `expected 16, got ${skills.length}: ${skills.map((s) => s.id).join(', ')}`);
   for (const id of expected) assert(skills.some((s) => s.id === id), `missing skill: ${id}`);
   return skills.map((s) => s.id).join(', ');
 });
@@ -356,7 +357,7 @@ check('bootstrap is cached, marked, and small', () => {
   assert(a.length < 9000, `bootstrap is ${a.length} chars; it is paid for on every step`);
   assert(a.includes('lead') || a.includes('LEAD'), 'bootstrap does not name the rungs');
   assert(!/\bCEO\b|\bceo\b/.test(a), 'bootstrap still names a CEO seat that no longer exists');
-  assert(a.length < 3200, `bootstrap is ${a.length} chars; it is paid for on every step`);
+  assert(a.length < 3600, `bootstrap is ${a.length} chars; it is paid for on every step (raised from 3200 when the route table became always-on)`);
   return `${a.length} chars`;
 });
 
@@ -1575,6 +1576,19 @@ const agentIds = agentFiles.map((f) => f.replace(/\.md$/, '')).sort();
 const archetypes = agentIds.filter((id) => id !== 'lead' && id !== 'auditor');
 const routing = JSON.parse(fs.readFileSync(path.join(repo, 'routing.json'), 'utf8'));
 
+/** An agent's `permissions` rules from its frontmatter, in file order. */
+function agentPermissions(id) {
+  const raw = fs.readFileSync(path.join(repo, 'agents', `${id}.md`), 'utf8');
+  const frontmatter = raw.slice(4, raw.indexOf('\n---', 3));
+  const rule = /^[ \t]*-[ \t]+action:[ \t]*(.+?)[ \t]*\r?\n[ \t]+resource:[ \t]*(.+?)[ \t]*\r?\n[ \t]+effect:[ \t]*(.+?)[ \t]*$/gm;
+  const unquote = (value) => value.replace(/^"(.*)"$/, '$1');
+  return [...frontmatter.matchAll(rule)].map((m) => ({
+    action: unquote(m[1]),
+    resource: unquote(m[2]),
+    effect: unquote(m[3]),
+  }));
+}
+
 const TERRA = 'openai/gpt-6.1-terra';
 const MUSE = 'opencode-go/muse-spark-1.3-contributor';
 const DEEPSEEK = 'opencode-go/deepseek-v4.1-flash';
@@ -1607,6 +1621,51 @@ check('twenty-four agents exist with valid V2 frontmatter', () => {
     assert(body.trim().length > 400, `${f} body is too thin to steer an agent`);
   }
   return `${agentFiles.length} agents`;
+});
+
+check('the lead edits only .stack, and the exception comes after the ask', () => {
+  const rules = agentPermissions('lead');
+  const ask = rules.findIndex((r) => r.action === 'edit' && r.resource === '*' && r.effect === 'ask');
+  const tree = rules.findIndex((r) => r.action === 'edit' && r.resource === '**/.stack/**' && r.effect === 'allow');
+  const root = rules.findIndex((r) => r.action === 'edit' && r.resource === '**/.stack' && r.effect === 'allow');
+  assert(ask >= 0, 'lead.md has no broad edit ask rule');
+  assert(tree >= 0, 'lead.md has no **/.stack/** edit allow rule');
+  assert(root >= 0, 'lead.md has no **/.stack edit allow rule');
+  assert(Math.min(tree, root) > ask, 'the .stack allow rules come before the broad ask; last match wins, so they never apply');
+  return 'ask, then **/.stack and **/.stack/**';
+});
+
+check('no agent uses the legacy singular permission key', () => {
+  const offenders = agentIds.filter((id) => {
+    const raw = fs.readFileSync(path.join(repo, 'agents', `${id}.md`), 'utf8');
+    return /^permission[ \t]*:/m.test(raw.slice(4, raw.indexOf('\n---', 3)));
+  });
+  assert(!offenders.length, `the legacy singular permission: key is in: ${offenders.join(', ')}`);
+  return `${agentIds.length} agents use permissions:`;
+});
+
+check('every non-lead agent ends on a subagent deny', () => {
+  const others = agentIds.filter((id) => id !== 'lead');
+  for (const id of others) {
+    const rules = agentPermissions(id);
+    assert(rules.length, `${id}.md has no permission rules`);
+    const last = rules[rules.length - 1];
+    assert(
+      last.action === 'subagent' && last.resource === '*' && last.effect === 'deny',
+      `${id}.md ends on ${last.action} ${last.resource} ${last.effect}; a later rule can widen the spawn deny`,
+    );
+  }
+  return `${others.length} agents cannot delegate`;
+});
+
+check('the permission sweep covers the roster the agent check asserts', () => {
+  assert(agentFiles.length === 24, `the roster is ${agentFiles.length} agents, not 24; change the roster assertion and this sweep together`);
+  const swept = agentFiles.filter((f) => {
+    const raw = fs.readFileSync(path.join(repo, 'agents', f), 'utf8');
+    return /^permissions:/m.test(raw.slice(4, raw.indexOf('\n---', 3)));
+  }).length;
+  assert(swept === agentFiles.length, `the permission sweep reads ${swept} of ${agentFiles.length} agents`);
+  return `${swept} of 24 agents carry permissions:`;
 });
 
 check('every archetype is a subagent that denies subagent and reads one handbook', () => {
