@@ -278,4 +278,12 @@ The four published packages - `@nathwn12/oc-bifrost`, `oc-flight-deck`, `oc-harn
 
 `nathwn12/oc-stacked` stays public and is now the **older** of two copies: development moved to `packages/oc-stacked/` on 2026-11-10, and that repository has not been retired. Anyone opening it by habit would fork the plugin. Archiving it is the owner's call and has not been made; until it is, the monorepo copy is the source of record and the standalone checkout on disk is a backup.
 
+## Naming decisions - closed, not pending
+
+These are settled so they stop resurfacing as open questions.
+
+- **`@nathwn12/janua` and `rea-shim` keep their npm names.** Both are published and installed. A rename would mean publishing a new name that CI cannot create (trusted publishing attests an existing package, so the first publish needs a manual OTP) and freezing the old name against updates - a cost paid by every `npx` user, for no gain on the surface anyone reads: the MCP keys and the sidebar rows are already `oc-janua` and `oc-rea`. The visible naming is done; the package names are identity, and identity changes are deprecations.
+- **`oc-phone-link` stays where it is.** It is installed as a plain directory under `~/.config/opencode/plugins/`, has no source repository and is not on npm. Moving it into the collection would create a second copy with no history and no tests to hold it, which is the divergence this repo exists to avoid. It works in place; it is recorded here.
+- **`oc-stacked` and `oc-graphify` are private and stay unreleased** until the owner explicitly opens the release line. `resolvePackage` refuses a private package by name, and `scripts/check-launchers.mjs` fails the root check if one is admitted to `ALLOWED`.
+
 Published packages' older versions still name their original repositories in immutable npm metadata; that is historical, not a fetch target.
