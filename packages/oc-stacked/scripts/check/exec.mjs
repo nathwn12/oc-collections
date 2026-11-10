@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { parse, needsShell } from '../../lib/exec.js';
+import { parse, needsShell, commandAsync } from '../../lib/exec.js';
 
 export async function register(ctx) {
   const { check, checkAsync, assert, repo, tmpRepo, runIn } = ctx;
@@ -90,6 +90,33 @@ export async function register(ctx) {
     assert(needsShell('node -e "process.exit(0)" %TEMP%'), '%VAR% was not sent to the shell');
     assert(!needsShell('node -e "process.exit(0)"'), 'a plain command was sent to the shell');
     return 'quoted .cmd, %VAR%, plain';
+  });
+
+  check('npm is a Windows shim, so it needs the shell', () => {
+    if (process.platform !== 'win32') return 'not win32';
+    // npm is a .cmd shim on Windows: spawning `npm` directly is ENOENT (-4058)
+    // and the command never runs. Only cmd.exe can start the shim.
+    assert(needsShell('npm run check'), 'npm was started directly, where its .cmd shim cannot run');
+    assert(!needsShell('node -e 1'), 'a plain program was sent to the shell');
+    return 'npm shelled, node direct';
+  });
+
+  await checkAsync('commandAsync runs npm, whose direct spawn cannot start', async () => {
+    if (process.platform !== 'win32') return 'not win32';
+    const result = await commandAsync('npm --version', { timeout: 30000 });
+    assert(result.ok, `npm --version did not run: code ${result.code} ${result.startError || result.display}`);
+    assert(/^\d+\.\d+\.\d+/.test(result.out.trim()), `npm --version printed no version: ${JSON.stringify(result.out.slice(0, 80))}`);
+    return result.out.trim().split(/\s+/)[0];
+  });
+
+  await checkAsync('a program that cannot start directly still gets the shell answer', async () => {
+    if (process.platform !== 'win32') return 'not win32';
+    // The name exists nowhere, so the direct spawn fails before the program runs.
+    // The caller must still read cmd.exe's verdict, not the spawn errno.
+    const result = await commandAsync('oc-stacked-no-such-program --version', { timeout: 30000 });
+    assert(result.code !== -4058, 'the spawn errno reached the caller: the shell fallback never fired');
+    assert(result.err.includes('oc-stacked-no-such-program'), `the shell never named the program: ${JSON.stringify(result.display.slice(0, 160))}`);
+    return `code ${result.code}`;
   });
 
   await checkAsync('a check that is a quoted .cmd path with a space still runs', async () => {
