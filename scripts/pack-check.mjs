@@ -10,7 +10,8 @@
  *
  * The sanctioned path is `npm run pack:check`, which runs check + build first;
  * a bare `npm pack` can still produce a dist-less tarball (this guard only
- * reports it, it cannot intercept a direct npm invocation).
+ * reports it, it cannot intercept a direct npm invocation). A release leg
+ * verifies one package: `node scripts/pack-check.mjs --package <name>`.
  *
  * Fail-closed: zero discovered workspaces, or a workspace missing from the
  * shared plan (scripts/workspace-plan.mjs), exits 1 instead of verifying
@@ -66,6 +67,14 @@ function isForbidden(entry) {
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex")
 
 function main() {
+  const raw = process.argv.slice(2)
+  const packageAt = raw.indexOf("--package")
+  const packageName = packageAt >= 0 ? raw[packageAt + 1] : null
+  if (packageAt >= 0 && (!packageName || packageName.startsWith("-"))) {
+    console.error("usage: node scripts/pack-check.mjs [--package <name>]")
+    process.exitCode = 2
+    return
+  }
   const dirs = workspaceDirs(ROOT)
   if (dirs.length === 0) {
     console.error("pack-check FAILED: no workspace packages found")
@@ -77,12 +86,23 @@ function main() {
     process.exitCode = 1
     return
   }
+  const selected = packageName
+    ? dirs.filter((dir) => {
+        const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"))
+        return pkg.name === packageName || path.basename(dir) === packageName
+      })
+    : dirs
+  if (packageName && selected.length === 0) {
+    console.error(`pack-check FAILED: no workspace package "${packageName}"`)
+    process.exitCode = 2
+    return
+  }
 
   const outRoot = fs.mkdtempSync(path.join(os.tmpdir(), "oc-collections-pack-check-"))
   const failures = []
 
   try {
-    for (const dir of dirs) {
+    for (const dir of selected) {
       const pkgPath = path.join(dir, "package.json")
       const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"))
       const destination = path.join(outRoot, path.basename(dir))
@@ -147,7 +167,7 @@ function main() {
     process.exitCode = 1
     return
   }
-  console.log("\npack-check: all workspace tarballs verified")
+  console.log(`\npack-check: ${selected.length} workspace tarball(s) verified`)
 }
 
 main()

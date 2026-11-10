@@ -17,6 +17,7 @@
     "test": "node scripts/workspace-run.mjs test",
     "pack:check": "npm run check && npm run build && node scripts/pack-check.mjs",
     "cleanroom": "node scripts/cleanroom.mjs",
-    "cleanroom:check": "node scripts/cleanroom.mjs --check"
+    "cleanroom:check": "node scripts/cleanroom.mjs --check",
+    "npm:passkey": "node scripts/npm-passkey.mjs"
   }
 }

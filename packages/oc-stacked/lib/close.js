@@ -12,7 +12,6 @@ import { branch, git, head, isRepo, snapshot } from './git.js';
 import {
   PATHS,
   config,
-  junkPaths,
   ledgerEntries,
   log,
   renderDigest,
@@ -31,6 +30,52 @@ export const CLOSE_PATH = '.stack/state/close.json';
  * that was already on disk. A refusal never writes it and never deletes it.
  */
 export const ARMED_PATH = '.stack/state/close-armed.json';
+
+/** A directory is a project when it is a repository or carries a build manifest. */
+const PROJECT_MARKERS = ['package.json', 'Cargo.toml', 'pyproject.toml', 'go.mod', 'composer.json'];
+
+/**
+ * The lightest structural question the close gate asks: is this a clear
+ * project or repository with a HEAD and a proving check? A bare directory, a
+ * repository before its first commit, and a repository with no configured
+ * check all answer false; none of them may auto-latch a close.
+ */
+export function closeable(dir) {
+  const repo = isRepo(dir);
+  const project = repo || PROJECT_MARKERS.some((name) => fs.existsSync(path.join(dir, name)));
+  const headAt = repo ? head(dir) : null;
+  const { corrupt, all } = configuredChecks(dir);
+  const checks = !corrupt && all.length > 0;
+  const bare = !project && !repo;
+  const why = bare
+    ? 'not a project or repository'
+    : !repo
+      ? 'not a git repository'
+      : !headAt
+        ? 'the repository has no HEAD'
+        : !checks
+          ? 'no proving check is configured'
+          : null;
+  return { repo, project, head: headAt, checks, bare, ok: why === null, why };
+}
+
+/** The one-shot marker a compact-only close leaves for the idle gate. */
+export const COMPACT_PATH = '.stack/state/compact.json';
+
+export function writeCompactMarker(dir) {
+  withLock(dir, () => writeJson(dir, COMPACT_PATH, { at: stamps().iso }));
+}
+
+export function takeCompactMarker(dir) {
+  const file = path.join(dir, ...COMPACT_PATH.split('/'));
+  if (!fs.existsSync(file)) return false;
+  try {
+    fs.rmSync(file, { force: true });
+  } catch {
+    /* the next idle retries */
+  }
+  return true;
+}
 
 /** A lesson shorter than this is a shrug, not a memory. */
 const MIN_LESSON = 8;
@@ -376,15 +421,21 @@ const verdictOf = (text, ids = []) => {
  * itself pays for the atlas exactly once.
  */
 export async function preflight(dir, { lesson = '', atlas: runAtlas = true } = {}) {
+  const can = closeable(dir);
+  const repo = can.repo;
+  const headAt = can.head;
   const blockers = [];
   const notes = [];
   const rows = [];
-  const repo = isRepo(dir);
 
-  // 1. A receipt is bound to a HEAD. Without a repository there is nothing to bind.
+  // 1. A receipt is bound to a HEAD. Without a repository, or before its first
+  //    commit, there is nothing to bind.
   if (!repo) {
     blockers.push('not a git repository: a close needs a HEAD to bind the receipt.');
     rows.push(['repo', 'not a git repository', 'run the close from the repository that holds the work']);
+  } else if (!headAt) {
+    blockers.push('the repository has no HEAD: a close needs a commit to bind the receipt.');
+    rows.push(['repo', 'no HEAD', 'make the first commit, then close again']);
   }
 
   // 2. An unanswered ASK is the owner's decision, and the close cannot make it.
@@ -482,15 +533,38 @@ export async function preflight(dir, { lesson = '', atlas: runAtlas = true } = {
   notes.push(`lesson — ${str(lesson).length >= MIN_LESSON ? 'recorded' : `needs at least ${MIN_LESSON} characters`}`);
   const ahead = repo ? unpushed(dir) : { count: null, text: 'not a git repository, so a push cannot be counted' };
   notes.push(ahead.text);
-  const junk = junkPaths(dir);
-  if (junk.length) notes.push(`${junk.length} junk path(s) found and never deleted: ${junk.join(', ')}`);
+  const junk = [];
   if (cfg && cfg.atlas === undefined) notes.push(`atlas — not configured; no memory check ran`);
 
+  // The lightest true ending, chosen after every fact is read: a session with
+  // nothing to land and only a structural blocker (no HEAD, no check) compacts
+  // instead of demanding a seal. A bare directory is declined, never refused.
+  const structural = (reason) =>
+    /^not a git repository:/.test(reason) ||
+    /^the repository has no HEAD:/.test(reason) ||
+    /^no proving check is configured/.test(reason) ||
+    /is not valid JSON, so no check can be trusted/.test(reason) ||
+    /execution is disabled by OC_STACKED_NO_EXEC=1/.test(reason);
+  const work = blockers.filter((reason) => !structural(reason));
+  const compactOnly = work.length === 0 && (blockers.length > 0 || can.bare);
+  const branchAt = repo ? branch(dir) : null;
+
+  if (can.bare) {
+    return {
+      decline: true,
+      compactOnly: work.length === 0,
+      blockers,
+      notes,
+      text: 'not a project or repository',
+      atlas,
+      dirty,
+      junk,
+      head: headAt,
+      branch: branchAt,
+    };
+  }
+
   const verdict = blockers.length ? 'BLOCKED' : 'GO';
-  // The head this preflight read. A caller binding a receipt to it must know
-  // which tree the answers above describe, so it is returned, never re-read.
-  const headAt = head(dir);
-  const branchAt = branch(dir);
   const text = [
     `## ${verdict} — preflight${blockers.length ? ` on ${blockers.length} blocker${blockers.length === 1 ? '' : 's'}` : ''} at ${shortSha(headAt)} (${branchAt || 'detached'})`,
     '',
@@ -507,7 +581,7 @@ export async function preflight(dir, { lesson = '', atlas: runAtlas = true } = {
       : 'Nothing stands in the way. The ceremony is `close` op=run with one lesson.',
   ].join('\n');
 
-  return { blockers, notes, text, atlas, dirty, junk, head: headAt, branch: branchAt };
+  return { blockers, notes, text, atlas, dirty, junk, head: headAt, branch: branchAt, compactOnly };
 }
 
 /**
@@ -578,17 +652,33 @@ function refuse(dir, reasons, { done = [], before = false, startedAt } = {}) {
 
 /**
  * Seal the session, in one order that cannot be skipped: the checks, the sweep,
- * the junk report, the lesson, the digest, the atlas. Any red replaces a previous
+ * the lesson, the digest, the atlas. Any red replaces a previous
  * receipt with a tombstone and logs RED, so an old GO can never survive a failed
  * close, and a GO also leaves the one-shot arming record for the title gate.
  * Both writes carry this run's `startedAt` and happen under the state lock, so
  * two overlapping ceremonies order themselves instead of overwriting each other.
+ *
+ * Adaptive: a bare directory declines with no refusal record; a session with
+ * nothing to land and only a structural blocker compacts instead of sealing.
  */
 export async function runClose(dir, { lesson } = {}) {
   // Before the first await: the instant this ceremony began, which is what the
   // receipt ordering compares against, never a clock read after the work.
   const startedAt = stamps().iso;
   const said = str(lesson);
+  const can = closeable(dir);
+  if (can.bare) {
+    const barePre = await preflight(dir, { lesson: said, atlas: false });
+    if (barePre.compactOnly) {
+      writeCompactMarker(dir);
+      return {
+        text: 'not a project or repository; nothing to land - compaction is the only remaining act',
+        compactOnly: true,
+        preflight: barePre,
+      };
+    }
+    return { text: 'not a project or repository', decline: true, preflight: barePre };
+  }
   if (!said) {
     return refuse(dir, ['a close needs `lesson`, one sentence the next session must not lose.'], { before: true, startedAt });
   }
@@ -597,8 +687,17 @@ export async function runClose(dir, { lesson } = {}) {
     return refuse(dir, [`the lesson is ${size} and a close needs at least ${MIN_LESSON}.`], { before: true, startedAt });
   }
 
+  // The lightest true ending first: a session with nothing to land and only a
+  // structural blocker compacts; it never writes a refusal record.
+  const quick = await preflight(dir, { lesson: said, atlas: false });
+  if (quick.compactOnly) {
+    writeCompactMarker(dir);
+    return { text: 'nothing to land - compaction is the only remaining act', compactOnly: true, preflight: quick };
+  }
+
   // The owner's order: open tickets first, and no ceremony over one of them.
   const pre = await preflight(dir, { lesson: said, atlas: true });
+  if (pre.decline) return { text: pre.text, decline: true, preflight: pre };
   if (pre.blockers.length) {
     return { ...refuse(dir, pre.blockers, { startedAt }), preflight: pre };
   }
@@ -618,14 +717,15 @@ export async function runClose(dir, { lesson } = {}) {
     done.push(`checks green at ${shortSha(record.head)}: ${record.results.map((r) => r.name).join(', ')}`);
   }
 
-  // 3. The sweep, which only ever removes what this plugin wrote under .stack/.
+  // 3. The sweep only ever removes what this plugin wrote under .stack/. A
+  //    clean sweep says nothing: there is no junk report to read.
   const swept = sweepStack(dir, { apply: true });
   const sweep = { removed: swept.removed, kept: swept.kept };
-  done.push(`sweep removed ${swept.removed.length} item(s), kept ${swept.kept.length}`);
+  if (swept.removed.length) done.push(`sweep removed ${swept.removed.length} item(s)`);
 
-  // 4. Junk is reported, never touched.
-  const junk = junkPaths(dir);
-  done.push(junk.length ? `junk found and left alone: ${junk.join(', ')}` : 'junk: none');
+  // 4. Junk is only what the stack itself would remove. Unrelated paths are
+  //    never scanned, named, or reported.
+  const junk = [];
 
   // 5. The lesson, which is the one fact a compaction must not lose.
   log(dir, 'LESSON', said);
@@ -635,8 +735,7 @@ export async function runClose(dir, { lesson } = {}) {
   renderDigest(dir);
   done.push(`digest rewritten at ${PATHS.digest}`);
 
-  // 7. The atlas, already run by the preflight above so the memory check is
-  // paid for once per close. Its failure is a blocker the preflight named.
+  // Preserve the produced order: the report names everything the run did.
   done.push(`atlas: ${pre.atlas.status}`);
 
   // 8. The tree the checks proved must still be the tree on disk: a check that

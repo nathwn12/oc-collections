@@ -237,7 +237,12 @@ describe("flight deck ticker", () => {
     const busy = fakeHost();
     const busyTicker = startTicker(busy.host, 5, () => true);
     expect(busyTicker).toBeDefined();
-    await sleep(60);
+    // The tick is 5 ms, so five writes arrive in about 25 ms on an idle host.
+    // A fixed 60 ms sleep raced the scheduler under load (four writes on the
+    // release runner). Wait for the fifth write with a deadline that still
+    // fails a ticker which has stopped ticking.
+    const deadline = Date.now() + 2000;
+    while (busy.seen.writes < 5 && Date.now() < deadline) await sleep(10);
     expect(busy.seen.writes).toBeGreaterThanOrEqual(5);
 
     // Disposal still stops the timer, not merely the reporting.

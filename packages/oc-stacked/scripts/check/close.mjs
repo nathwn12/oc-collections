@@ -124,11 +124,12 @@ export async function register(ctx) {
     return `SEALED ${written.sealed}`;
   });
 
-  await checkAsync('a non-git directory cannot close: no HEAD, no receipt, no [done]', async () => {
+  await checkAsync('a bare directory declines: no latch, no refusal, no [done]', async () => {
     const d = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-stacked-nongit-'));
     const text = await preflightOf(d);
-    assert(BLOCKED.test(text), `a non-git directory was not a blocker:\n${text}`);
-    assert(/not a git repository/.test(text), `the missing HEAD was not named:\n${text}`);
+    assert(/^not a project or repository/.test(text), `a bare directory did not decline:\n${text}`);
+    assert(!BLOCKED.test(text), `a bare directory latched BLOCKED:\n${text}`);
+    assert(!NO_GO.test(text), `a bare directory refused:\n${text}`);
 
     // A receipt can be written by anything. Without a repository there is no
     // HEAD to bind it to, so it can never be the empty-reasons GO [done] needs.
@@ -136,15 +137,28 @@ export async function register(ctx) {
     const reasons = closeReasons(d);
     assert(reasons.length, 'a receipt in a non-git directory read as a GO');
     assert(/not a git repository/.test(reasons.join('; ')), `the missing HEAD was not the reason: ${reasons.join('; ')}`);
+    fs.rmSync(path.join(d, ...CLOSE_PATH.split('/')), { force: true });
 
     const sealed = await seal(d, 'a close without a HEAD has nothing to bind');
-    assert(NO_GO.test(sealed), `a non-git directory sealed:\n${sealed}`);
-    assert(/not a git repository/.test(sealed), `the refusal did not name the missing HEAD:\n${sealed}`);
-    const refused = refusalOnDisk(d);
-    assert(/not a git repository/.test(refused.reasons.join('; ')), `the refusal record does not name the missing HEAD: ${refused.reasons.join('; ')}`);
-    assert(/the last close was refused/.test(closeReasons(d)[0]), 'the refusal record still read as a GO');
+    assert(/^not a project or repository/.test(sealed), `a bare directory did not decline:\n${sealed}`);
+    assert(!NO_GO.test(sealed), `a bare directory wrote NO-GO:\n${sealed}`);
+    assert(!fs.existsSync(closeFile(d)), `a bare directory left a refusal record at ${CLOSE_PATH}`);
     shut(d);
-    return 'not a git repository';
+    return 'not a project or repository';
+  });
+
+  await checkAsync('a repo with only a structural blocker compacts instead of sealing', async () => {
+    const d = tmpRepo();
+    fs.mkdirSync(path.join(d, '.stack'), { recursive: true });
+    fs.writeFileSync(path.join(d, '.stack', 'config.json'), JSON.stringify({ checks: [] }, null, 2));
+    const text = await preflightOf(d);
+    assert(/no proving check is configured/.test(text), `the structural blocker was not named:\n${text}`);
+    const sealed = await seal(d, 'nothing to land, only compaction remains');
+    assert(/compaction is the only remaining act/.test(sealed), `did not compact:\n${sealed}`);
+    assert(!NO_GO.test(sealed), `a compact-only close refused:\n${sealed}`);
+    assert(!fs.existsSync(closeFile(d)), `a compact-only close left a refusal record at ${CLOSE_PATH}`);
+    shut(d);
+    return 'compact-only, no refusal';
   });
 
   // ---------------------------------------------------------------- NO-GO

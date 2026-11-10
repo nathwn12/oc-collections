@@ -13,7 +13,7 @@
  * message still queued on stderr when CI pipes it, and the child's exact
  * status is what the caller must see.
  *
- * Usage: node scripts/workspace-run.mjs [--serial] [--no-cache] <check|build|test>
+ * Usage: node scripts/workspace-run.mjs [--serial] [--no-cache] [--package <name>] <check|build|test>
  * Workspaces run concurrently (min(cpus, 8)); --serial forces plan order.
  * The check purpose caches green runs (scripts/check-cache.mjs): a workspace
  * whose key is unchanged prints "unchanged since last green (cached)" and is
@@ -24,6 +24,7 @@
  * plus an unchanged environment, so no in-script detection can see it.
  */
 import { spawn, spawnSync } from "node:child_process"
+import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 
@@ -212,17 +213,25 @@ async function runParallel(purpose, plan, dirs, useCache) {
 
 function main() {
   const raw = process.argv.slice(2)
-  const serial = raw.includes("--serial")
+  const packageAt = raw.indexOf("--package")
+  const packageName = packageAt >= 0 ? raw[packageAt + 1] : null
+  if (packageAt >= 0 && (!packageName || packageName.startsWith("-"))) {
+    console.error("usage: node scripts/workspace-run.mjs [--serial] [--no-cache] [--package <name>] <check|build|test>")
+    process.exitCode = 2
+    return
+  }
+  const rest = packageAt >= 0 ? raw.filter((_, index) => index !== packageAt && index !== packageAt + 1) : raw
+  const serial = rest.includes("--serial")
   // `--no-cache` works on direct invocation only; through npm use OC_CHECK_CACHE=0.
   const cacheOff =
-    raw.includes("--no-cache") ||
+    rest.includes("--no-cache") ||
     process.env.OC_CHECK_CACHE === "0"
-  const unknown = raw.filter((arg) => arg !== "--serial" && arg !== "--no-cache" && arg.startsWith("-"))
-  const purpose = raw.find((arg) => !arg.startsWith("-"))
+  const unknown = rest.filter((arg) => arg !== "--serial" && arg !== "--no-cache" && arg.startsWith("-"))
+  const purpose = rest.find((arg) => !arg.startsWith("-"))
 
   const plan = PLAN[purpose]
   if (unknown.length > 0 || !plan) {
-    console.error(`usage: node scripts/workspace-run.mjs [--serial] [--no-cache] <check|build|test> (got "${raw.join(" ") || purpose || ""}")`)
+    console.error(`usage: node scripts/workspace-run.mjs [--serial] [--no-cache] [--package <name>] <check|build|test> (got "${raw.join(" ") || purpose || ""}")`)
     process.exitCode = 2
     return
   }
@@ -232,10 +241,21 @@ function main() {
     process.exitCode = 1
     return
   }
+  const selected = packageName
+    ? dirs.filter((dir) => {
+        const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"))
+        return pkg.name === packageName || path.basename(dir) === packageName
+      })
+    : dirs
+  if (packageName && selected.length === 0) {
+    console.error(`[${purpose}] no workspace package "${packageName}"`)
+    process.exitCode = 2
+    return
+  }
 
   const useCache = purpose === "check" && !cacheOff
-  if (serial) runSerial(purpose, plan, dirs, useCache)
-  else return runParallel(purpose, plan, dirs, useCache)
+  if (serial) runSerial(purpose, plan, selected, useCache)
+  else return runParallel(purpose, plan, selected, useCache)
 }
 
 main()

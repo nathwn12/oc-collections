@@ -7,10 +7,14 @@ A three-rung agent stack for OpenCode: one lead, a fresh employee per seam, and 
 To work on it, from this package's directory (`packages/oc-stacked` in the monorepo):
 
 ```sh
-node scripts/check.mjs
+npm run check          # the full suite, four subjects at a time
+npm run check:serial   # one process, the debugging form
+node scripts/check.mjs --changed   # only the subjects a diff touches
 ```
 
-`node scripts/check.mjs` runs the suite. It must be green before a PR. It takes minutes; the close-ceremony and title-gate checks dominate.
+`npm run check` runs the suite in parallel; it must be green before a PR. The
+full suite is for the seal and CI; `--changed` and `--only` are the surgical
+forms, and `check:serial` is the one-process reproduction.
 
 ## Layout
 

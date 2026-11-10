@@ -20,7 +20,7 @@ import { bootstrap, MARKER } from './lib/bootstrap.js';
 import { classifyAsk, loadCards, route } from './lib/router.js';
 import { toolDefinitions } from './lib/tools.js';
 import { seedStack, tryReadJson, withLock, writeJson, log } from './lib/state.js';
-import { ARMED_PATH, closeReasons, invalidateClose, preflight, readClose } from './lib/close.js';
+import { ARMED_PATH, closeReasons, closeable, invalidateClose, preflight, readClose, takeCompactMarker } from './lib/close.js';
 import { head } from './lib/git.js';
 import { intentOf, statusOf, stripStatus, withStatus } from './lib/title.js';
 
@@ -668,6 +668,25 @@ async function idleOnce(ctx, dir, sessionID) {
   const record = await liveSession(ctx, sessionID, dir);
   if (!record) return;
 
+  // A compact-only close leaves a one-shot marker: compact and end. It never
+  // demands a HEAD, a check, or a seal, and it leaves no intent behind.
+  try {
+    if (takeCompactMarker(dir)) {
+      clearIntent(dir, sessionID);
+      try {
+        if (typeof ctx?.session?.compact === 'function') {
+          await withinDeadline(() => ctx.session.compact({ sessionID }), COMPACT_TIMEOUT);
+        }
+      } catch (err) {
+        note('compact-only close compaction failed:', err?.message || err);
+      }
+      await applyTitle(ctx, dir, sessionID, targetStatus(dir, sessionID, 'rest'), record);
+      return;
+    }
+  } catch (err) {
+    note('compact marker could not be consumed:', err?.message || err);
+  }
+
   // `node bin/stack.js close run` seals from the command line, where no
   // tool.execute.after ever fires, so the record that run left is consumed here
   // instead. It must name the receipt in hand, at this HEAD, and be fresh, or it
@@ -724,7 +743,8 @@ async function idleOnce(ctx, dir, sessionID) {
   }
 
   // 2. The close is open and nothing is sealed: re-state the open tickets, or
-  //    the one command that seals, until the cap parks the session.
+  //    the one command that seals, until the cap parks the session. A bare
+  //    directory or a compact-only ending never blocks idle: clear and rest.
   if (open) {
     if (intent.attempts >= CLOSE_CAP) {
       const tickets = await closeTickets(dir);
@@ -732,6 +752,11 @@ async function idleOnce(ctx, dir, sessionID) {
       return;
     }
     const pre = await preflight(dir, { atlas: false });
+    if (pre.decline || pre.compactOnly) {
+      clearIntent(dir, sessionID);
+      await applyTitle(ctx, dir, sessionID, targetStatus(dir, sessionID, 'rest'), record);
+      return;
+    }
     writeIntent(dir, sessionID, { ...intent, attempts: intent.attempts + 1, at: new Date().toISOString(), head: head(dir) });
     const text = pre.blockers.length
       ? `Close is blocked on ${pre.blockers.length} ticket(s): ${ticketsLine(pre.blockers)}. Settle each - land, kill, answer, or record an ASK and park - then run stack_close op=preflight again. Do not reply done.`
@@ -814,6 +839,20 @@ async function onPrompt(ctx, dir, event) {
   const intent = said.includes('CLOSE INTENT.') ? 'close' : said.includes('PARK INTENT.') ? 'park' : intentOf(said);
 
   if (intent === 'close') {
+    // A bare directory is neither a project nor a repository: it must never
+    // auto-latch a close, and it leaves no refusal record.
+    let can = null;
+    try {
+      can = closeable(dir);
+    } catch {
+      can = null;
+    }
+    if (can && !can.ok) {
+      clearIntent(dir, sessionID);
+      setOverride(dir, sessionID, null);
+      await applyTitle(ctx, dir, sessionID, targetStatus(dir, sessionID, 'rest'), record);
+      return;
+    }
     if (!said.includes('CLOSE INTENT.')) prompt.text = `${said}\n\n${CLOSE_INTENT}`;
     setOverride(dir, sessionID, 'closing');
     writeIntent(dir, sessionID, { attempts: 0, at: new Date().toISOString(), head: head(dir) });

@@ -265,20 +265,21 @@ jobs:
 
       - name: build
         # The gate the tag may not precede: build, then test, then pack-check,
-        # then cleanroom. Split so each cost is visible; fail-fast order kept.
+        # then cleanroom. Build, test and pack only the package this leg
+        # releases; CI covers the monorepo. Cleanroom is already scoped.
         if: ${{ env.REFUSED != '1' && env.SKIP != '1' }}
         shell: pwsh
-        run: npm run build
+        run: node scripts/workspace-run.mjs build --package "${{ matrix.name }}"
 
       - name: test
         if: ${{ env.REFUSED != '1' && env.SKIP != '1' }}
         shell: pwsh
-        run: node scripts/workspace-run.mjs test
+        run: node scripts/workspace-run.mjs test --package "${{ matrix.name }}"
 
       - name: pack-check
         if: ${{ env.REFUSED != '1' && env.SKIP != '1' }}
         shell: pwsh
-        run: node scripts/pack-check.mjs
+        run: node scripts/pack-check.mjs --package "${{ matrix.name }}"
 
       - name: cleanroom
         # The cleanroom half is what proves a packed tarball installs into an
