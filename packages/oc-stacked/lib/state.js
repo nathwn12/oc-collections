@@ -527,140 +527,89 @@ function cargoScan(text) {
   return { bare: bare.join(''), live: live.join('') };
 }
 
-/** Square brackets and curly braces must balance outside strings and comments. */
-function balanced(text) {
-  let square = 0;
-  let curly = 0;
-  for (const ch of text) {
-    if (ch === '[') square += 1;
-    else if (ch === ']') square -= 1;
-    else if (ch === '{') curly += 1;
-    else if (ch === '}') curly -= 1;
-    if (square < 0 || curly < 0) return false;
+/**
+ * Cargo's table headers: `[name]` and the array-of-tables `[[name]]`, read from
+ * the comment- and string-blanked scan so a header in a comment or inside a
+ * multi-line string is never one. `[workspace.package]` is not `[workspace]`.
+ */
+const CARGO_HEADER = /^[ \t]*\[\[?([^[\]\r\n]+)\]\]?[ \t]*\r?$/gm;
+
+/** True when `p` is a directory: a file named `src` is not a source tree. */
+function dirAt(p) {
+  try {
+    return fs.statSync(p).isDirectory();
+  } catch {
+    return false;
   }
-  return square === 0 && curly === 0;
+}
+
+/** True when a `[lib]`/`[[bin]]` body declares a `path = "..."` that exists. */
+function declaredPathExists(root, body) {
+  const m = /^[ \t]*path[ \t]*=[ \t]*(["'])([^"'\r\n]+)\1[ \t]*\r?$/m.exec(body);
+  return Boolean(m && fs.existsSync(path.resolve(root, m[2])));
 }
 
 /**
- * A TOML key: dot-separated segments, each a bare `[A-Za-z0-9_-]+` or a quoted
- * string. This is TOML's own bare-key grammar plus quoted segments, so a mixed
- * dotted key like `target."cfg(unix)".dependencies.cc` is a key and not a
- * syntax error. A value must follow the `=`; `key =` alone is not TOML.
+ * The directories one `members` entry names. A plain path names itself; a
+ * trailing `*` - the `crates/*` most workspaces are written with - names every
+ * directory beside it, because a glob over no directory names no code. Any
+ * other `*` is not a pattern this reader guesses at, so it resolves as written
+ * and fails.
  */
-const TOML_SEGMENT = '(?:[A-Za-z0-9_-]+|"[^"\\r\\n]*"|\'[^\'\\r\\n]*\')';
-const TOML_KEY = new RegExp(`^[ \\t]*${TOML_SEGMENT}(?:\\.${TOML_SEGMENT})*[ \\t]*=`);
-/** A table header and nothing else: `[a.b]` or an array-of-tables `[[a]]`. */
-const TOML_HEADER = /^(?:\[[^[\]\r\n]+\]|\[\[[^[\]\r\n]+\]\])$/;
-
-/**
- * True when every line of `text` is TOML this reader can account for: blank, a
- * comment, a table header, or one `key = value` (see TOML_KEY). A line that
- * begins inside a multi-line string, or inside an array or inline table still
- * open from an earlier line, is exempt: its content is a value fragment, not a
- * statement of its own. Any other line - `this is not toml`, a stray word, a
- * bare key with no value - means the manifest is not TOML, and an unparseable
- * manifest adds no check. Balanced brackets are not enough on their own:
- * `[package]` followed by prose balances, and it is not a manifest.
- */
-function tomlValid(text) {
-  let depth = 0; // `[`/`{` a value opened and has not closed
-  let quote = null; // the multi-line string delimiter still open
-  for (const rawLine of text.split('\n')) {
-    const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
-    // Decided at the line's start: mid-line structure is the line's own business.
-    const exempt = quote !== null || depth > 0;
-    let code = ''; // the line with comments dropped and strings kept
-    let i = 0;
-    while (i < line.length) {
-      if (quote !== null) {
-        const close = line.indexOf(quote, i);
-        code += close < 0 ? line.slice(i) : line.slice(i, close + 3);
-        if (close < 0) {
-          i = line.length;
-          break;
-        }
-        i = close + 3;
-        quote = null;
-        continue;
-      }
-      const ch = line[i];
-      if (ch === '#') break; // a `#` inside a string never reaches here
-      if (ch === '"' || ch === "'") {
-        const triple = line.startsWith(ch.repeat(3), i);
-        if (triple) {
-          const close = line.indexOf(ch.repeat(3), i + 3);
-          code += close < 0 ? line.slice(i) : line.slice(i, close + 3);
-          if (close < 0) {
-            quote = ch.repeat(3);
-            i = line.length;
-            break;
-          }
-          i = close + 3;
-          continue;
-        }
-        let j = i + 1;
-        for (; j < line.length; j += 1) {
-          if (ch === '"' && line[j] === '\\') {
-            j += 1;
-            continue;
-          }
-          if (line[j] === ch) break;
-        }
-        // A one-line string that never closes is not TOML; cargoScan refuses it
-        // first, and this keeps the two readers telling the same story.
-        if (j >= line.length) return false;
-        code += line.slice(i, j + 1);
-        i = j + 1;
-        continue;
-      }
-      if (ch === '[' || ch === '{') depth += 1;
-      else if (ch === ']' || ch === '}') {
-        if (depth === 0) return false; // balanced() reads this too; refuse here
-        depth -= 1;
-      }
-      code += ch;
-      i += 1;
-    }
-    if (exempt) continue;
-    const trimmed = code.trim();
-    if (!trimmed) continue; // blank, or a comment-only line
-    if (TOML_HEADER.test(trimmed)) continue;
-    const key = TOML_KEY.exec(code);
-    if (key && /\S/.test(code.slice(key[0].length))) continue; // key = value
-    return false; // anything else: this is not a manifest
+function memberDirs(root, member) {
+  const parts = member.split(/[\\/]/).filter((s) => s.length && s !== '.');
+  const star = parts.indexOf('*');
+  if (star < 0 || star !== parts.length - 1) return [path.resolve(root, member)];
+  const base = path.resolve(root, ...parts.slice(0, star));
+  try {
+    return fs
+      .readdirSync(base, { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => path.join(base, e.name));
+  } catch {
+    return [];
   }
-  return quote === null && depth === 0;
 }
 
 /**
- * True when Cargo.toml declares something `cargo test` can build: a `[package]`
- * table, or a `[workspace]` naming at least one member. An empty virtual
- * workspace has no tests to run, and a manifest that is unreadable, unparseable
- * (an unterminated string, an unbalanced bracket, or a line that is not TOML)
- * or not understood is not proof, so all of them add no check.
- * `[workspace.package]` and `[workspace.dependencies]` are neither of those
- * tables.
+ * True when Cargo.toml declares code `cargo test` can run, judged by what is on
+ * disk rather than by manifest syntax. Shape was the wrong question: every
+ * grammar reader written here accepted one more invalid line, the last of them
+ * `name = invalid`. A filesystem fact cannot be spelled wrong.
+ *
+ *   - `[package]` counts only when the package has somewhere to put code: a
+ *     `src/` directory beside the manifest, or a `[lib]`/`[[bin]]` `path` that
+ *     exists.
+ *   - `[workspace]` counts only when a declared member resolves to a directory
+ *     holding its own `Cargo.toml`. `members = []` and a member that is not
+ *     there both name no code.
+ *
+ * Garbage fails both tests because it has no `src/` and its members do not
+ * exist, so a broken manifest invents no check without this reader having to
+ * recognise it as broken. A file the scan cannot delimit (an unterminated
+ * string) proves nothing either.
  */
-function cargoDeclaresTests(text) {
+function cargoHasCode(root, text) {
   const scan = cargoScan(text);
-  // Unparseable is treated exactly like unreadable: a bracket that never closes
-  // means every table below it is guesswork, and a header inside a comment or a
-  // multi-line string never reaches this scan at all.
-  if (!scan || !balanced(scan.bare)) return false;
-  // Balanced is not the same as parseable: `[package]` followed by prose has
-  // balanced brackets and declares nothing. Inventing a failing check from a
-  // file that is not TOML is worse than detecting no check at all.
-  if (!tomlValid(text)) return false;
-  const header = /^[ \t]*\[([^\]\r\n]+)\][ \t]*\r?$/gm;
-  const headers = [...scan.bare.matchAll(header)];
-  if (headers.some((h) => h[1].trim() === 'package')) return true;
+  if (!scan) return false;
+  const headers = [...scan.bare.matchAll(CARGO_HEADER)];
+  const name = (h) => h[1].trim();
+  const body = (i) =>
+    scan.live.slice(headers[i].index + headers[i][0].length, i + 1 < headers.length ? headers[i + 1].index : scan.live.length);
+
+  if (headers.some((h) => name(h) === 'package')) {
+    if (dirAt(path.join(root, 'src'))) return true;
+    if (headers.some((h, i) => (name(h) === 'lib' || name(h) === 'bin') && declaredPathExists(root, body(i)))) return true;
+  }
+
   for (let i = 0; i < headers.length; i += 1) {
-    if (headers[i][1].trim() !== 'workspace') continue;
-    const from = headers[i].index + headers[i][0].length;
-    const to = i + 1 < headers.length ? headers[i + 1].index : text.length;
-    const members = /(?:^|\r?\n)[ \t]*members[ \t]*=[ \t]*\[([\s\S]*?)\]/.exec(scan.live.slice(from, to));
-    const strings = members ? members[1].match(/"[^"\r\n]*"|'[^'\r\n]*'/g) || [] : [];
-    if (strings.some((s) => s.slice(1, -1).trim().length > 0)) return true;
+    if (name(headers[i]) !== 'workspace') continue;
+    const list = /(?:^|\r?\n)[ \t]*members[ \t]*=[ \t]*\[([\s\S]*?)\]/.exec(body(i));
+    const quoted = list ? list[1].match(/"[^"\r\n]*"|'[^'\r\n]*'/g) || [] : [];
+    for (const raw of quoted) {
+      const member = raw.slice(1, -1).trim();
+      if (member && memberDirs(root, member).some((d) => fs.existsSync(path.join(d, 'Cargo.toml')))) return true;
+    }
   }
   return false;
 }
@@ -693,9 +642,9 @@ export function detectChecks(dir) {
   if (has('go.mod')) add('go', 'go test ./...');
   if (has('Cargo.toml')) {
     try {
-      if (cargoDeclaresTests(fs.readFileSync(path.join(dir, 'Cargo.toml'), 'utf8'))) add('cargo', 'cargo test');
+      if (cargoHasCode(dir, fs.readFileSync(path.join(dir, 'Cargo.toml'), 'utf8'))) add('cargo', 'cargo test');
     } catch {
-      /* a manifest we cannot read or parse is no proof of a test suite */
+      /* a manifest we cannot read is no proof of a test suite */
     }
   }
   if (has('Makefile')) {

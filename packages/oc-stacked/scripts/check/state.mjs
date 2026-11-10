@@ -41,10 +41,16 @@ export async function register(ctx) {
   // ---------------------------------------------------------------- check detection
   const detector = (files) => {
     const d = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-stacked-detect-'));
-    for (const [name, text] of Object.entries(files)) fs.writeFileSync(path.join(d, name), text);
+    for (const [name, text] of Object.entries(files)) {
+      fs.mkdirSync(path.dirname(path.join(d, name)), { recursive: true });
+      fs.writeFileSync(path.join(d, name), text);
+    }
     return d;
   };
 
+  // The proof is code on disk, not manifest shape: `src/` is what makes a
+  // `[package]` a package, and a member's own `Cargo.toml` is what makes a
+  // `[workspace]` a workspace. Each case names the fact that would be missing.
   await checkAsync('an empty virtual cargo workspace declares no check', async () => {
     const d = detector({ 'Cargo.toml': '[workspace]\nmembers = []\n' });
     const checks = detectChecks(d);
@@ -54,39 +60,67 @@ export async function register(ctx) {
     return 'members = [] adds nothing';
   });
 
-  // The auditor's case, byte for byte: brackets balance, so the bracket guard
-  // alone let this through and invented `cargo test` from a file that is not a
-  // manifest. Prose after a header must add nothing.
-  await checkAsync('a Cargo.toml that is not TOML declares no check', async () => {
-    const manifest = '[package]\nthis is not toml\n';
-    const d = detector({ 'Cargo.toml': manifest });
+  // A bare word is not a TOML value. Shape was the old question and it kept
+  // answering yes; the new question needs no grammar, because there is no src/.
+  await checkAsync('a Cargo.toml whose value is not TOML declares no check', async () => {
+    const d = detector({ 'Cargo.toml': '[package]\nname = invalid\n' });
     const checks = detectChecks(d);
-    assert(
-      !checks.some((c) => c.name === 'cargo'),
-      `a non-TOML manifest invented a cargo check: ${JSON.stringify(checks)} from ${JSON.stringify(manifest)}`,
-    );
-    assert(
-      !checks.some((c) => c.command === 'cargo test'),
-      `a non-TOML manifest invented cargo test: ${JSON.stringify(checks)} from ${JSON.stringify(manifest)}`,
-    );
+    assert(!checks.some((c) => c.name === 'cargo'), `a bare-word value invented a cargo check: ${JSON.stringify(checks)}`);
+    assert(!checks.some((c) => c.command === 'cargo test'), `a bare-word value invented cargo test: ${JSON.stringify(checks)}`);
     fs.rmSync(d, { recursive: true, force: true });
-    return 'prose after [package] adds nothing';
+    return 'name = invalid adds nothing';
   });
 
-  await checkAsync('a cargo package declares one test check', async () => {
-    const d = detector({ 'Cargo.toml': '[package]\nname = "x"\nversion = "0.1.0"\n' });
+  await checkAsync('a header inside a comment declares no package', async () => {
+    const d = detector({ 'Cargo.toml': '# [package]\nname = "x"\n', 'src/lib.rs': '' });
     const checks = detectChecks(d);
-    assert(checks.some((c) => c.name === 'cargo' && c.command === 'cargo test'), `a [package] manifest produced no cargo test: ${JSON.stringify(checks)}`);
+    assert(!checks.some((c) => c.name === 'cargo'), `a commented [package] beside src/ invented a cargo check: ${JSON.stringify(checks)}`);
+    fs.rmSync(d, { recursive: true, force: true });
+    return 'a comment is not a header';
+  });
+
+  await checkAsync('a cargo package with source declares one test check', async () => {
+    const d = detector({ 'Cargo.toml': '[package]\nname = "x"\nversion = "0.1.0"\n', 'src/lib.rs': '' });
+    const checks = detectChecks(d);
+    assert(checks.some((c) => c.name === 'cargo' && c.command === 'cargo test'), `a [package] with src/ produced no cargo test: ${JSON.stringify(checks)}`);
     fs.rmSync(d, { recursive: true, force: true });
     return 'cargo test';
   });
 
-  await checkAsync('a cargo workspace with members declares one test check', async () => {
-    const d = detector({ 'Cargo.toml': '[workspace]\nmembers = ["a", "b"]\n' });
+  await checkAsync('a cargo package with only a declared lib path that exists declares one test check', async () => {
+    const d = detector({ 'Cargo.toml': '[package]\nname = "x"\n[lib]\npath = "entry/main.rs"\n', 'entry/main.rs': '' });
     const checks = detectChecks(d);
-    assert(checks.some((c) => c.name === 'cargo' && c.command === 'cargo test'), `a workspace with members produced no cargo test: ${JSON.stringify(checks)}`);
+    assert(checks.some((c) => c.command === 'cargo test'), `a declared [lib] path produced no cargo test: ${JSON.stringify(checks)}`);
+    fs.rmSync(d, { recursive: true, force: true });
+    return 'the declared path is code';
+  });
+
+  await checkAsync('a cargo workspace with an existing member declares one test check', async () => {
+    const d = detector({
+      'Cargo.toml': '[workspace]\nmembers = ["a", "b"]\n',
+      'a/Cargo.toml': '[package]\nname = "a"\n',
+      'b/Cargo.toml': '[package]\nname = "b"\n',
+    });
+    const checks = detectChecks(d);
+    assert(checks.some((c) => c.command === 'cargo test'), `a workspace with an existing member produced no cargo test: ${JSON.stringify(checks)}`);
     fs.rmSync(d, { recursive: true, force: true });
     return 'cargo test';
+  });
+
+  await checkAsync('a cargo workspace whose member does not exist declares no check', async () => {
+    const d = detector({ 'Cargo.toml': '[workspace]\nmembers = ["crates/gone"]\n' });
+    const checks = detectChecks(d);
+    assert(!checks.some((c) => c.name === 'cargo'), `a missing member invented a cargo check: ${JSON.stringify(checks)}`);
+    fs.rmSync(d, { recursive: true, force: true });
+    return 'a member that is not there adds nothing';
+  });
+
+  await checkAsync('a cargo workspace member glob over a real crate declares one test check', async () => {
+    const d = detector({ 'Cargo.toml': '[workspace]\nmembers = ["crates/*"]\n', 'crates/one/Cargo.toml': '[package]\nname = "one"\n' });
+    const checks = detectChecks(d);
+    assert(checks.some((c) => c.command === 'cargo test'), `crates/* over a real crate produced no cargo test: ${JSON.stringify(checks)}`);
+    fs.rmSync(d, { recursive: true, force: true });
+    return 'the glob names a real crate';
   });
 
   // ---------------------------------------------------------------- seeding, objective, audit
