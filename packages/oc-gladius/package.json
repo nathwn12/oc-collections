@@ -1,0 +1,28 @@
+{
+  "name": "oc-gladius",
+  "version": "0.7.1",
+  "description": "MCP browser-use server (npx launcher): provisions the pinned Chromium (chrome-headless-shell) plus the server runtime on first run, then serves MCP over stdio",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nathwn12/oc-collections",
+    "directory": "packages/oc-gladius"
+  },
+  "homepage": "https://github.com/nathwn12/oc-collections/tree/main/packages/oc-gladius",
+  "engines": {
+    "node": ">=22.14.0"
+  },
+  "bin": {
+    "oc-gladius": "./npm/bin/gladius-mcp.js"
+  },
+  "scripts": {
+    "preinstall": "node -e \"if(process.env.npm_config_global==='true'){console.error('oc-gladius: global install refused - use npx oc-gladius@0.7.1');process.exit(1)}\""
+  },
+  "files": [
+    "npm/bin/",
+    "npm/engine-manifest.json",
+    "npm/LICENSE",
+    "npm/README.md",
+    "npm/assets"
+  ]
+}
