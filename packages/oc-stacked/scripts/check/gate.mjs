@@ -575,5 +575,61 @@ export async function register(ctx) {
     return 'refused, then forced';
   });
 
+  // ------------------------------------------- a command runs where it was written
+  await checkAsync('a command that splits a path on a space is refused, and quoted it runs', async () => {
+    const d = configuredRepo();
+    const scriptPath = path.join(d, 'my script.js');
+    fs.writeFileSync(scriptPath, "require('node:fs').writeFileSync('ran.txt', 'x');\n");
+    const configure = (command) =>
+      fs.writeFileSync(
+        path.join(d, '.stack', 'config.json'),
+        JSON.stringify({ checks: [{ name: 'split', command, timeout: 60000 }] }, null, 2),
+      );
+
+    configure(`node ${scriptPath}`);
+    const refused = await runIn(d, 'check', { op: 'run' });
+    assert(/Refused/.test(refused), `an unquoted absolute path with a space was run:\n${refused.slice(0, 400)}`);
+    assert(/unquoted/.test(refused), `the refusal did not name the split:\n${refused.slice(0, 400)}`);
+    assert(refused.includes('my script.js'), `the split path was not named:\n${refused.slice(0, 400)}`);
+    assert(!fs.existsSync(path.join(d, 'ran.txt')), 'the refused command ran anyway');
+
+    configure(`node "${scriptPath}"`);
+    const ran = await runIn(d, 'check', { op: 'run' });
+    assert(/## GREEN/.test(ran), `the quoted path was refused or failed:\n${ran.slice(0, 400)}`);
+    assert(fs.existsSync(path.join(d, 'ran.txt')), 'the quoted command never ran');
+
+    fs.rmSync(d, { recursive: true, force: true });
+    return 'unquoted refused, quoted ran';
+  });
+
+  await checkAsync('a timeout that cannot bound a command is refused, an omitted one still runs', async () => {
+    const bad = tmpRepo();
+    fs.mkdirSync(path.join(bad, '.stack'), { recursive: true });
+    fs.writeFileSync(
+      path.join(bad, '.stack', 'config.json'),
+      JSON.stringify({ checks: [{ name: 'unbounded', command: 'node -e "process.exit(0)"', timeout: 'soon' }] }, null, 2),
+    );
+    const refused = await runIn(bad, 'check', { op: 'run' });
+    assert(/## RED/.test(refused), `a check with no usable timeout was reported GREEN:\n${refused.slice(0, 300)}`);
+    assert(/timeout/.test(refused) && /not a positive number/.test(refused), `the bad timeout was not named:\n${refused.slice(0, 400)}`);
+    const record = JSON.parse(fs.readFileSync(path.join(bad, '.stack', 'state', 'checks.json'), 'utf8'));
+    assert(record.results[0].ok === false, 'an unbounded check was recorded as ok');
+
+    const fine = tmpRepo();
+    fs.mkdirSync(path.join(fine, '.stack'), { recursive: true });
+    fs.writeFileSync(
+      path.join(fine, '.stack', 'config.json'),
+      JSON.stringify({ checks: [{ name: 'default', command: 'node -e "process.exit(0)"' }] }, null, 2),
+    );
+    const ran = await runIn(fine, 'check', { op: 'run' });
+    assert(/## GREEN/.test(ran), `an omitted timeout was refused:\n${ran.slice(0, 300)}`);
+    const ok = JSON.parse(fs.readFileSync(path.join(fine, '.stack', 'state', 'checks.json'), 'utf8'));
+    assert(ok.results[0].ok === true, 'a check with the default budget did not pass');
+
+    fs.rmSync(bad, { recursive: true, force: true });
+    fs.rmSync(fine, { recursive: true, force: true });
+    return 'bad timeout refused, omitted timeout ran';
+  });
+
   fs.rmSync(dir, { recursive: true, force: true });
 }

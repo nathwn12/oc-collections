@@ -5,12 +5,14 @@
  * Split out of scripts/check.mjs; the runner is scripts/check/index.mjs.
  */
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import { toolDefinitions } from '../../lib/tools.js';
 
 export async function register(ctx) {
-  const { check, checkAsync, assert, tmpRepo, configuredRepo, runIn } = ctx;
+  const { check, checkAsync, assert, repo, tmpRepo, configuredRepo, runIn } = ctx;
 
   // The eight tools, and one committed fixture the brief/ledger chain mutates.
   const dir = tmpRepo();
@@ -320,6 +322,208 @@ export async function register(ctx) {
     assert(!fs.existsSync(indexFile) || JSON.parse(fs.readFileSync(indexFile, 'utf8')).length === 0, 'the index was written anyway');
     fs.rmSync(d, { recursive: true, force: true });
     return 'bodies rolled back, index untouched';
+  });
+
+  // ------------------------------------------------------- the closed sets
+  await checkAsync('brief refuses a reserved Windows device id and accepts a word that starts with one', async () => {
+    const d = configuredRepo();
+    for (const id of ['con', 'nul', 'lpt1']) {
+      const out = await runIn(d, 'brief', {
+        op: 'new', agent: 'backend',
+        title: id,
+        id,
+        out: 'x',
+        check: 'node -e "process.exit(0)"',
+        owns: ['**'],
+        files: ['n.md'],
+      });
+      assert(/Refused/.test(out), `\`${id}\` was accepted as a seam id:\n${out}`);
+      assert(/reserved Windows device name/.test(out), `\`${id}\` was refused without naming the device rule:\n${out}`);
+      assert(!fs.existsSync(path.join(d, '.stack', 'briefs', `${id}.md`)), `\`${id}\` left a brief behind`);
+    }
+    const indexFile = path.join(d, '.stack', 'state', 'briefs.json');
+    assert(!fs.existsSync(indexFile) || JSON.parse(fs.readFileSync(indexFile, 'utf8')).length === 0, 'a refused device id reached the index');
+
+    const fine = await runIn(d, 'brief', {
+      op: 'new', agent: 'backend',
+      title: 'console',
+      id: 'console',
+      out: 'x',
+      check: 'node -e "process.exit(0)"',
+      owns: ['**'],
+      files: ['n.md'],
+    });
+    assert(/Brief written/.test(fine), `\`console\` was refused as a device id:\n${fine}`);
+    fs.rmSync(d, { recursive: true, force: true });
+    return 'con, nul, lpt1 refused; console allowed';
+  });
+
+  await checkAsync('brief refuses an empty file list and a claim on the seal', async () => {
+    const d = configuredRepo();
+    const empty = await runIn(d, 'brief', {
+      op: 'new', agent: 'backend',
+      title: 'empty files',
+      out: 'x',
+      check: 'node -e "process.exit(0)"',
+      owns: ['src/**'],
+      files: [],
+    });
+    assert(/Refused/.test(empty), `a brief that promises no file was accepted:\n${empty}`);
+    assert(/`files` is empty/.test(empty), `the empty file list was not named:\n${empty}`);
+    assert(!fs.existsSync(path.join(d, '.stack', 'briefs', 'empty-files.md')), 'the empty brief was written');
+
+    const sealed = await runIn(d, 'brief', {
+      op: 'new', agent: 'backend',
+      title: 'own receipt',
+      out: 'x',
+      check: 'node -e "process.exit(0)"',
+      owns: ['src/**'],
+      files: ['src/ok.ts', '.stack/state/checks.json'],
+    });
+    assert(/Refused/.test(sealed), `a brief claimed the seal:\n${sealed}`);
+    assert(sealed.includes('.stack/state/checks.json'), `the refusal did not name the sealed path:\n${sealed}`);
+    assert(!fs.existsSync(path.join(d, '.stack', 'briefs', 'own-receipt.md')), 'the seal-claiming brief was written');
+
+    const glob = await runIn(d, 'brief', {
+      op: 'new', agent: 'backend',
+      title: 'own receipt glob',
+      out: 'x',
+      check: 'node -e "process.exit(0)"',
+      owns: ['.stack/state/**'],
+      files: ['src/ok.ts'],
+    });
+    assert(/Refused/.test(glob), `an Owns glob over the seal was accepted:\n${glob}`);
+    assert(glob.includes('.stack/state/**'), `the glob refusal did not name the path:\n${glob}`);
+
+    const indexFile = path.join(d, '.stack', 'state', 'briefs.json');
+    assert(!fs.existsSync(indexFile) || JSON.parse(fs.readFileSync(indexFile, 'utf8')).length === 0, 'a refused brief reached the index');
+    fs.rmSync(d, { recursive: true, force: true });
+    return 'empty file list and the seal both refused by name';
+  });
+
+  await checkAsync('brief refuses a status and a force that are not the closed sets', async () => {
+    const d = configuredRepo();
+    await runIn(d, 'brief', {
+      op: 'new', agent: 'backend',
+      title: 'closed sets',
+      out: 'x',
+      check: 'node -e "process.exit(0)"',
+      owns: ['**'],
+      files: ['n.md'],
+    });
+
+    const nonsense = await runIn(d, 'brief', { op: 'status', id: 'closed-sets', status: 'nonsense' });
+    assert(/Refused/.test(nonsense), `an unknown status was written:\n${nonsense}`);
+    assert(/not a seam state/.test(nonsense), `the closed set of states was not named:\n${nonsense}`);
+
+    const forced = await runIn(d, 'brief', { op: 'status', id: 'closed-sets', status: 'landed', force: 'yes' });
+    assert(/Refused/.test(forced), `a string \`force\` landed a seam with no GO:\n${forced}`);
+    assert(/boolean/.test(forced), `the force refusal did not name the required type:\n${forced}`);
+
+    const index = JSON.parse(fs.readFileSync(path.join(d, '.stack', 'state', 'briefs.json'), 'utf8'));
+    assert(index[0].status === 'briefed', `the seam moved anyway: ${index[0].status}`);
+    fs.rmSync(d, { recursive: true, force: true });
+    return 'unknown state and non-boolean force refused, state unchanged';
+  });
+
+  await checkAsync('swarm refuses an id that is already landed and writes nothing', async () => {
+    const d = configuredRepo();
+    await runIn(d, 'brief', {
+      op: 'new', agent: 'backend',
+      title: 'shipped',
+      id: 'shipped',
+      out: 'x',
+      check: 'node -e "process.exit(0)"',
+      owns: ['src/one.ts'],
+      files: ['src/one.ts'],
+    });
+    const landed = await runIn(d, 'brief', { op: 'status', id: 'shipped', status: 'landed', force: true });
+    assert(/landed/.test(landed), `setup could not land the seam:\n${landed}`);
+
+    const indexFile = path.join(d, '.stack', 'state', 'briefs.json');
+    const bodyFile = path.join(d, '.stack', 'briefs', 'shipped.md');
+    const beforeIndex = fs.readFileSync(indexFile, 'utf8');
+    const beforeBody = fs.readFileSync(bodyFile, 'utf8');
+
+    const out = await runIn(d, 'swarm', {
+      seams: [
+        { id: 'shipped', title: 'shipped again', out: 'x', check: 'node -e "process.exit(0)"', files: ['src/one.ts'] },
+        { id: 'fresh', title: 'fresh', out: 'y', check: 'node -e "process.exit(0)"', files: ['src/two.ts'] },
+      ],
+    });
+    assert(/Refused/.test(out), `a swarm re-briefed a landed seam:\n${out}`);
+    assert(/landed/.test(out), `the landed state was not named:\n${out}`);
+    assert(fs.readFileSync(indexFile, 'utf8') === beforeIndex, 'the refused swarm changed the index');
+    assert(fs.readFileSync(bodyFile, 'utf8') === beforeBody, 'the refused swarm rewrote the landed body');
+    assert(!fs.existsSync(path.join(d, '.stack', 'briefs', 'fresh.md')), 'the refused swarm wrote its other body');
+    fs.rmSync(d, { recursive: true, force: true });
+    return 'landed id refused, index and bodies unchanged';
+  });
+
+  /**
+   * The regression: the collision proof used to be made against an index read
+   * outside the lock, so two writers each proved against a tree that did not
+   * contain the other and both committed a claim on one file. Two child
+   * processes is the only honest way to race it, and the barrier makes them
+   * reach the tool together instead of one process lapping the other. The pair
+   * needs two ids: re-briefing one *briefed* id is legal, and the index keeps
+   * one record per id, so a same-id pair cannot tell a fixed tree from a broken
+   * one - the same file under two ids can.
+   */
+  await checkAsync('two parallel briefs that claim one file never both land (10 trials)', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-stacked-race-'));
+    const script = path.join(home, 'race.mjs');
+    const gate = path.join(home, 'go');
+    fs.writeFileSync(
+      script,
+      [
+        "import fs from 'node:fs';",
+        `import { toolDefinitions } from ${JSON.stringify(pathToFileURL(path.join(repo, 'lib', 'tools.js')).href)};`,
+        'const [dir, id, file, go] = process.argv.slice(2);',
+        'const deadline = Date.now() + 10000;',
+        'while (!fs.existsSync(go)) {',
+        "  if (Date.now() > deadline) { console.error('barrier timed out'); process.exit(3); }",
+        '}',
+        "const brief = toolDefinitions({ dir }).find((t) => t.name === 'brief');",
+        "const r = await brief.execute({ op: 'new', agent: 'backend', title: id, id, out: 'race', check: 'node -e \"process.exit(0)\"', owns: [file], files: [file] }, {});",
+        "process.stdout.write(typeof r === 'string' ? r : (r && r.content) || '');",
+        '',
+      ].join('\n'),
+    );
+
+    const race = (d, id) =>
+      new Promise((resolve) => {
+        const child = spawn(process.execPath, [script, d, id, 'src/race.ts', gate], { windowsHide: true });
+        let out = '';
+        let err = '';
+        child.stdout.on('data', (chunk) => {
+          out += chunk;
+        });
+        child.stderr.on('data', (chunk) => {
+          err += chunk;
+        });
+        child.on('close', (code) => resolve({ code, out, err }));
+      });
+
+    for (let trial = 0; trial < 10; trial += 1) {
+      const d = configuredRepo();
+      fs.rmSync(gate, { force: true });
+      const pair = [race(d, `race-a-${trial}`), race(d, `race-b-${trial}`)];
+      fs.writeFileSync(gate, 'go');
+      const [a, b] = await Promise.all(pair);
+      assert(a.code === 0 && b.code === 0, `trial ${trial}: a child died: ${a.err || b.err}`);
+      const wrote = [a, b].filter((r) => /Brief written/.test(r.out)).length;
+      const indexFile = path.join(d, '.stack', 'state', 'briefs.json');
+      const index = fs.existsSync(indexFile) ? JSON.parse(fs.readFileSync(indexFile, 'utf8')) : [];
+      const live = index.filter(
+        (b2) => b2.status !== 'landed' && b2.status !== 'killed' && (b2.files || []).includes('src/race.ts'),
+      );
+      assert(live.length <= 1, `trial ${trial}: ${live.length} live seams both own src/race.ts (${live.map((b3) => b3.id).join(', ')})`);
+      assert(wrote === 1, `trial ${trial}: ${wrote} writers reported success, expected exactly 1`);
+      fs.rmSync(d, { recursive: true, force: true });
+    }
+    fs.rmSync(home, { recursive: true, force: true });
+    return '10 trials, one live writer each';
   });
 
   fs.rmSync(dir, { recursive: true, force: true });
