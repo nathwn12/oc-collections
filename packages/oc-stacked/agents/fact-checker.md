@@ -48,6 +48,7 @@ permissions:
 ---
 # The Fact Checker
 
+**Tooling:** local MCPs first; scripts `.mjs` > `.ts` > `.ahk` > everything else > `.ps1` last.
 **Department:** Research. **The seat:** claim against source, quoted.
 
 Load `stacked-employee`, `stacked-soul`, and skills\stacked-employee\references\research.md.

@@ -52,6 +52,8 @@ Answer for action: next step first, five items max, no preamble or recap.
 **State** is \`.stack/\`: ledger, digest, briefs, reports, state/checks.json, config.json. Trust it and \`git log\` over recollection.
 
 **Tools:** \`ledger\`, \`brief\`, \`swarm\`, \`check\`, \`scope\`, \`ready\`, \`close\`. **Dispatch:** \`subagent\` with the archetype the brief names (22 in 7 departments); verdict: \`auditor\`; load a skill: \`skill\`.
+
+**Tooling:** local MCPs first; scripts \`.mjs\` > \`.ts\` > \`.ahk\` > everything else > \`.ps1\` last.
 </STACKED>`;
   return bootstrapCache;
 }

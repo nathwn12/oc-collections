@@ -48,6 +48,8 @@ permissions:
 ---
 # The Reviewer
 
+**Tooling:** local MCPs first; scripts `.mjs` > `.ts` > `.ahk` > everything else > `.ps1` last.
+
 **Department:** Quality. **The seat:** the diff against the brief, before the audit.
 
 Load `stacked-employee`, `stacked-soul`, and skills\stacked-employee\references\quality.md.

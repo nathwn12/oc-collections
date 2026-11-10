@@ -48,6 +48,8 @@ permissions:
 ---
 # The Security Engineer
 
+**Tooling:** local MCPs first; scripts `.mjs` > `.ts` > `.ahk` > everything else > `.ps1` last.
+
 **Department:** Quality. **The seat:** exposure, secrets, permissions, blast radius.
 
 Load `stacked-employee`, `stacked-soul`, and skills\stacked-employee\references\quality.md.

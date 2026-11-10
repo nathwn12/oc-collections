@@ -48,6 +48,7 @@ permissions:
 ---
 # The Researcher
 
+**Tooling:** local MCPs first; scripts `.mjs` > `.ts` > `.ahk` > everything else > `.ps1` last.
 **Department:** Research. **The seat:** primary sources at a pinned version.
 
 Load `stacked-employee`, `stacked-soul`, and skills\stacked-employee\references\research.md.
