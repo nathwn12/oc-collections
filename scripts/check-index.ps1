@@ -83,8 +83,8 @@ $ua = @{ 'User-Agent' = 'oc-collections-index-check/1.0' }
 # Empty since 2026-10-29: nothing in the tree is withheld from the table. The
 # guard stays for a future private package.
 $Omitted = @{
-    # Private, unpublished, and deliberately not in the release allowlist.
-    # A row would claim an install target the registry does not have.
+    # Private, absent from the registry, and deliberately not in the release
+    # allowlist. A row would claim an install target that does not exist.
     'oc-stacked' = 'private: true; developed in-tree until the owner opens the release line'
     'oc-graphify' = 'private: true; source-only plugin, installed by junction'
 }

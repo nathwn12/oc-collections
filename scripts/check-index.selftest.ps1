@@ -127,13 +127,14 @@ try {
     $tableLines = @($realReadme -split "`r?`n" | Where-Object { $_ -match '^\|' })
     $readmeRows = 0
     $readmePackages = 0
-    if ($summary -match '^structural: rows=(\d+) packages=(\d+) ') {
+    if ($summary -match '^structural: rows=(\d+) packages=(\d+) omitted=(\d+) ') {
         $readmeRows = [int]$Matches[1]
         $readmePackages = [int]$Matches[2]
+        $readmeOmitted = [int]$Matches[3]
     }
     $headerCases = @(
-        [pscustomobject]@{ Label = 'Package'; Exit = 0; Rows = $readmeRows; Packages = $readmePackages; Extra = 0; Failed = 0 }
-        [pscustomobject]@{ Label = 'Bogus'; Exit = 1; Rows = $readmeRows + 1; Packages = $readmePackages; Extra = 1; Failed = 1 }
+        [pscustomobject]@{ Label = 'Package'; Exit = 0; Rows = $readmeRows; Packages = $readmePackages; Omitted = $readmeOmitted; Extra = 0; Failed = 0 }
+        [pscustomobject]@{ Label = 'Bogus'; Exit = 1; Rows = $readmeRows + 1; Packages = $readmePackages; Omitted = $readmeOmitted; Extra = 1; Failed = 1 }
     )
     # The two header labels use distinct fixtures and are independent of each
     # other (their expected counts were already derived from the positive
@@ -143,6 +144,7 @@ try {
         $wantExit = $_.Exit
         $wantRows = $_.Rows
         $wantPkgs = $_.Packages
+        $wantOmitted = $_.Omitted
         $wantExtra = $_.Extra
         $wantFailed = $_.Failed
         $ck = $using:check
@@ -162,7 +164,7 @@ try {
             $lines += ('FAIL: header {0} exited {1}, expected {2}' -f $label, $headerExit, $wantExit)
             $f++
         }
-        if ($headerSummary -notmatch ('^structural: rows={0} packages={1} omitted=0 missing=0 extra={2} failed={3}$' -f $wantRows, $wantPkgs, $wantExtra, $wantFailed)) {
+        if ($headerSummary -notmatch ('^structural: rows={0} packages={1} omitted={2} missing=0 extra={3} failed={4}$' -f $wantRows, $wantPkgs, $wantOmitted, $wantExtra, $wantFailed)) {
             $lines += ('FAIL: header {0} did not produce the expected summary' -f $label)
             $f++
         }
