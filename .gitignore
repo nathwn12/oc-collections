@@ -6,3 +6,6 @@ dist/
 coverage/
 target/
 .cache/
+
+# working state, not part of the collection
+.stack/
