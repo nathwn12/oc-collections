@@ -45,7 +45,11 @@ const { spawn } = require('node:child_process');
 
 const PKG_DIR = path.dirname(path.dirname(__filename));
 const MANIFEST_PATH = path.join(PKG_DIR, 'engine-manifest.json');
-const PKG_PATH = path.join(PKG_DIR, 'package.json');
+// The manifest may sit beside the launcher (published layout) or at the package
+// root (this monorepo's layout, where the launcher keeps its files under npm/).
+const PKG_PATH = require('node:fs').existsSync(path.join(PKG_DIR, 'package.json'))
+  ? path.join(PKG_DIR, 'package.json')
+  : path.join(path.dirname(PKG_DIR), 'package.json');
 const PLATFORM_OVERRIDE_ENV = 'PUPPET_MCP_ALLOW_NON_WINDOWS';
 const RUNTIME_CACHE_OVERRIDE_ENV = 'PUPPET_ENGINE_CACHE';
 // Local-bundle override, diagnostics only. A normal run leaves it unset and
@@ -97,7 +101,7 @@ function loadPackageVersion() {
   } catch (err) {
     fail(`package.json is not valid JSON: ${err.message}`);
   }
-  if (pkg.name !== 'puppet-mcp' || typeof pkg.version !== 'string' || pkg.version.length === 0) {
+  if (!['puppet-mcp', 'oc-puppet'].includes(pkg.name) || typeof pkg.version !== 'string' || pkg.version.length === 0) {
     fail('package.json does not name a versioned puppet-mcp package.');
   }
   return pkg.version;

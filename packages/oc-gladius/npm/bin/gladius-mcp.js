@@ -58,7 +58,11 @@ const { spawn } = require('node:child_process');
 
 const PKG_DIR = path.dirname(path.dirname(__filename));
 const MANIFEST_PATH = path.join(PKG_DIR, 'engine-manifest.json');
-const PKG_JSON_PATH = path.join(PKG_DIR, 'package.json');
+// The manifest may sit beside the launcher (published layout) or at the package
+// root (this monorepo's layout, where the launcher keeps its files under npm/).
+const PKG_JSON_PATH = require('node:fs').existsSync(path.join(PKG_DIR, 'package.json'))
+  ? path.join(PKG_DIR, 'package.json')
+  : path.join(path.dirname(PKG_DIR), 'package.json');
 const PLATFORM_OVERRIDE_ENV = 'GLADIUS_MCP_ALLOW_NON_WINDOWS';
 const RUNTIME_CACHE_OVERRIDE_ENV = 'GLADIUS_ENGINE_CACHE';
 // Local-bundle override, diagnostics only. A normal run leaves it unset and
