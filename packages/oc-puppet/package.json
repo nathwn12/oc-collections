@@ -1,0 +1,30 @@
+{
+  "name": "oc-puppet",
+  "version": "7.0.2",
+  "description": "Windows desktop-control MCP server (npx launcher): provisions the pinned server binary from the GitHub Release on first run, then serves MCP over stdio",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nathwn12/oc-collections",
+    "directory": "packages/oc-puppet"
+  },
+  "homepage": "https://github.com/nathwn12/oc-collections/tree/main/packages/oc-puppet",
+  "engines": {
+    "node": ">=22.14.0"
+  },
+  "bin": {
+    "oc-puppet": "./npm/bin/puppet-mcp.js"
+  },
+  "scripts": {
+    "preinstall": "node -e \"if(process.env.npm_config_global==='true'){console.error('oc-puppet: global install refused - use npx oc-puppet@7.0.2');process.exit(1)}\"",
+    "postinstall": "node -e \"if(process.env.npm_config_global==='true'){console.error('oc-puppet: global install refused - use npx oc-puppet@7.0.2');process.exit(1)}\""
+  },
+  "files": [
+    "npm/assets",
+    "npm/bin/",
+    "npm/engine-manifest.json",
+    "npm/LICENSE",
+    "npm/README.md",
+    "THIRD-PARTY-NOTICES.md"
+  ]
+}
