@@ -89,20 +89,47 @@ export function headCommit(atlas, { exec = execFileSync, timeout = 4000 } = {}) 
 
 export const short = (sha) => (typeof sha === 'string' && sha.length >= 7 ? sha.slice(0, 7) : null);
 
-/** fresh | stale | unknown | missing. The same verdict graph_stats prints. */
-export function verdict(graph, head) {
+/**
+ * Ask the vault's own freshness command. It is the single owner of the verdict
+ * - tier inputs, lesson-bearing session notes, the semantic seed, and a dirty
+ * working tree all feed it - so this plugin reports its answer instead of
+ * re-deciding freshness from commit equality, which over-reports stale.
+ *
+ * Returns { state: 'fresh'|'stale', detail } or null when the tool is missing
+ * or fails for a reason that is not a verdict (a broken tool is not a stale
+ * graph).
+ */
+export function askFreshness(atlas, { exec = execFileSync, timeout = 8000 } = {}) {
+  const tool = path.join(atlas, '.graphify', 'tools', 'graph-freshness.mjs');
+  if (!fs.existsSync(tool)) return null;
+  try {
+    const out = exec(process.execPath, [tool], { encoding: 'utf8', timeout, stdio: ['ignore', 'pipe', 'pipe'] });
+    const line = String(out).trim().split('\n').filter(Boolean).pop() || '';
+    return { state: 'fresh', detail: line.replace(/^graph fresh:\s*/, '') };
+  } catch (error) {
+    if (error?.status !== 1) return null;
+    const text = `${error.stdout || ''}\n${error.stderr || ''}`.trim();
+    const first = text.split('\n').filter(Boolean)[0] || 'graph is stale';
+    return { state: 'stale', detail: first.replace(/^graph-freshness:\s*/, '') };
+  }
+}
+
+/** fresh | stale | unknown | missing. Commit equality is the fallback only. */
+export function verdict(graph, head, fresh = null) {
   if (!graph) return 'missing';
+  if (fresh?.state) return fresh.state;
   if (!graph.commit || !head) return 'unknown';
   return graph.commit === head ? 'fresh' : 'stale';
 }
 
 /** The last line of the block: the only part allowed to change between turns. */
-export function stateLine(graph, head) {
-  const state = verdict(graph, head);
+export function stateLine(graph, head, fresh = null) {
+  const state = verdict(graph, head, fresh);
   if (state === 'missing') return 'Graph state: missing - no graph.json; the Atlas has not been built here.';
-  if (state === 'fresh') return `Graph state: fresh at ${short(head)}.`;
+  if (state === 'fresh') return `Graph state: fresh - ${fresh?.detail || `at ${short(head)}`}.`;
   if (state === 'stale') {
-    return `Graph state: STALE - built ${short(graph.commit)}, HEAD ${short(head)}. Rebuild before trusting it.`;
+    const why = fresh?.detail || `built ${short(graph.commit)}, HEAD ${short(head)}`;
+    return `Graph state: STALE - ${why}. Rebuild before trusting it.`;
   }
   return `Graph state: unverified - ${graph.commit ? 'HEAD unreadable' : 'the graph carries no build commit'}.`;
 }
@@ -111,7 +138,7 @@ export function stateLine(graph, head) {
  * The injected block. Everything above the state line is stable for the life of
  * a build, so the prefix caches; the state line is last on purpose.
  */
-export function render({ graph, head, atlas }) {
+export function render({ graph, head, atlas, fresh = null }) {
   const where = atlas || '(no atlas recorded in graphify.json)';
   if (!graph) {
     return [
@@ -128,6 +155,6 @@ export function render({ graph, head, atlas }) {
     `Graph: ${graph.file} - the same graph Obsidian shows as the harness-wiki vault (graph-room).`,
     'Ask it before grepping: `graph_stats`, `graph_node`, `graph_neighbors`, `graph_path`, `graph_god_nodes`, `graph_query` - this plugin\'s own reads over the same file. `graphify query "<question>"` with cwd = the atlas is the CLI, for when an exact answer matters.',
     'Rebuild with `node .graphify/tools/sync-corpus.mjs` from the atlas; never from the vault root, never a bare `graphify update`.',
-    stateLine(graph, head),
+    stateLine(graph, head, fresh),
   ].join('\n');
 }

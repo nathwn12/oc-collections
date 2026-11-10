@@ -23,7 +23,7 @@
  * tool editor all degrade to "less plugin", never to a failed request. Setup
  * never throws, so one bad file can never take down the host's generation.
  */
-import { MARKER, configPath, graphFile, headCommit, readConfig, readGraph, render } from './lib.js';
+import { MARKER, askFreshness, configPath, graphFile, headCommit, readConfig, readGraph, render } from './lib.js';
 import { readGraph as loadGraph } from './graph.js';
 import { toolDefinitions } from './tools.js';
 
@@ -92,7 +92,7 @@ export default {
       const snapshot = () => {
         const now = Date.now();
         if (!cache || now - cache.at > HEAD_TTL_MS) {
-          cache = { at: now, graph: readGraph(config.atlas), head: headCommit(config.atlas) };
+          cache = { at: now, graph: readGraph(config.atlas), head: headCommit(config.atlas), fresh: askFreshness(config.atlas) };
         }
         return cache;
       };
@@ -109,8 +109,8 @@ export default {
           );
           if (carried) return;
 
-          const { graph, head } = snapshot();
-          const text = render({ graph, head, atlas: config.atlas });
+          const { graph, head, fresh } = snapshot();
+          const text = render({ graph, head, atlas: config.atlas, fresh });
           if (first) {
             if (!Array.isArray(first.content)) first.content = [];
             first.content.unshift({ type: 'text', text });

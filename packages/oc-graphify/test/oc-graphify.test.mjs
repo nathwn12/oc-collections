@@ -17,6 +17,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   MARKER,
+  askFreshness,
   configPath,
   graphFile,
   headCommit,
@@ -252,6 +253,60 @@ test('setup: a host without the hook, a hostile ctx, and no config are all silen
   assert.doesNotThrow(() => plugin.setup(undefined));
   assert.doesNotThrow(() => plugin.setup({}));
   assert.doesNotThrow(() => plugin.setup({ session: { hook: () => { throw new Error('refused'); } } }));
+});
+
+test('setup: six reads registered, and the hooks land when the tool editor refuses', async () => {
+  const added = [];
+  const hooks = [];
+  plugin.setup({
+    session: { hook: (name) => hooks.push(name) },
+    tool: {
+      transform: (fn) => {
+        fn({ add: (def) => added.push(def.name), namespace: () => {} });
+        return Promise.resolve();
+      },
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(added.sort(), ['graph_god_nodes', 'graph_neighbors', 'graph_node', 'graph_path', 'graph_query', 'graph_stats']);
+  assert.deepEqual(hooks.sort(), ['compaction', 'context', 'generate']);
+
+  const stillHooked = [];
+  plugin.setup({
+    session: { hook: (name) => stillHooked.push(name) },
+    tool: {
+      transform: () => {
+        throw new Error('no tool domain');
+      },
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(stillHooked.length, 3, 'a refused tool editor must not cost the injection');
+});
+
+test('freshness: the vault command decides, and a broken tool is not a stale graph', () => {
+  const atlas = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-graphify-fresh-'));
+  fs.mkdirSync(path.join(atlas, '.graphify', 'tools'), { recursive: true });
+  fs.writeFileSync(path.join(atlas, '.graphify', 'tools', 'graph-freshness.mjs'), '// stub\n');
+
+  assert.deepEqual(askFreshness(atlas, { exec: () => 'graph fresh: built from abc; no corpus input changed\n' }), {
+    state: 'fresh',
+    detail: 'built from abc; no corpus input changed',
+  });
+
+  const stale = Object.assign(new Error('exit 1'), {
+    status: 1,
+    stdout: '',
+    stderr: 'graph-freshness: graph is stale (built from a, HEAD b; 2 corpus inputs changed)\n  note.md\n',
+  });
+  assert.deepEqual(askFreshness(atlas, { exec: () => { throw stale; } }), {
+    state: 'stale',
+    detail: 'graph is stale (built from a, HEAD b; 2 corpus inputs changed)',
+  });
+
+  const broken = Object.assign(new Error('ENOENT'), { status: 127, stdout: '', stderr: 'node: not found' });
+  assert.equal(askFreshness(atlas, { exec: () => { throw broken; } }), null, 'a broken tool is not a verdict');
+  assert.equal(askFreshness(path.join(os.tmpdir(), 'oc-graphify-absent-atlas')), null);
 });
 
 test('setup: the module shape is what OpenCode 2 loads', () => {
