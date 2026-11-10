@@ -274,4 +274,8 @@ The four published packages - `@nathwn12/oc-bifrost`, `oc-flight-deck`, `oc-harn
 
 `nathwn12/gladius` and `nathwn12/puppet` stay public and unarchived: they are the release-asset source for the MCP engine binaries, and archiving either would disable the Actions lane that builds the next engine.
 
+**Where their launcher source lives now.** From 2026-11-10 the launcher is developed here, in `packages/oc-gladius/npm/` and `packages/oc-puppet/npm/`; those two repositories keep the Rust engine and the release lane that builds it. A launcher change therefore has to land here first and be carried to the release repo before that repo's next engine release - otherwise the engine either ships without the fix or with a launcher that no longer matches `engine-manifest.json`. `scripts/check-launchers.mjs` fails the root check when a launcher's version and its engine pin disagree, which is the failure that cost three red release runs on import day.
+
+`nathwn12/oc-stacked` stays public and is now the **older** of two copies: development moved to `packages/oc-stacked/` on 2026-11-10, and that repository has not been retired. Anyone opening it by habit would fork the plugin. Archiving it is the owner's call and has not been made; until it is, the monorepo copy is the source of record and the standalone checkout on disk is a backup.
+
 Published packages' older versions still name their original repositories in immutable npm metadata; that is historical, not a fetch target.
