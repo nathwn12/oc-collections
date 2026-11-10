@@ -668,6 +668,15 @@ async function idleOnce(ctx, dir, sessionID) {
   const record = await liveSession(ctx, sessionID, dir);
   if (!record) return;
 
+  // `node bin/stack.js close run` seals from the command line, where no
+  // tool.execute.after ever fires, so the record that run left is consumed here
+  // instead. It must name the receipt in hand, at this HEAD, and be fresh, or it
+  // arms nothing; the reader deletes it before arming, so a crash between the
+  // two cannot arm twice and a later idle cannot arm on this GO again.
+  if (!intentFor(dir, sessionID) && takeArmMarker(dir)) {
+    writeIntent(dir, sessionID, { attempts: 0, at: new Date().toISOString(), head: head(dir) });
+  }
+
   const intent = intentFor(dir, sessionID);
   const open = Boolean(intent);
   const valid = closeState(dir).length === 0;

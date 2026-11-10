@@ -660,6 +660,93 @@ export async function register(ctx) {
     return 'GO close armed, one compaction, [done]';
   });
 
+  // The fallback CLI is one invocation, not a tool call: `node bin/stack.js close
+  // run` seals and no tool.execute.after ever follows it. The record is then the
+  // whole proof, so the idle gate must consume it as the tool path would.
+  await checkAsync('a CLI close arms the idle with no after hook, and the report closes it once', async () => {
+    const f = fixture();
+    await plugin.setup(f.ctx);
+    await seal(f.dir);
+    assert(fs.existsSync(path.join(f.dir, ARMED)), 'the sealed close wrote no arm record');
+    assert(!fs.existsSync(intentFile(f.dir)), 'the close wrote an intent before any idle');
+    f.messages.push(reportMessage(`SEALED ${head(f.dir).slice(0, 7)}`));
+
+    // No after event: the CLI wrote the record and its process ended.
+    await f.hook('session.experimental.idle')({ sessionID: 'ses_a' });
+    assert(f.titleOf('ses_a') === '[done] retry budget', `the record did not arm the seal: ${f.titleOf('ses_a')}`);
+    assert(f.calls.compact.length === 1, `the CLI seal fired ${f.calls.compact.length} compaction(s), not one`);
+    assert(!fs.existsSync(intentFile(f.dir)), 'the sealed intent was left open');
+    assert(!fs.existsSync(path.join(f.dir, ARMED)), 'the one-shot record survived the idle: a later idle would arm again');
+    assert(!f.calls.synthetic.length, `the CLI seal nudged the session ${f.calls.synthetic.length} time(s)`);
+
+    // The record is gone, so the idle after the seal has nothing to arm and
+    // nothing left to summarise.
+    await f.hook('session.experimental.idle')({ sessionID: 'ses_a' });
+    assert(f.calls.compact.length === 1, `the idle after the seal fired ${f.calls.compact.length} compaction(s)`);
+    assert(
+      f.titleOf('ses_a') === '[done] retry budget',
+      `the idle after the seal regressed the title to ${JSON.stringify(f.titleOf('ses_a'))}`,
+    );
+    f.shut();
+    return 'one run, one idle, one compaction, [done]';
+  });
+
+  // A record is proof a run happened, not a licence: only one that names the
+  // receipt in hand, at this HEAD, inside the window may arm. Each failure below
+  // must leave the session exactly as an idle with only a receipt leaves it.
+  await checkAsync('an arm record naming another receipt arms nothing at idle', async () => {
+    const f = fixture();
+    await plugin.setup(f.ctx);
+    await seal(f.dir);
+    armMarker(f.dir, { receipt_id: crypto.randomUUID() });
+    f.messages.push(reportMessage(`SEALED ${head(f.dir).slice(0, 7)}`));
+
+    await f.hook('session.experimental.idle')({ sessionID: 'ses_a' });
+    assert(!fs.existsSync(intentFile(f.dir)), `a foreign record armed an intent: ${JSON.stringify(intentsOf(f.dir))}`);
+    assert(!isDone(f.titleOf('ses_a')), `a foreign record sealed the session: ${f.titleOf('ses_a')}`);
+    assert(!f.calls.compact.length, `a foreign record fired ${f.calls.compact.length} compaction(s)`);
+    assert(
+      f.titleOf('ses_a') === '[parked] retry budget',
+      `the idle did not behave as before the change: ${JSON.stringify(f.titleOf('ses_a'))}`,
+    );
+    f.shut();
+    return 'receipt_id mismatch, nothing armed';
+  });
+
+  await checkAsync('an arm record ten minutes old arms nothing at idle', async () => {
+    const f = fixture();
+    await plugin.setup(f.ctx);
+    await seal(f.dir);
+    armMarker(f.dir, { at: new Date(Date.now() - 10 * 60 * 1000).toISOString() });
+    f.messages.push(reportMessage(`SEALED ${head(f.dir).slice(0, 7)}`));
+
+    await f.hook('session.experimental.idle')({ sessionID: 'ses_a' });
+    assert(!fs.existsSync(intentFile(f.dir)), `a stale record armed an intent: ${JSON.stringify(intentsOf(f.dir))}`);
+    assert(!isDone(f.titleOf('ses_a')), `a stale record sealed the session: ${f.titleOf('ses_a')}`);
+    assert(!f.calls.compact.length, `a stale record fired ${f.calls.compact.length} compaction(s)`);
+    f.shut();
+    return 'ten minutes old, nothing armed';
+  });
+
+  await checkAsync('an arm record with no receipt arms nothing at idle', async () => {
+    const f = fixture();
+    await plugin.setup(f.ctx);
+    // The shape a run writes, with nothing sealed behind it: no receipt on disk.
+    fs.mkdirSync(path.join(f.dir, '.stack', 'state'), { recursive: true });
+    fs.writeFileSync(
+      path.join(f.dir, ARMED),
+      JSON.stringify({ receipt_id: crypto.randomUUID(), head: head(f.dir), at: new Date().toISOString() }),
+    );
+    f.messages.push(reportMessage(`SEALED ${head(f.dir).slice(0, 7)}`));
+
+    await f.hook('session.experimental.idle')({ sessionID: 'ses_a' });
+    assert(!fs.existsSync(intentFile(f.dir)), `a record with no receipt armed an intent: ${JSON.stringify(intentsOf(f.dir))}`);
+    assert(!isDone(f.titleOf('ses_a')), `a record with no receipt sealed the session: ${f.titleOf('ses_a')}`);
+    assert(!f.calls.compact.length, `a record with no receipt fired ${f.calls.compact.length} compaction(s)`);
+    f.shut();
+    return 'no receipt, nothing armed';
+  });
+
   await checkAsync('a signed receipt edited after signing is refused by its signature', async () => {
     const f = fixture();
     await plugin.setup(f.ctx);
