@@ -289,7 +289,7 @@ describe("flight deck plugin", () => {
     expect(sidebarLines(DEFAULT_CONFIG)).not.toContain("visual rail");
 
     const hostSource = await readFile(join(root, "src", "index.ts"), "utf8");
-    expect(hostSource).toContain('id: "flight-deck.host"');
+    expect(hostSource).toContain('id: "oc-flight-deck.host"');
     expect(hostSource).not.toMatch(/ctx\.(rpc|tool|event|storage)|session\.hook/);
   });
 
