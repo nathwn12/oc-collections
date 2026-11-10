@@ -2,7 +2,7 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import path from "node:path"
 
-import { ALLOWED, PRIVATE, compareVersions, guardRegistry, parseTag, resolvePackage } from "./release-target.mjs"
+import { ALLOWED, compareVersions, guardRegistry, parseTag, resolvePackage } from "./release-target.mjs"
 
 test("parseTag: unscoped name", () => {
   assert.deepEqual(parseTag("oc-flight-deck@0.20.2"), { name: "oc-flight-deck", version: "0.20.2" })
@@ -82,15 +82,6 @@ test("allowlist: exactly the nine releasable packages", () => {
     "oc-talk",
     "rea-shim",
   ])
-})
-
-test("private packages never enter the publish allowlist", () => {
-  const overlap = PRIVATE.filter((name) => ALLOWED.includes(name))
-  assert.deepEqual(
-    overlap,
-    [],
-    `a private package in ALLOWED would be published by the public lane: ${overlap.join(", ")}`,
-  )
 })
 
 test("resolvePackage: rea-shim resolves to its workspace package", () => {

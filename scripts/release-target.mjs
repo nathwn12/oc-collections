@@ -33,11 +33,11 @@ export const ALLOWED = [  "@nathwn12/oc-bifrost",
   "rea-shim",
 ]
 
-// Private packages: versioned, changelogged and tagged by the private lane, and
-// deliberately absent from ALLOWED so the public batch never derives them. They
-// are resolvable so `--package <name>` works, but they must never appear in the
-// publish matrix - the private workflow has no id-token, so it cannot publish.
-export const PRIVATE = ["oc-stacked", "oc-graphify"]
+// Private packages are never released. They are not in ALLOWED, and
+// resolvePackage refuses them by name with the reason below: this repository
+// develops them in-tree and installs them by junction, so a version, a tag or a
+// changelog close is not something they have. Adding one to ALLOWED is the
+// mistake the refusal exists to catch.
 
 const ROOT = path.resolve(import.meta.dirname, "..")
 
@@ -99,8 +99,8 @@ export function compareVersions(a, b) {
 }
 
 export function resolvePackage(name, root = ROOT) {
-  if (!ALLOWED.includes(name) && !PRIVATE.includes(name)) {
-    throw new Error(`"${name}" is not a releasable package; allowed: ${[...ALLOWED, ...PRIVATE].join(", ")}`)
+  if (!ALLOWED.includes(name)) {
+    throw new Error(`"${name}" is not a releasable package; allowed: ${ALLOWED.join(", ")}`)
   }
   // Resolve by the manifest's name, not by the directory: a scoped package's
   // directory is packages/<unscoped-name> (e.g. packages/oc-bifrost).
@@ -119,14 +119,15 @@ export function resolvePackage(name, root = ROOT) {
   if (!found) throw new Error(`no workspace package named "${name}" under packages/`)
   const { dir, pkg } = found
   if (typeof pkg.version !== "string" || pkg.version.length === 0) throw new Error(`${name} has no version`)
-  // A private package can still be released - versioned, changelogged and
-  // tagged - it just has no registry step. The workflow reads `publish` from
-  // the matrix and skips the publish and the registry verify for it.
-  const isPrivate = pkg.private === true
-  if (!isPrivate && name.startsWith("@") && pkg.publishConfig?.access !== "public") {
+  if (pkg.private === true) {
+    throw new Error(
+      `${name} is private and is never released; it is developed in-tree and installed by junction`,
+    )
+  }
+  if (name.startsWith("@") && pkg.publishConfig?.access !== "public") {
     throw new Error(`${name} is scoped and lacks publishConfig.access: public`)
   }
-  return { name, version: pkg.version, dir, private: isPrivate }
+  return { name, version: pkg.version, dir }
 }
 
 /** Fail unless the target is strictly newer than every listed published version. */

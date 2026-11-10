@@ -51,8 +51,6 @@
  *   --all                         every releasable package with a derived
  *                                 version, in the allowlist order; the push
  *                                 lane's plan, so it implies --prepare
- *   --all-private                 the same, over PRIVATE only: the private
- *                                 lane's plan, which tags and never publishes
  *   --all --json                  `{ packages: [...], skipped: [...] }`
  *   --package <name> --version <v> --write-cells
  *                                 write <v> into the package manifest, the root
@@ -83,7 +81,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 
 import { ROOT } from "./workspace-plan.mjs"
-import { ALLOWED, PRIVATE, compareVersions, parseTag, resolvePackage } from "./release-target.mjs"
+import { ALLOWED, compareVersions, parseTag, resolvePackage } from "./release-target.mjs"
 
 // Conventional types this lane understands. A type outside this table is
 // refused rather than ignored: `feats: ...` is a typo for a minor bump, and
@@ -526,12 +524,6 @@ export function selectAll(results) {
  *  commit that touches one package is listed for that package alone. */
 export function deriveAll(prepare = true, root = ROOT) {
   return selectAll(ALLOWED.map((name) => runDerivation(name, prepare, root)))
-}
-
-/** Derive every private package. Same split, same gates; the caller must be a
- *  lane with no publish capability. Never feeds the public batch. */
-export function deriveAllPrivate(prepare = true, root = ROOT) {
-  return selectAll(PRIVATE.map((name) => runDerivation(name, prepare, root)))
 }
 
 export function renderAll({ release, skipped }) {
@@ -1253,7 +1245,6 @@ function parseArgs(argv) {
     dryRun: false,
     json: false,
     all: false,
-    allPrivate: false,
     prepare: false,
   }
   for (let i = 0; i < argv.length; i++) {
@@ -1262,7 +1253,6 @@ function parseArgs(argv) {
     else if (arg === "--assert-cells") options.mode = "assert-cells"
     else if (arg === "--write-cells") options.mode = "write-cells"
     else if (arg === "--all") options.all = true
-    else if (arg === "--all-private") options.allPrivate = true
     else if (arg === "--prepare") options.prepare = true
     else if (arg === "--dry-run") options.dryRun = true
     else if (arg === "--json") options.json = true
@@ -1336,11 +1326,10 @@ function main() {
       return
     }
 
-    if (options.all || options.allPrivate) {
+    if (options.all) {
       // Batch plan, not a gate: a package that refuses is reported here and
       // skipped by the run, never allowed to stop the packages beside it.
-      // `--all-private` is the private lane's plan and reads PRIVATE only.
-      const split = options.allPrivate ? deriveAllPrivate(options.prepare) : deriveAll()
+      const split = deriveAll()
       if (options.json) {
         console.log(JSON.stringify({ packages: split.release, skipped: split.skipped }, null, 2))
       } else {
