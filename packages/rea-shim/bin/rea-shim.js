@@ -23,6 +23,8 @@
 //   - spawned as cmd.exe /d /c <npx ...> with stdio inherited, so the child
 //     IS the MCP channel; ALL launcher chatter goes to stderr, stdout belongs
 //     to the JSON-RPC frames. No stdout writes exist on the run path.
+//     windowsHide: true keeps the child from opening a console window; the
+//     inherited stdio is the transport either way.
 //   - env injected verbatim: GHIDRA_INSTALL_DIR, JAVA_HOME (+ <jdk>\bin
 //     prepended to PATH), REA_GHIDRA_STARTUP_TIMEOUT_MS=1500000.
 //   - the child exit code is forwarded; the shared console lets Ctrl+C reach
@@ -110,7 +112,7 @@ function runServer(jdk, ghidra, agents) {
   const args = childArgv(agents.spec);
   log(`starting upstream: cmd.exe ${args.join(' ')}`);
   log(`env: GHIDRA_INSTALL_DIR=${ghidra.dir} JAVA_HOME=${jdk.home} ${STARTUP_TIMEOUT_ENV}=${STARTUP_TIMEOUT_MS}`);
-  const child = spawn('cmd.exe', args, { stdio: 'inherit', env: childEnv(jdk.home, ghidra.dir) });
+  const child = spawn('cmd.exe', args, { stdio: 'inherit', env: childEnv(jdk.home, ghidra.dir), windowsHide: true });
   child.on('error', (error) => fail(`cannot start child: ${error.message}`));
   child.on('exit', (code, signal) => {
     if (signal) {

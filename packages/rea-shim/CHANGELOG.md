@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- The MCP transport child (`cmd.exe /d /c npx -y rea-agents@… --mcp`) now passes `windowsHide: true`: the launcher no longer opens a console window that steals focus on a desktop launch. The stdio transport is unchanged.
+
 ## [0.2.2] - 2026-10-29
 
 ### Added
