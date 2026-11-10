@@ -295,7 +295,7 @@ describe("flight deck plugin", () => {
 
   test("registers the sidebar slot by default and removes it on cleanup", async () => {
     const { context, slots } = stubContext();
-    expect(flightDeck.id).toBe("flight-deck-tui");
+    expect(flightDeck.id).toBe("oc-flight-deck");
     const cleanup = await flightDeck.setup(context);
     expect(cleanup).toBeTypeOf("function");
     // The empty footer default registers no footer slot, and the prompt footer

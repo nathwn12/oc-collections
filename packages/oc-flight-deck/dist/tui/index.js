@@ -4255,7 +4255,7 @@ function createTpsReader(context, live, scope = DEFAULT_TPS_SCOPE, realtime) {
 // src/tui/index.tsx
 import { jsx, jsxs } from "@opentui/solid/jsx-runtime";
 var tui_default = Plugin.define({
-  id: "flight-deck-tui",
+  id: "oc-flight-deck",
   setup(context) {
     const file = loadConfigFile();
     const { config, issues } = resolveConfig(mergeOptions(file.options, context.options));

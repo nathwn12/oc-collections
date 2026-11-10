@@ -45,7 +45,7 @@ import { createTpsReader } from "./session-tps.js";
 // See flight-deck.example.jsonc for the commented template.
 
 export default Plugin.define({
-  id: "flight-deck-tui",
+  id: "oc-flight-deck",
   setup(context) {
     const file = loadConfigFile();
     const { config, issues } = resolveConfig(mergeOptions(file.options, context.options));
