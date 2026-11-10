@@ -193,6 +193,19 @@ node scripts/install.mjs --remove
 
 ---
 
+## Fallback CLI
+
+The gate has to work when the plugin does not load, so four commands run without OpenCode:
+
+```text
+node bin/stack.js check init|run|show
+node bin/stack.js ready --id <seam> [--lean]
+node bin/stack.js clean [--op sweep|report]
+node bin/stack.js ledger digest
+```
+
+`--dir <path>` picks the repository; exit codes are 0 success, 1 refusal, 2 bad usage. The CLI and the plugin tools share one implementation in `lib/`, so the CLI never reimplements a rule.
+
 ## First run
 
 ```text

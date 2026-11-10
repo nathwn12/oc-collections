@@ -227,10 +227,113 @@ check('stacked teaches sharp output, not a separate voice section', () => {
   assert(stacked, 'stacked is not registered');
   assert(/^## Sharp output$/m.test(stacked.content), 'stacked has no "## Sharp output" section');
   assert(!/^## Voice$/m.test(stacked.content), '"## Voice" still exists as a separate section');
-  assert(/Numbers over adjectives/.test(stacked.content), 'the section does not ask for numbers');
-  assert(bootstrap().includes('Answer sharp'), 'the bootstrap does not carry the sharp-output line');
-  assert(/one screen/.test(bootstrap()), 'the bootstrap line does not bound the length');
-  return 'sharp output in skill and bootstrap';
+  assert(/Lead with the next action/.test(stacked.content), 'the section does not lead with an action');
+  assert(bootstrap().includes('Answer for action'), 'the bootstrap does not carry the action line');
+  assert(/five items max/.test(bootstrap()), 'the bootstrap line does not cap the list');
+  return 'action contract in skill and bootstrap';
+});
+
+check('sharp output is an action contract with a pre-send check', () => {
+  const stacked = skills.find((s) => s.id === 'stacked').content;
+  for (const phrase of ['Lead with the next action', 'Cap visible lists at five', 'No preamble', 'Pre-send check']) {
+    assert(stacked.includes(phrase), `stacked is missing "${phrase}"`);
+  }
+  const soul = fs.readFileSync(path.join(repo, 'SOUL.md'), 'utf8');
+  assert(soul.includes('does it need to exist'), 'SOUL.md has no laziness ladder');
+  assert(/deletion beats addition/i.test(soul), 'SOUL.md does not say deletion beats addition');
+  for (const id of ['stacked-pls', 'stacked-employee']) {
+    assert(/what you skipped/.test(skills.find((s) => s.id === id).content), `${id} has no honest tail`);
+  }
+  const eng = fs.readFileSync(path.join(repo, 'skills', 'stacked-employee', 'references', 'engineering.md'), 'utf8');
+  assert(/does it need to exist/i.test(eng), 'the engineering handbook has no ladder');
+  return 'ten rules, pre-send check, ladder in SOUL and engineering';
+});
+
+check('the lead writes savepoints', () => {
+  const lead = fs.readFileSync(path.join(repo, 'skills', 'stacked-lead', 'SKILL.md'), 'utf8');
+  assert(/^## Savepoints$/m.test(lead), 'stacked-lead has no Savepoints section');
+  assert(lead.includes('chore: savepoint'), 'stacked-lead does not name the savepoint commit type');
+  assert(!lead.includes('`savepoint:`'), 'stacked-lead still uses savepoint: as a prefix');
+  const owner = fs.readFileSync(path.join(repo, 'OWNER.md'), 'utf8');
+  assert(/never be allowed to get dirty/.test(owner), 'OWNER.md has no savepoint rule');
+  return 'five savepoints, chore: type, owner rule';
+});
+
+check('the session-title convention is one vocabulary', () => {
+  const owner = fs.readFileSync(path.join(repo, 'OWNER.md'), 'utf8');
+  for (const status of ['[active]', '[parked]', '[done]']) {
+    assert(owner.includes(status), `OWNER.md is missing ${status}`);
+  }
+  assert(/immutable/.test(owner), 'OWNER.md does not make [done] immutable');
+  for (const id of ['stacked-lead', 'stacked-pls']) {
+    assert(fs.readFileSync(path.join(repo, 'skills', id, 'SKILL.md'), 'utf8').includes('[done]'), `${id} never sets [done]`);
+  }
+  return 'three statuses, immutable [done], both skills set it';
+});
+
+// ---------------------------------------------------------------- the fallback CLI
+const cli = path.join(repo, 'bin', 'stack.js');
+const cliRun = (args, cwd) =>
+  spawnSync(process.execPath, [cli, ...args], { cwd, encoding: 'utf8', windowsHide: true });
+
+check('the fallback CLI answers --help with every command', () => {
+  const r = cliRun(['--help'], repo);
+  assert(r.status === 0, `--help exited ${r.status}: ${r.stderr}`);
+  for (const name of ['check', 'ready', 'clean', 'ledger']) assert(r.stdout.includes(name), `--help never names ${name}`);
+  return 'check, ready, clean, ledger';
+});
+
+check('bad usage exits 2', () => {
+  const missing = cliRun(['ready'], repo);
+  assert(missing.status === 2, `ready with no --id exited ${missing.status}`);
+  const unknown = cliRun(['wizard'], repo);
+  assert(unknown.status === 2, `an unknown command exited ${unknown.status}`);
+  return 'missing --id and unknown command both exit 2';
+});
+
+await checkAsync('the CLI runs the gate with no plugin loaded', async () => {
+  const d = tmpRepo();
+  fs.writeFileSync(
+    path.join(d, 'package.json'),
+    JSON.stringify({ name: 'x', scripts: { test: 'node -e "process.exit(0)"' } }),
+  );
+  const init = cliRun(['check', 'init'], d);
+  assert(init.status === 0, `check init exited ${init.status}: ${init.stdout}${init.stderr}`);
+  const run = cliRun(['check', 'run'], d);
+  assert(run.status === 0, `check run exited ${run.status}: ${run.stdout}${run.stderr}`);
+  const refused = cliRun(['ready', '--id', 'missing'], d);
+  assert(refused.status === 1, `ready on a missing seam exited ${refused.status}`);
+  assert(/missing/.test(refused.stdout), `the refusal did not name the seam:\n${refused.stdout}`);
+  fs.rmSync(d, { recursive: true, force: true });
+  return 'init 0, run 0, refusal 1';
+});
+
+check('the CLI cannot depend on the plugin entry point', () => {
+  const raw = fs.readFileSync(path.join(repo, 'bin', 'stack.js'), 'utf8');
+  assert(!/from\s+['"]\.\.\/index\.js['"]/.test(raw), 'bin/stack.js imports the plugin entry point');
+  assert(!/\bspawn\(/.test(raw), 'bin/stack.js spawns a process of its own');
+  const pkg = JSON.parse(fs.readFileSync(path.join(repo, 'package.json'), 'utf8'));
+  assert(pkg.bin && pkg.bin.stack === './bin/stack.js', 'package.json has no stack bin entry');
+  return 'no index.js import, no spawn, bin declared';
+});
+
+check('the release convention is written down and wired', () => {
+  const p = path.join(repo, 'RELEASING.md');
+  assert(fs.existsSync(p), 'RELEASING.md is missing');
+  const rel = fs.readFileSync(p, 'utf8');
+  for (const phrase of ['tag', 'npm view', 'never force-push', 'Conventional Commits', 'imperative']) {
+    assert(new RegExp(phrase, 'i').test(rel), `RELEASING.md is missing "${phrase}"`);
+  }
+  assert(rel.includes('<type>(<scope>): <imperative summary>'), 'RELEASING.md has no commit format');
+  const ship = fs.readFileSync(path.join(repo, 'skills', 'stacked-ship', 'SKILL.md'), 'utf8');
+  assert(/^## Release$/m.test(ship), 'stacked-ship has no "## Release" section');
+  assert(ship.includes('`<type>(<scope>): <imperative summary>`'), 'stacked-ship does not state the commit format');
+  const pkg = JSON.parse(fs.readFileSync(path.join(repo, 'package.json'), 'utf8'));
+  assert(pkg.scripts && pkg.scripts.prepublishOnly, 'package.json has no prepublishOnly: the suite is not the publish gate');
+  assert(pkg.private === true, 'package.json is no longer private, so publishing is no longer an owner decision');
+  const owner = fs.readFileSync(path.join(repo, 'OWNER.md'), 'utf8');
+  assert(/Adopt the upstream format/.test(owner), 'OWNER.md does not adopt the upstream format');
+  return 'RELEASING.md, ship, prepublishOnly, owner line';
 });
 
 check('stacked-pls answers an invocation with no task', () => {
@@ -1607,7 +1710,7 @@ check('OWNER.md holds the standing decisions', () => {
   assert(/source hierarchy/i.test(text), 'OWNER.md does not name the source hierarchy');
   assert(/upstream code and docs at the pinned version/i.test(text), 'OWNER.md has no tier 1');
   assert(/upstream wins until a pinned test says otherwise/i.test(text), 'OWNER.md has no precedence rule');
-  assert(/money above the standing cap/.test(text), 'OWNER.md does not carry the money cap');
+  assert(/money above the standing cap/i.test(text), 'OWNER.md does not carry the money cap');
   return 'standing decisions, source hierarchy, five stops';
 });
 

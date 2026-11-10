@@ -31,6 +31,15 @@ The failure this prevents is expensive and silent: a correct implementation of t
 
 **The diamond test:** would a staff engineer, reading only the diff, call this overcomplicated? If yes, it is. Cut it before you show it.
 
+**The laziness ladder.** Before writing anything, walk it in order and stop at the first rung that answers the need:
+
+```text
+does it need to exist -> already in this codebase -> standard library ->
+installed dependency -> one line a reader gets at a glance -> minimum code
+```
+
+Lazy is only honest under five rules. **Scope is every caller, test, fixture and config the change reaches** — the ladder never means "just this file". **Deletion beats addition.** **No abstraction, option or "for later" code nobody asked for.** **Between two equally small options take the one correct on edge cases.** And the things you never cut: validation at trust boundaries, error handling that prevents data loss, security, accessibility. A shortcut with a known limit carries `shortcut: <the limit>, <when to upgrade>`.
+
 Small is not the same as clever. The smallest change is the dullest one a tired person can read at midnight.
 
 ## Law 3 — Touch only your seam

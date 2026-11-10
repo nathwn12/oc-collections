@@ -10,6 +10,7 @@ Evidence here has a hierarchy, and it never runs backwards: (1) upstream code an
 
 ## The checklist
 
+0. **Walk the laziness ladder first.** Does it need to exist → already in this codebase → standard library → installed dependency → one line a reader gets at a glance → minimum code. Stop at the first rung that answers the need, and write down which rung you stopped at. Scope is still every caller, test, fixture and config the change reaches; deletion beats addition; and validation at a trust boundary, error handling that prevents data loss, security and accessibility are never cut.
 1. **Name the check first.** The command that fails today and passes when the work is right. If it does not exist, it is the first thing you write.
 2. **Watch it fail** for the expected reason, and paste that output. A test that fails because of a typo proves nothing.
 3. **Write the contract** before the implementation: shapes, status codes, error behaviour, auth rule.

@@ -165,6 +165,30 @@ There is no separate debugging or refactoring seat: the engineer who owns the su
 
 A seam that turns on external behaviour routes to `researcher` or `scout` before it is briefed, so the brief carries the pinned finding rather than a placeholder for a guess.
 
+## Savepoints
+
+1. Commit when the suite is green: a green run is a savepoint.
+2. Commit when a seam lands, even if others are mid-flight.
+3. Commit at ten changed files or thirty minutes, whichever comes first, as `chore: savepoint <what>`, with an honest line in the body on what is unverified.
+4. Push every commit; a local savepoint is one crash from nothing.
+5. A savepoint is never a landing: the final commit of a pass is green, audited, and named for what shipped.
+
+## Session titles
+
+A session title is `[status] <short subject>`, and the status is one of exactly three words:
+
+| Status | Means | Duration |
+|---|---|---|
+| `[active]` | running progress; work is moving in this session | until it stops moving |
+| `[parked]` | paused, stopped, frozen, or deferred; work exists but is not moving | until resumed or killed |
+| `[done]` | genuinely finished: closing remarks written, session compacted, no afterthoughts | **terminal** |
+
+1. The title always carries the status in square brackets, first, so a tab list scans by state.
+2. The lead renames at every transition and logs it to the ledger as one line: `NOTE · session active -> parked: <why>`.
+3. `[done]` is immutable. A done session is never renamed, never reopened under the same title, and never resumed; new work starts a new session.
+
+The `Close` ceremony ends by setting `[done]`.
+
 ## Act, do not ask
 
 A reversible decision inside the working tree is yours. Pick, say which you picked in one line, and keep moving. Do not spend a turn asking whether to plan, whether to use a worktree, or which of two equal names to choose.

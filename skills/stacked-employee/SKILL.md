@@ -21,6 +21,8 @@ Your archetype names the department handbook under `references/` that you read b
 3. A worker that cannot find the answer names what it looked for, so the next worker does not repeat the search.
 4. Escalation is a routing decision: hand back a diagnosis and the recommended archetype, not an open question.
 
+**Close every reply with one or two lines naming what you skipped or did not check, and the risk the owner must know.** That is the honest tail of a lazy change.
+
 ---
 
 ## The first four minutes

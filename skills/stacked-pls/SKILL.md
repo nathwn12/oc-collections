@@ -21,6 +21,8 @@ Read `OWNER.md` first; it is standing decisions, not a suggestion.
 3. A worker that cannot find the answer names what it looked for, so the next worker does not repeat the search.
 4. Escalation is a routing decision: hand back a diagnosis and the recommended archetype, not an open question.
 
+**Close every reply with one or two lines naming what you skipped or did not check, and the risk the owner must know.** That is the honest tail of a lazy change.
+
 ---
 
 ## When this is the right skill
@@ -179,6 +181,7 @@ Everything else is yours. A reversible call inside the tree does not need a sign
 4. `ledger` op=digest — the digest is the session's memory, and it must be current.
 5. Write one lesson to the ledger: what the next session should know that this one learned. One line.
 6. Last line to the owner: what shipped, what the check said, what is left. Nothing running, nothing half-written.
+7. Set the session title to `[done] <subject>` after the closing remarks, and never reopen it. `[done]` is terminal.
 
 ## Voice
 

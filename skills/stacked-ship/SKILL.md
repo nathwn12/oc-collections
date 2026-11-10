@@ -31,30 +31,21 @@ If one is missing, it is not a ship. It is a push with a nicer name.
 
 One commit per seam. Two seams in one commit cannot be reverted separately, cannot be reviewed separately, and cannot be blamed separately.
 
-**Subject:** imperative, plain words. No ticket prefix, no agent name, no emoji. A reader in two years should know what changed without opening the diff.
+**Subject:** Conventional Commits, imperative — `<type>(<scope>): <imperative summary>`. No ticket prefix, no agent name, no emoji. A reader in two years should know what changed without opening the diff.
 
-**Body,** in this order:
-
-1. What changed, and why — the reason the seam existed.
-2. The check output, pasted, not summarised.
-3. The `Unverified:` line, when it is not `none`.
+**Body** only when the diff is not self-explanatory: the non-obvious why, a breaking change, a migration note, or an issue reference. The check output belongs in the report and the pull request body, not here, unless the check is the change.
 
 ```text
-Retry the upload when the connection drops
+fix(upload): retry when the connection drops
 
-The uploader treated a dropped connection as a permanent failure, so a
-flaky network surfaced as "file rejected". It now retries twice with a
-short backoff, then fails with the last real error.
+A dropped connection was treated as a permanent failure, so a flaky
+network surfaced as "file rejected". It now retries twice with a short
+backoff, then fails with the last real error.
 
-Check: npm test -- upload
-  upload > survives a dropped connection   ok
-  upload > gives up after two retries      ok
-  12 passing
-
-Unverified: the 30s timeout path — needs a proxy I do not have locally.
+Closes #41
 ```
 
-The last two blocks are the ones people skip. They are the ones the next person needs.
+The body is the block people skip. It is the one the next person needs.
 
 ## Branch finish
 
@@ -68,15 +59,17 @@ Read the ledger before you pick a verb. The recorded decision wins over your tas
 
 Never rebase a branch someone else has. Never squash two seams into one commit — that is not squash, that is an un-ship.
 
-## Release, when there is one
+## Release
 
-Not every seam is a release. When it is:
+Releases follow `RELEASING.md`; this section is the shape, not the manual.
 
-- Changelog entry under `Unreleased`, in the user's words. "Retries a dropped upload" beats "refactored UploaderClient".
-- Version bump only in the files the repo designates. If you have to guess which files, that is a seam of its own.
-- Tag after `check` runs on the commit you are tagging.
+Three rules get broken, so they are the three to say out loud:
 
-A version chosen before the check is a guess. A tag on an unverified commit is a promise you cannot keep.
+- **A tag names audited work**, never a savepoint.
+- **The manifest and the tag agree** — `package.json` carries the version that is tagged.
+- **Publishing happens from a clean tree on `main` only**, and this package stays `"private": true` until the owner unblocks it.
+
+The commit format is Conventional Commits: `<type>(<scope>): <imperative summary>`, one seam per commit. The report and the pull request carry the evidence; the commit carries the why.
 
 ## After a revert
 

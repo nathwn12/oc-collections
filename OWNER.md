@@ -41,6 +41,16 @@ Every claim in this repository is ranked by where it came from. The order is fix
 3. A worker that cannot find the answer names what it looked for, so the next worker does not repeat the search. *(2026-11-10)*
 4. Escalation is a routing decision: hand back a diagnosis and the recommended archetype, not an open question. *(2026-11-10)*
 
+## Savepoints
+
+- Commit on a green suite: a green run is a savepoint.
+- Commit when a seam lands, even while others are mid-flight.
+- Commit at ten changed files or thirty minutes, whichever comes first, and mark the message `savepoint:` with an honest line on what is unverified.
+- Push every commit; a local savepoint is one crash from nothing.
+- A savepoint is never a landing: the last commit of a pass is green, audited, and named for what shipped.
+
+The tree must never be allowed to get dirty enough that a day of work is uncommitted. *(2026-11-10)*
+
 ## Stops
 
 The lead stops and asks the owner for exactly five things, and no others. *(2026-11-10)*
@@ -50,6 +60,28 @@ The lead stops and asks the owner for exactly five things, and no others. *(2026
 3. A security-sensitive act.
 4. An outward side effect that norms say you ask about — a merge, a push, a publish.
 5. A request with no path: a brief so broken that every path is a guess.
+
+## Releases
+
+- Releases follow `RELEASING.md`; a version is tagged only after the suite is green and an auditor has passed the pass it belongs to. *(2026-11-10)*
+- **Adopt the upstream format when one exists** — Conventional Commits for messages, semver for versions, the registry's own metadata schema, the host's own config schema, the project's own lint and test commands. Invent a house format only where upstream has none, and say in one line why. *(2026-11-10)*
+- The current version lives in `package.json`; do not restate it here, because two copies of a version is one stale copy. *(2026-11-10)*
+
+## Session titles
+
+A session title is `[status] <short subject>`, and the status is one of exactly three words — no synonyms, no extra vocabulary. *(2026-11-10)*
+
+| Status | Means | Duration |
+|---|---|---|
+| `[active]` | running progress; work is moving in this session | until it stops moving |
+| `[parked]` | paused, stopped, frozen, or deferred; work exists but is not moving | until resumed or killed |
+| `[done]` | genuinely finished: closing remarks written, session compacted, no afterthoughts | **terminal** |
+
+1. The title always carries the status in square brackets, first, so a tab list scans by state.
+2. The subject is short and names the work, not the week: `[active] oc-stacked · 24-agent org`.
+3. The lead renames at every transition and logs it to the ledger as one line: `NOTE · session active -> parked: <why>`.
+4. `[done]` is immutable. A done session is never renamed, never reopened under the same title, and never resumed; new work starts a new session. The fate is sealed by the closing remarks, which are final.
+5. No fourth status, no colour, no emoji, no date suffix.
 
 ## Model routing
 
