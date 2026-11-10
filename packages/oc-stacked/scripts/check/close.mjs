@@ -153,6 +153,24 @@ export async function register(ctx) {
     return 'dirty.txt named, no receipt';
   });
 
+  await checkAsync('a check that commits its own work is a NO-GO with no receipt', async () => {
+    // The check is green and leaves a clean tree: only the HEAD it started at
+    // catches a command that committed the tree it was supposed to prove.
+    const d = configuredRepo(
+      `node -e "require('fs').writeFileSync('x','x');require('child_process').execSync('git add x && git -c user.email=a@b -c user.name=a commit -qm x')"`,
+    );
+    const before = head(d);
+    assert(GO.test(await preflightOf(d)), 'the fixture was not GO before the checks ran');
+
+    const text = await seal(d, 'a check that commits has proved nothing about the tree');
+    assert(head(d) !== before, 'the fixture check did not move HEAD, so this case proved nothing');
+    assert(NO_GO.test(text), `a check that committed its own work still sealed:\n${text}`);
+    assert(/HEAD moved/.test(text), `the moved HEAD was not the named reason:\n${text}`);
+    assert(!fs.existsSync(closeFile(d)), 'a close whose check committed under it wrote a receipt');
+    shut(d);
+    return 'HEAD moved named, no receipt';
+  });
+
   await checkAsync('a close with no lesson is refused before any work and leaves the receipt alone', async () => {
     const d = configuredRepo();
     writeReceipt(d);
@@ -283,6 +301,52 @@ export async function register(ctx) {
     assert(GO.test(passed), `a later PASS did not clear the FAIL:\n${passed}`);
     shut(d);
     return 'no line blocks, FAIL blocks, PASS clears';
+  });
+
+  await checkAsync('a PASS verdict clears a hyphenated seam, even when the id says fail', async () => {
+    const d = configuredRepo();
+    writeIndex(d, [
+      { id: 'pass-gate', status: 'landed' },
+      { id: 'fail-gate', status: 'landed' },
+    ]);
+    const sha = head(d);
+
+    await runIn(d, 'ledger', { op: 'log', kind: 'AUDIT', text: `pass-gate@${sha} PASS` });
+    const one = await blockersOf(d);
+    assert(!/pass-gate landed with no AUDIT/.test(one), `the pass-gate audit did not name its seam: ${one}`);
+    assert(/fail-gate landed with no AUDIT/.test(one), `the unaudited fail-gate was not named: ${one}`);
+
+    // The id contains `fail`; only the verdict word may decide, so this clears.
+    await runIn(d, 'ledger', { op: 'log', kind: 'AUDIT', text: `fail-gate@${sha} PASS` });
+    const text = await preflightOf(d);
+    assert(GO.test(text), `a PASS under a hyphenated fail-gate id did not clear it:\n${text}`);
+    assert(!/ambiguous/.test(await blockersOf(d)), 'a PASS inside a hyphenated id was read as two verdicts');
+    shut(d);
+    return 'pass-gate@sha PASS and fail-gate@sha PASS both cleared';
+  });
+
+  await checkAsync('an inconclusive audit and a FAIL audit block a hyphenated seam', async () => {
+    const d = configuredRepo();
+    writeIndex(d, [
+      { id: 'pass-gate', status: 'landed' },
+      { id: 'fail-gate', status: 'landed' },
+    ]);
+    const sha = head(d);
+
+    // `pass` is the id, not a verdict: the line says neither word.
+    await runIn(d, 'ledger', { op: 'log', kind: 'AUDIT', text: 'pass-gate: inconclusive, needs work' });
+    await runIn(d, 'ledger', { op: 'log', kind: 'AUDIT', text: `fail-gate@${sha} FAIL` });
+
+    const text = await preflightOf(d);
+    assert(BLOCKED.test(text), `an inconclusive and a failed audit were GO:\n${text}`);
+    const blockers = await blockersOf(d);
+    assert(
+      /the latest AUDIT for pass-gate is ambiguous: it says neither PASS nor FAIL/.test(blockers),
+      `the word inside the id was read as a verdict: ${blockers}`,
+    );
+    assert(/the latest AUDIT for fail-gate is FAIL/.test(blockers), `the FAIL on fail-gate was not the blocker: ${blockers}`);
+    shut(d);
+    return 'inconclusive is ambiguous, FAIL is FAIL';
   });
 
   await checkAsync('an unanswered ASK blocks the close, and an ANSWER clears it', async () => {
