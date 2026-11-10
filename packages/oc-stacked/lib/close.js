@@ -126,15 +126,36 @@ const idsNamed = (text) =>
 const PASS = /\bPASS\b/i;
 const FAIL = /\bFAIL\b/i;
 
+const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * The audit text with every seam id taken out, whole and attached to a `@sha`.
+ * An id is a name, not a verdict: `fail-gate: PASS` says pass, and reading the
+ * `fail` inside the id read it as both. Longest first, so an id that ends
+ * another id's prefix cannot leave a fragment behind.
+ */
+const withoutIds = (text, ids) => {
+  const named = (Array.isArray(ids) ? ids : [])
+    .filter((id) => typeof id === 'string' && id.trim())
+    .map((id) => id.trim())
+    .sort((a, b) => b.length - a.length);
+  if (!named.length) return String(text);
+  const pattern = named.map(escapeRe).join('|');
+  return String(text).replace(new RegExp(`(?:${pattern})(?:@[A-Za-z0-9]+)?`, 'gi'), ' ');
+};
+
 /**
  * What one AUDIT line says, as a word and not as a substring. `bypass:
  * inconclusive, needs work` mentions neither verdict, and a `/pass/i` test read
- * it as a pass. A line with both words, or with neither, is not a verdict and
- * blocks: only a standalone FAIL blocks, only a standalone PASS clears.
+ * it as a pass. The ids the line names are removed first, so a verdict word
+ * inside an id cannot outvote the verdict. A line with both words, or with
+ * neither, is not a verdict and blocks: only a standalone FAIL blocks, only a
+ * standalone PASS clears.
  */
-const verdictOf = (text) => {
-  const pass = PASS.test(text);
-  const fail = FAIL.test(text);
+const verdictOf = (text, ids = []) => {
+  const said = withoutIds(text, ids);
+  const pass = PASS.test(said);
+  const fail = FAIL.test(said);
   if (pass && fail) return 'both';
   if (pass) return 'pass';
   if (fail) return 'fail';
@@ -178,6 +199,9 @@ export async function preflight(dir, { lesson = '', atlas: runAtlas = true } = {
     blockers.push(`\`${PATHS.briefsIndex}\` is not a list of briefs, so no seam can be checked.`);
   } else {
     const briefs = index.value;
+    // The ids are names, never verdicts: the classifier strips them before it
+    // reads PASS or FAIL, so `fail-gate: PASS` is a pass.
+    const ids = briefs.map((brief) => brief && brief.id);
     // The latest AUDIT text per named id: an old verdict cannot outvote a new one,
     // and a FAIL stands until a later line says PASS.
     const audits = new Map();
@@ -196,7 +220,7 @@ export async function preflight(dir, { lesson = '', atlas: runAtlas = true } = {
           rows.push(['seam', `${brief.id} — landed, unaudited`, 'record an AUDIT line naming it']);
           continue;
         }
-        const verdictOfAudit = verdictOf(audit);
+        const verdictOfAudit = verdictOf(audit, ids);
         if (verdictOfAudit === 'fail') {
           blockers.push(`the latest AUDIT for ${brief.id} is FAIL.`);
           rows.push(['seam', `${brief.id} — latest AUDIT is FAIL`, 'fix what the audit found, then audit it again']);
