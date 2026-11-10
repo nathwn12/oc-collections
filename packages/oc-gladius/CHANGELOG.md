@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- The launcher spawns the provisioned engine with `windowsHide: true`, so a desktop launch no longer opens a console window. The inherited stdio transport is unchanged.
+
 ### Added
 
 - The release version is derived from history instead of typed: `scripts/derive-release.mjs` reads the commits since the last `vX.Y.Z` tag, classifies them (breaking -> major, `feat` -> minor, `fix`/`perf` -> patch, and on 0.x a major hop moves the minor), refuses when there is nothing releasable, when a subject is not a Conventional Commit, when `## [Unreleased]` is empty, or when a committed manifest is ahead of the derivation, and prints every commit it considered and every one it ignored.
