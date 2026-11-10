@@ -200,11 +200,21 @@ test('source: no command rewriting hook', () => {
 });
 
 test('setup: registers the three request hooks on a host that offers them', () => {
-  const hooks = new Map();
-  const ctx = { session: { hook: (name, fn) => hooks.set(name, fn) }, location: { directory: 'Q:\\v' } };
-  plugin.setup(ctx);
-  assert.deepEqual([...hooks.keys()].sort(), ['compaction', 'context', 'generate']);
-});
+  // A clean runner has no atlas record, and setup returns early without one.
+  // Point it at a fixture so this asserts hook registration, not whether this
+  // machine happens to be configured.
+  const previous = process.env.OC_GRAPHIFY_CONFIG
+  process.env.OC_GRAPHIFY_CONFIG = tmp('hooks-config.json', JSON.stringify({ atlas: path.join(os.tmpdir(), 'atlas') }))
+  try {
+    const hooks = new Map()
+    const ctx = { session: { hook: (name, fn) => hooks.set(name, fn) }, location: { directory: 'Q:\\v' } }
+    plugin.setup(ctx)
+    assert.deepEqual([...hooks.keys()].sort(), ['compaction', 'context', 'generate'])
+  } finally {
+    if (previous === undefined) delete process.env.OC_GRAPHIFY_CONFIG
+    else process.env.OC_GRAPHIFY_CONFIG = previous
+  }
+})
 
 test('setup: injecting puts the block once, in front of the first user message', { skip: !hasHost }, () => {
   const hooks = new Map();
