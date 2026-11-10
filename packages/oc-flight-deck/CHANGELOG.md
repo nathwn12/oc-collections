@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-11-10
+
+### Changed
+
+- The plugin ids now carry the package name: the server entry is `oc-flight-deck.host` (was `flight-deck.host`) and the TUI entry is `oc-flight-deck` (was `flight-deck-tui`). A plugin inventory that labels a server entry by its id with the `.host` suffix stripped now reads `oc-flight-deck`.
+
+### Migration
+
+- A directive keyed by the old id stops matching: an enable/disable record for `flight-deck-tui` or `flight-deck.host` must be re-pointed at the new id.
+- Everything else survives untouched: the persisted state keys `flight-deck.guard`, `flight-deck.go` and `flight-deck.frame`, and the config path `~/.config/opencode/flight-deck.jsonc`.
+
 ## [0.21.1] - 2026-11-01
 
 ### Fixed
