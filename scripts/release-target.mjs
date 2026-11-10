@@ -26,8 +26,11 @@ export const ALLOWED = [
   "@nathwn12/oc-bifrost",
   "@nathwn12/janua",
   "oc-flight-deck",
+  "oc-gladius",
   "oc-harness-setup",
   "oc-plugin-view",
+  "oc-puppet",
+  "oc-stacked",
   "oc-talk",
   "rea-shim",
 ]

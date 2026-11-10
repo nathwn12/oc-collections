@@ -1,6 +1,6 @@
 # Publishing puppet-mcp (owner only)
 
-`npx puppet-mcp@latest` installs the launcher in `npm/` plus the pinned
+`npx oc-puppet@latest` installs the launcher in `npm/` plus the pinned
 server manifest. The server binary is fetched on first RUN from the tagged
 GitHub Release — never at install. Do NOT publish, tag, or release from any
 automated session: every step below is a human act, in order.
@@ -42,7 +42,7 @@ granular token), and locally npm >= 11.5.1 with Node >= 22.14.0
    machine run `npm publish` on that directory exactly as built (it holds
    the real release hashes; the committed manifest holds placeholders the
    launcher refuses to run with). Verify: `npm view puppet-mcp version`
-   and `npx puppet-mcp@latest --doctor`.
+   and `npx oc-puppet@latest --doctor`.
 
 4. Trusted publisher (same CLI route verified for the sibling `gladius-mcp`
    package). From your own machine, in an interactive shell (it needs a
@@ -85,7 +85,7 @@ carry, on that commit:
 - `Cargo.toml` version `X.Y.Z`, and the same in the `Cargo.lock` crate stanza
   (a `--locked` build would otherwise ship a stale version);
 - `npm/package.json` version `X.Y.Z`, with both global-refusal guard hints
-  updated to `npx puppet-mcp@X.Y.Z`;
+  updated to `npx oc-puppet@X.Y.Z`;
 - `npm/engine-manifest.json` `serverVersion` `X.Y.Z`, with `runtime.source`
   and `runtime.archive.name` naming `vX.Y.Z` (the workflow fills the hashes);
 - at least one `- ` entry under `## [Unreleased]` in `CHANGELOG.md` (the run

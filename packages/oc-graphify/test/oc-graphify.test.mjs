@@ -175,22 +175,27 @@ test('manifest: entry points and file list point at files that exist', () => {
   assert.ok(!(manifest.files ?? []).some((file) => file.startsWith('test')), 'the test tree must not ship');
 });
 
-test('source: node: imports only, so the host loads it as committed', () => {
+test('source: no third-party imports, so the host loads it as committed', () => {
   for (const file of ['index.js', 'lib.js']) {
     const text = fs.readFileSync(path.join(PKG, file), 'utf8');
     const specifiers = [...text.matchAll(/^import[^'"]*['"]([^'"]+)['"]/gm)].map((match) => match[1]);
     assert.ok(specifiers.length > 0, `${file} has no imports`);
     for (const specifier of specifiers) {
-      assert.ok(specifier.startsWith('node:'), `${file} imports ${specifier}; only node: built-ins are allowed`);
+      assert.ok(
+        specifier.startsWith('node:') || specifier.startsWith('.'),
+        `${file} imports ${specifier}; only node: built-ins and sibling files are allowed`,
+      );
     }
   }
 });
 
 test('source: no command rewriting hook', () => {
+  // Comments name the vendor hook on purpose; only code counts.
+  const strip = (text) => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   for (const file of ['index.js', 'lib.js']) {
-    const text = fs.readFileSync(path.join(PKG, file), 'utf8');
-    assert.ok(!/execute\.before/.test(text), `${file} registers execute.before; that is the vendor behaviour`);
-    assert.ok(!/input\.command|args\.command/.test(text), `${file} mutates a shell command`);
+    const code = strip(fs.readFileSync(path.join(PKG, file), 'utf8'));
+    assert.ok(!/execute\.before/.test(code), `${file} registers execute.before; that is the vendor behaviour`);
+    assert.ok(!/input\.command|args\.command/.test(code), `${file} mutates a shell command`);
   }
 });
 

@@ -2,6 +2,18 @@
 
 This repo is an npm-workspaces monorepo: the index stays at the root, and each family package moves into `packages/<name>`, keeping its own npm name, version line, and release cadence. This file records every move. Archiving the source repos was the owner's call, recorded in Retired repositories at the end of this file; no source repo was changed by the migration.
 
+## 2026-11-10 - three imports, two renames
+
+Three repos moved in on the same day, by owner instruction. Two of them were **renamed on the way in**, which the rule below otherwise forbids:
+
+- `puppet` (branch `main`, HEAD `8eb1c2d`) -> `packages/oc-puppet/`, published name `puppet-mcp@7.0.2` -> **`oc-puppet`**.
+- `gladius` (branch `main`, HEAD `abba9b1`) -> `packages/oc-gladius/`, published name `gladius-mcp@0.7.1` -> **`oc-gladius`**.
+- `oc-stacked` (branch `master`, HEAD `67eeef4`) -> `packages/oc-stacked/`, name unchanged.
+
+**Consequence, stated plainly:** `puppet-mcp` and `gladius-mcp` remain on npm frozen at their last published versions. `npx puppet-mcp` and `npx gladius-mcp` keep working but stop receiving updates; the new packages are `oc-puppet` and `oc-gladius`. Reversing that is a publish decision, not a rename.
+
+**Layout adaptation (both Rust packages):** the npx launcher manifest moved from `npm/package.json` to the package root so `packages/oc-puppet` and `packages/oc-gladius` are valid workspaces. Its `bin` and `files` entries point into `npm/`, so no source file moved and the Rust tree is untouched. `engine-manifest.json` keeps its engine identity (`puppet-mcp`, `gladius-mcp`) because the launcher asserts it and it names the provisioned binary, not the npm package.
+
 ## 2026-10-22 — `@nathwn12/oc-bifrost@1.6.9`
 
 | Field | Value |

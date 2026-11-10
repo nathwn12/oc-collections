@@ -7,7 +7,7 @@ manifest — it contains no server bytes.
 ## Run
 
 ```sh
-npx puppet-mcp@latest
+npx oc-puppet@latest
 ```
 
 Global installs are refused by design (`npm i -g` exits non-zero): a
@@ -30,13 +30,13 @@ stdout belongs to the MCP channel.
 ## Diagnostics (no network)
 
 ```sh
-npx puppet-mcp@latest --doctor
+npx oc-puppet@latest --doctor
 ```
 
 Prints the launcher version, the pinned manifest, the resolved engine
 path, the engine version parsed from the cache directory name, and
 whether they match; exits 0, performs no fetch. `--print-manifest` is
-an alias. `npx puppet-mcp@latest --version` prints the package name and
+an alias. `npx oc-puppet@latest --version` prints the package name and
 the version it is running.
 
 ## Requirements
@@ -48,7 +48,7 @@ the version it is running.
 
 ## Overrides
 
-Use `npx puppet-mcp@latest`; a pinned version is only installable while its
+Use `npx oc-puppet@latest`; a pinned version is only installable while its
 GitHub release exists; the one-release policy deletes older releases.
 
 Redirect the cache with `PUPPET_ENGINE_CACHE`, or inspect the pin with no

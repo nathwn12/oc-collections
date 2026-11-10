@@ -70,8 +70,19 @@ test("guardRegistry: a target below the newest is refused even if never publishe
   assert.throws(() => guardRegistry(["2.0.0"], "1.9.9"), /refusing to republish/)
 })
 
-test("allowlist: exactly the four releasable packages", () => {
-  assert.deepEqual(ALLOWED, ["@nathwn12/oc-bifrost", "oc-flight-deck", "oc-harness-setup", "rea-shim"])
+test("allowlist: exactly the ten releasable packages", () => {
+  assert.deepEqual(ALLOWED, [
+    "@nathwn12/oc-bifrost",
+    "@nathwn12/janua",
+    "oc-flight-deck",
+    "oc-gladius",
+    "oc-harness-setup",
+    "oc-plugin-view",
+    "oc-puppet",
+    "oc-stacked",
+    "oc-talk",
+    "rea-shim",
+  ])
 })
 
 test("resolvePackage: rea-shim resolves to its workspace package", () => {

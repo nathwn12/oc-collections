@@ -8,7 +8,7 @@ it contains no browser bytes and no server bytes.
 ## Run
 
 ```sh
-npx gladius-mcp@latest
+npx oc-gladius@latest
 ```
 
 Or pin it in an MCP client as a stdio server with command `npx` and args
@@ -27,7 +27,7 @@ belongs to the MCP channel.
 ## Diagnostics (no network)
 
 ```sh
-npx gladius-mcp@latest --doctor
+npx oc-gladius@latest --doctor
 ```
 
 Prints the pinned manifest and the resolved cache paths, exits 0, performs
@@ -35,7 +35,7 @@ no fetch. `--print-manifest` is an alias.
 
 ## Overrides
 
-Use `npx gladius-mcp@latest`; a pinned version is only installable while its
+Use `npx oc-gladius@latest`; a pinned version is only installable while its
 GitHub release exists; the one-release policy deletes older releases.
 
 ## Requirements

@@ -1,6 +1,6 @@
 # Publishing gladius-mcp (owner only)
 
-`npx gladius-mcp@latest` installs the launcher in `npm/` plus the pinned
+`npx oc-gladius@latest` installs the launcher in `npm/` plus the pinned
 browser/runtime manifest. The server runtime is fetched on first RUN from
 the tagged GitHub Release, and the browser from Google's
 Chrome-for-Testing endpoint — never at install. Do NOT publish, tag, or
@@ -45,7 +45,7 @@ granular token), and locally npm >= 11.5.1 with Node >= 22.14.0
    machine run `npm publish` on that directory exactly as built (it holds
    the real release hashes; the committed manifest holds placeholders the
    launcher refuses to run with). Verify: `npm view gladius-mcp version`
-   and `npx gladius-mcp@latest --doctor`.
+   and `npx oc-gladius@latest --doctor`.
 
 4. Trusted publisher (VERIFIED CLI route — trust is NOW REGISTERED).
    From your own machine, in an interactive shell (it needs a one-time
