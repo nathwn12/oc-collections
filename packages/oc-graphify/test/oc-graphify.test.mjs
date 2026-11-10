@@ -136,7 +136,7 @@ test('render: one marker, under the byte budget, and it names the real verbs', (
   const block = render({ graph, head: 'a'.repeat(40), atlas: 'Q:\\v' });
   assert.equal(block.split(MARKER).length - 1, 1);
   assert.ok(block.length < 1200, `block is ${block.length} chars, budget is 1200`);
-  for (const verb of ['graph_stats', 'query_graph', 'get_node', 'god_nodes', 'shortest_path']) {
+  for (const verb of ['graph_stats', 'graph_node', 'graph_neighbors', 'graph_path', 'graph_god_nodes', 'graph_query']) {
     assert.ok(block.includes(verb), `missing verb ${verb}`);
   }
   assert.ok(block.startsWith(MARKER));

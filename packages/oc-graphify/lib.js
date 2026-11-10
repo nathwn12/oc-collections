@@ -126,7 +126,7 @@ export function render({ graph, head, atlas }) {
     MARKER,
     `Graphify Atlas (durable memory): ${bits.join(', ')}.`,
     `Graph: ${graph.file} - the same graph Obsidian shows as the harness-wiki vault (graph-room).`,
-    'Ask it before grepping: `graphify query "<question>"` with cwd = the atlas - that is the route that exists here. The MCP, when it is configured, adds graph_stats, query_graph, get_node, get_neighbors, get_community, god_nodes and shortest_path.',
+    'Ask it before grepping: `graph_stats`, `graph_node`, `graph_neighbors`, `graph_path`, `graph_god_nodes`, `graph_query` - this plugin\'s own reads over the same file. `graphify query "<question>"` with cwd = the atlas is the CLI, for when an exact answer matters.',
     'Rebuild with `node .graphify/tools/sync-corpus.mjs` from the atlas; never from the vault root, never a bare `graphify update`.',
     stateLine(graph, head),
   ].join('\n');

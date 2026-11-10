@@ -82,3 +82,21 @@ The manifest is `private: true` and the package is **not** in
 it. Admitting it is a one-line change there plus the dispatch choice list in
 `.github/workflows/release.yml`; the check enforces that the two decisions stay
 in step.
+
+## Tools
+
+Six reads over the same graph.json, so the injected block names something that
+answers without a graphify MCP configured:
+
+| Tool | Answers |
+|---|---|
+| graph_stats | nodes, edges, communities, graphify version, file |
+| graph_node | one node by id, exact label, or fragment; candidates when ambiguous |
+| graph_neighbors | adjacency, one to three hops, with the relation |
+| graph_path | shortest chain between two nodes |
+| graph_god_nodes | most connected real entities, file/concept nodes excluded |
+| graph_query | label-token search plus one hop; **not** the CLI heuristic |
+
+graph_query says in its own reply that it is label-token search, because
+graphify's \query\ resolves seeds with heuristics of its own and answering
+differently while pretending parity would be worse than answering plainly.
