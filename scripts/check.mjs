@@ -1848,7 +1848,9 @@ check('provenance lives in exactly one file', () => {
     fs
       .readdirSync(d, { withFileTypes: true })
       .flatMap((e) => {
-        if (e.name === '.git' || e.name === 'node_modules') return [];
+        // `.stack/` is working state: a brief may cite a reference
+        // implementation to study without that becoming shipped lineage.
+        if (e.name === '.git' || e.name === 'node_modules' || e.name === '.stack') return [];
         const p = path.join(d, e.name);
         return e.isDirectory() ? walk(p) : [p];
       });
