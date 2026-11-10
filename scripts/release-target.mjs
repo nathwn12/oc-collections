@@ -30,7 +30,6 @@ export const ALLOWED = [
   "oc-harness-setup",
   "oc-plugin-view",
   "oc-puppet",
-  "oc-stacked",
   "oc-talk",
   "rea-shim",
 ]

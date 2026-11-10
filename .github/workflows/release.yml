@@ -52,7 +52,7 @@ on:
       package:
         # Empty is the batch lane. A name forces the single-package lane.
         # Releasable: @nathwn12/oc-bifrost, @nathwn12/janua, oc-flight-deck,
-        # oc-gladius, oc-harness-setup, oc-plugin-view, oc-puppet, oc-stacked,
+        # oc-gladius, oc-harness-setup, oc-plugin-view, oc-puppet,
         # oc-talk, rea-shim.
         description: Workspace package to release (empty = every package with a pending release)
         required: false
