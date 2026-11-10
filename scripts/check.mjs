@@ -79,7 +79,8 @@ process.stdout.write('\noc-stacked self-test\n\n');
 // ---------------------------------------------------------------- module shape
 const mod = await import(new URL('../index.js', import.meta.url));
 const plugin = mod.default;
-const { readSkills, bootstrap, MARKER } = await import(new URL('../lib/skills.js', import.meta.url));
+const { readSkills } = await import(new URL('../lib/content.js', import.meta.url));
+const { bootstrap, MARKER } = await import(new URL('../lib/bootstrap.js', import.meta.url));
 const { toolDefinitions, checkRecordReasons } = await import(new URL('../lib/tools.js', import.meta.url));
 const { parse, needsShell, commandAsync } = await import(new URL('../lib/exec.js', import.meta.url));
 const { snapshot } = await import(new URL('../lib/git.js', import.meta.url));
@@ -100,6 +101,28 @@ check('plugin keeps a V1 server export', () => {
   assert(typeof plugin.server === 'function', 'server export missing');
   assert(typeof mod.StackedPlugin === 'function', 'named V1 export missing');
   return 'StackedPlugin';
+});
+
+check('lib imports the entry nowhere, and the registry never imports the injected text', () => {
+  const libDir = path.join(repo, 'lib');
+  const walk = (dir) =>
+    fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const p = path.join(dir, entry.name);
+      return entry.isDirectory() ? walk(p) : [p];
+    });
+  const modules = walk(libDir).filter((p) => p.endsWith('.js'));
+  assert(modules.length, 'lib/ has no modules to sweep; this assertion is reading nothing');
+  const offenders = [];
+  for (const file of modules) {
+    const name = path.relative(libDir, file).replace(/\\/g, '/');
+    for (const m of fs.readFileSync(file, 'utf8').matchAll(/(?:^|\n)\s*(?:import|export)\s+(?:[^;]*?\bfrom\s*)?['"]([^'"]+)['"]/g)) {
+      const spec = m[1];
+      if (/(^|\/)index\.js$/.test(spec)) offenders.push(`${name} imports the plugin entry (${spec})`);
+      if (name === 'content.js' && /(^|\/)bootstrap\.js$/.test(spec)) offenders.push(`${name} imports ${spec}`);
+    }
+  }
+  assert(!offenders.length, `a one-way boundary is broken: ${offenders.join('; ')}`);
+  return `${modules.length} modules, entry and bootstrap both one-way`;
 });
 
 // ---------------------------------------------------------------- skills

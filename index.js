@@ -14,7 +14,8 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { bootstrap, MARKER, readSkills, skillsDir } from './lib/skills.js';
+import { readSkills, skillsDir } from './lib/content.js';
+import { bootstrap, MARKER } from './lib/bootstrap.js';
 import { toolDefinitions } from './lib/tools.js';
 import { seedStack } from './lib/state.js';
 
