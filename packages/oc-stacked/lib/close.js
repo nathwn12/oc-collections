@@ -36,6 +36,13 @@ const isStackPath = (file) => {
   return p === '.stack' || p.startsWith('.stack/');
 };
 
+/** Every path the working tree has touched outside `.stack`: what a check did not cover. */
+const dirtyOutside = (dir) => {
+  const snap = snapshot(dir);
+  if (!snap.ok) return [];
+  return snap.files.map((f) => f.file.replace(/\\/g, '/')).filter((f) => !isStackPath(f));
+};
+
 /** The receipt, or `{ value: null, error }`. A corrupt receipt is named, never read as absent. */
 export function readClose(dir) {
   return tryReadJson(dir, CLOSE_PATH, null);
@@ -43,8 +50,9 @@ export function readClose(dir) {
 
 /**
  * Why `[done]` cannot be claimed right now. An empty array is the only green:
- * a receipt exists, it says GO, it was not invalidated, and in a repository it
- * was written at the HEAD that is checked out now.
+ * a git repository holds a receipt, it says GO, it was not invalidated, it was
+ * written at the HEAD that is checked out now, and nothing outside `.stack` has
+ * been touched since. A non-git directory can never be green: no HEAD, no binding.
  */
 export function closeReasons(dir) {
   const read = readClose(dir);
@@ -56,10 +64,16 @@ export function closeReasons(dir) {
 
   const reasons = [];
   if (receipt.go !== true) reasons.push(`the recorded close is not a GO (go: ${JSON.stringify(receipt.go)}).`);
-  if (isRepo(dir)) {
+  if (!isRepo(dir)) {
+    reasons.push('not a git repository: a close needs a HEAD to bind the receipt.');
+  } else {
     const now = head(dir);
     if (!receipt.head) reasons.push('the receipt records no HEAD, so it cannot be bound to this tree.');
     else if (now && receipt.head !== now) reasons.push(`the receipt is for ${shortSha(receipt.head)} but HEAD is ${shortSha(now)}.`);
+  }
+  // The tested tree was clean outside .stack. An edit since then is not covered.
+  if (dirtyOutside(dir).length) {
+    reasons.push('the working tree has uncommitted work outside .stack; the receipt covers a clean tree.');
   }
   if (receipt.invalidated) reasons.push(`the receipt was invalidated: ${receipt.invalidated}.`);
   return reasons;
@@ -124,14 +138,21 @@ export async function preflight(dir, { lesson = '', atlas: runAtlas = true } = {
   const blockers = [];
   const notes = [];
   const rows = [];
+  const repo = isRepo(dir);
 
-  // 1. An unanswered ASK is the owner's decision, and the close cannot make it.
+  // 1. A receipt is bound to a HEAD. Without a repository there is nothing to bind.
+  if (!repo) {
+    blockers.push('not a git repository: a close needs a HEAD to bind the receipt.');
+    rows.push(['repo', 'not a git repository', 'run the close from the repository that holds the work']);
+  }
+
+  // 2. An unanswered ASK is the owner's decision, and the close cannot make it.
   for (const ask of openAsks(dir)) {
     blockers.push(`open ticket: ASK from ${ask.at || '?'} has no later ANSWER — ${ask.text}`);
     rows.push(['ASK', `${ask.at || '?'} — ${ask.text}`, 'answer it, or record an ASK and park']);
   }
 
-  // 2 and 3. Seams still in flight, and seams that landed without a verdict.
+  // 3 and 4. Seams still in flight, and seams that landed without a passing verdict.
   const index = tryReadJson(dir, PATHS.briefsIndex, []);
   if (index.error) {
     blockers.push(`\`${PATHS.briefsIndex}\` is unreadable (${index.error.message}), so no seam can be checked.`);
@@ -139,33 +160,41 @@ export async function preflight(dir, { lesson = '', atlas: runAtlas = true } = {
     blockers.push(`\`${PATHS.briefsIndex}\` is not a list of briefs, so no seam can be checked.`);
   } else {
     const briefs = index.value;
-    const audited = new Set();
+    // The latest AUDIT text per named id: an old verdict cannot outvote a new one,
+    // and a FAIL stands until a later line says PASS.
+    const audits = new Map();
     for (const entry of ledgerEntries(dir, Number.MAX_SAFE_INTEGER)) {
-      if (entry.kind === 'AUDIT') for (const id of idsNamed(entry.text)) audited.add(id);
+      if (entry.kind !== 'AUDIT') continue;
+      for (const id of idsNamed(entry.text)) audits.set(id, entry.text);
     }
     for (const brief of briefs) {
       if (brief.status !== 'landed' && brief.status !== 'killed') {
         blockers.push(`seam ${brief.id} is ${brief.status || 'briefed'}, not landed or killed.`);
         rows.push(['seam', `${brief.id} — ${brief.status || 'briefed'}`, 'land it behind a GO, or kill it']);
-      } else if (brief.status === 'landed' && !audited.has(String(brief.id).toLowerCase())) {
-        blockers.push(`seam ${brief.id} landed with no AUDIT line naming it.`);
-        rows.push(['seam', `${brief.id} — landed, unaudited`, 'record an AUDIT line naming it']);
+      } else if (brief.status === 'landed') {
+        const audit = audits.get(String(brief.id).toLowerCase());
+        if (audit === undefined) {
+          blockers.push(`seam ${brief.id} landed with no AUDIT line naming it.`);
+          rows.push(['seam', `${brief.id} — landed, unaudited`, 'record an AUDIT line naming it']);
+        } else if (/fail/i.test(audit)) {
+          blockers.push(`the latest AUDIT for ${brief.id} is FAIL.`);
+          rows.push(['seam', `${brief.id} — latest AUDIT is FAIL`, 'fix what the audit found, then audit it again']);
+        } else if (!/pass/i.test(audit)) {
+          blockers.push(`the latest AUDIT for ${brief.id} is ambiguous: it says neither PASS nor FAIL.`);
+          rows.push(['seam', `${brief.id} — latest AUDIT is ambiguous`, 'record an AUDIT that ends in a verdict']);
+        }
       }
     }
   }
 
-  // 4. A check at HEAD does not cover work that was never committed.
-  const dirty = isRepo(dir)
-    ? snapshot(dir)
-        .files.map((f) => f.file.replace(/\\/g, '/'))
-        .filter((f) => !isStackPath(f))
-    : [];
+  // 5. A check at HEAD does not cover work that was never committed.
+  const dirty = dirtyOutside(dir);
   for (const file of dirty) {
     blockers.push(`uncommitted work outside the stack: \`${file}\`. A check at HEAD does not cover it.`);
     rows.push(['dirty', `\`${file}\``, 'commit it']);
   }
 
-  // 5. Nothing to prove is not a green.
+  // 6. Nothing to prove is not a green.
   const { corrupt, all } = configuredChecks(dir);
   if (corrupt) {
     blockers.push(`${PATHS.config} is not valid JSON, so no check can be trusted. Fix it, then close again.`);
@@ -175,7 +204,7 @@ export async function preflight(dir, { lesson = '', atlas: runAtlas = true } = {
     rows.push(['checks', 'none configured', 'configure the command that proves this repo']);
   }
 
-  // 6. The atlas is the memory the next session reads; a red one is a blocker.
+  // 7. The atlas is the memory the next session reads; a red one is a blocker.
   const cfg = config(dir);
   const atlasCfg = cfg && typeof cfg.atlas === 'object' ? cfg.atlas : null;
   let atlas = { status: 'not configured', code: null, ms: 0 };
@@ -203,7 +232,7 @@ export async function preflight(dir, { lesson = '', atlas: runAtlas = true } = {
 
   // Notes: facts the owner should see, none of which stops the ceremony.
   notes.push(`lesson — ${str(lesson).length >= MIN_LESSON ? 'recorded' : `needs at least ${MIN_LESSON} characters`}`);
-  const ahead = isRepo(dir) ? unpushed(dir) : { count: null, text: 'not a git repository, so a push cannot be counted' };
+  const ahead = repo ? unpushed(dir) : { count: null, text: 'not a git repository, so a push cannot be counted' };
   notes.push(ahead.text);
   const junk = junkPaths(dir);
   if (junk.length) notes.push(`${junk.length} junk path(s) found and never deleted: ${junk.join(', ')}`);
@@ -314,9 +343,20 @@ export async function runClose(dir, { lesson } = {}) {
   // paid for once per close. Its failure is a blocker the preflight named.
   done.push(`atlas: ${pre.atlas.status}`);
 
+  // 8. The tree the checks proved must still be the tree on disk: a check that
+  // writes a file, or an edit during the ceremony, is not covered by its green.
+  const post = await preflight(dir, { lesson: said, atlas: false });
+  if (post.blockers.length) reasons.push(...post.blockers);
+  const nowHead = head(dir);
+  if (nowHead !== record.head || post.dirty.length) {
+    reasons.push(
+      `the tree or HEAD changed after the checks ran: checks at ${shortSha(record.head)}, HEAD ${shortSha(nowHead)}${post.dirty.length ? `, ${post.dirty.length} path(s) dirty` : ''}.`,
+    );
+  }
+
   if (reasons.length) return { ...red(reasons, done), preflight: pre };
 
-  // 8. Every step green: the receipt that makes [done] possible.
+  // 9. Every step green: the receipt that makes [done] possible.
   const receiptHead = head(dir);
   const receipt = {
     go: true,
@@ -327,7 +367,7 @@ export async function runClose(dir, { lesson } = {}) {
     branch: branch(dir),
     // The tested tree. The preflight refuses while anything outside .stack is
     // dirty, so this is the empty snapshot the checks above actually covered.
-    tree: pre.dirty,
+    tree: post.dirty,
     criteria: [{ id: 'preflight', status: 'pass', evidence: [] }],
     lesson: said,
     checks: {
@@ -338,7 +378,7 @@ export async function runClose(dir, { lesson } = {}) {
     sweep,
     junk,
     atlas: pre.atlas,
-    dirty: pre.dirty,
+    dirty: post.dirty,
   };
   writeJson(dir, CLOSE_PATH, receipt);
   log(dir, 'CLOSE', `GO at ${shortSha(receipt.head)} on ${receipt.branch || 'detached'}: ${record.results.length} check(s) green, atlas ${pre.atlas.status}`);
@@ -355,7 +395,7 @@ export async function runClose(dir, { lesson } = {}) {
         ['lesson', said],
         ['digest', `rewritten at ${PATHS.digest}`],
         ['atlas', `${pre.atlas.status}${pre.atlas.code === null ? '' : ` (exit ${pre.atlas.code})`}`],
-        ['tree', pre.dirty.length ? pre.dirty.join(', ') : 'clean outside .stack'],
+        ['tree', post.dirty.length ? post.dirty.join(', ') : 'clean outside .stack'],
         ['receipt', `${CLOSE_PATH} (${receipt.receipt_id})`],
       ],
     ),
