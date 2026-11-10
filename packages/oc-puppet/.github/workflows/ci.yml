@@ -1,0 +1,52 @@
+# nathwn12 house CI — static gate plus the one conformance binary: fmt,
+# clippy, gitleaks, compile check, and the payload-vs-schema gate
+# (envelope_truth). The full build + test matrix still lives in
+# release.yml (`cargo build --release --locked`, `cargo test
+# --release --locked`), so this gate never compiles twice for the same
+# answer — except the single conformance binary, which is the check that
+# stops a schema-violating payload ever reaching a release. Job name
+# `build` is the required check — do not rename.
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.87.0
+        with:
+          toolchain: 1.87.0
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ci-1.87.0
+      - name: fmt
+        run: cargo fmt --all --check
+      - name: clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: gitleaks
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $Version = '8.24.3'
+          $Url = "https://github.com/gitleaks/gitleaks/releases/download/v$Version/gitleaks_${Version}_windows_x64.zip"
+          $Zip = Join-Path $env:TEMP "gitleaks_$Version.zip"
+          $Dir = Join-Path $env:TEMP "gitleaks_$Version"
+          Invoke-WebRequest -Uri $Url -OutFile $Zip
+          if (Test-Path $Dir) { Remove-Item -Recurse -Force $Dir }
+          Expand-Archive -Path $Zip -DestinationPath $Dir
+          & (Join-Path $Dir 'gitleaks.exe') detect --source . --config .gitleaks.toml --redact --no-banner
+      - name: check (compile, no link)
+        run: cargo check --locked
+      - name: conformance (payload vs own outputSchema)
+        run: cargo test --release --locked --test envelope_truth
