@@ -93,7 +93,7 @@ All local. Files and `git` only; no network call, no daemon, no MCP handshake.
 
 ## The skills
 
-Thirteen. They are ordinary `SKILL.md` files with front matter; the plugin registers them natively at startup. Six are seats and discipline lenses, seven are the shelf you pull when the moment matches.
+Fifteen. They are ordinary `SKILL.md` files with front matter; the plugin registers them natively at startup. One is the hub, the rest are seats, discipline lenses, and the shelf you pull when the moment matches.
 
 | Skill id | Loads when |
 |---|---|
@@ -110,6 +110,8 @@ Thirteen. They are ordinary `SKILL.md` files with front matter; the plugin regis
 | `stacked-tdd` | Behaviour changes and a test surface exists. |
 | `stacked-review` | You are asking for, receiving, or looping on a review. |
 | `stacked-ship` | The seam is ready to commit, close, or release. |
+| `stacked-wizard` | oc-stacked is installed but not behaving: seats missing, models unpinned, `.stack/` unseeded, a ghost seat, a check green on a stale tree. Aligns a host that already has its own opinions, by adding only. |
+| `stacked-oftb` | You are blocked. Names which kind of rule is in the way - owner gate, doctrine default, or physics - then climbs six rungs (invert, confine, split, other door, witness, shrink) to reach the same goal without an authorization nobody gave. |
 
 ---
 

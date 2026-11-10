@@ -105,7 +105,7 @@ check('plugin keeps a V1 server export', () => {
 // ---------------------------------------------------------------- skills
 const skills = readSkills();
 
-check('thirteen skills register', () => {
+check('fifteen skills register', () => {
   const expected = [
     'stacked',
     'stacked-soul',
@@ -120,8 +120,10 @@ check('thirteen skills register', () => {
     'stacked-review',
     'stacked-ship',
     'stacked-deepen',
+    'stacked-wizard',
+    'stacked-oftb',
   ];
-  assert(skills.length === 13, `expected 13, got ${skills.length}: ${skills.map((s) => s.id).join(', ')}`);
+  assert(skills.length === 15, `expected 15, got ${skills.length}: ${skills.map((s) => s.id).join(', ')}`);
   for (const id of expected) assert(skills.some((s) => s.id === id), `missing skill: ${id}`);
   return skills.map((s) => s.id).join(', ');
 });

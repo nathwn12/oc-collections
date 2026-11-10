@@ -24,6 +24,8 @@ The lead decides everything reversible and asks only for the five stops.
 - "Is this actually right?" → **audit**, a context that wrote none of it. Read `stacked-audit`.
 - "How should we build this?" → `stacked-plan` before any dispatch.
 - "Do these at the same time" → `stacked-swarm`, and let the tool prove the seams are disjoint.
+- "It's installed but not doing anything / align my host" → `stacked-wizard`: doctor, repair, init.
+- "We're blocked", "it won't let us", "find another way" → `stacked-oftb`, before any `ASK` is written.
 
 The soul binds all of them: `stacked-soul`.
 

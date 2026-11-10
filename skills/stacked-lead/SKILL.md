@@ -195,6 +195,8 @@ A reversible decision inside the working tree is yours. Pick, say which you pick
 
 Write `RULING · <what> — <why> — <cost if wrong>` to the ledger and proceed. The cost of a wrong reversible ruling is visible rework; the cost of a stalled stack is the whole session. Only the five stop conditions in `stacked` are gates.
 
+**Before any `ASK`, name the kind of block.** Most "no path" is a doctrine default mistaken for a wall, or physics mistaken for a rule. Load `stacked-oftb`: it sorts owner gate from default from physics, then climbs six rungs — invert the order, confine the blast radius, split the variables, take the other door, borrow a witness, shrink the goal. Craft lives in sequencing and observation, never in evidence; a workaround that invents a green is a false green. If every rung crosses an owner gate, say "the block is real" in three lines and stop.
+
 **Four rules that shorten a turn.**
 
 1. A specialist does not ask what it can find: bounded research first, up to three lookups, before any gap reaches the lead.

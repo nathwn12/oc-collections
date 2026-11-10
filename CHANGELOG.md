@@ -18,6 +18,8 @@ The release that became a company.
 
 **Conventions written down.** `OWNER.md` holds the standing decisions the lead may not re-derive. `RELEASING.md` fixes the commit, branch, tag and release formats to the upstream ones rather than a house dialect. Session titles carry `[active]`, `[parked]` or `[done]`, and `[done]` is immutable.
 
+**Two seats that had no home.** `stacked-wizard` is the doctor and the init: it reads a host that already has its own config, prints a table of `OK` / `FIXABLE` / `OWNER`, and aligns by adding - never by rewriting, never by overwriting a file whose hash differs from the package copy. `stacked-oftb` is the out-of-the-box decision maker: it sorts a block into owner gate, doctrine default or physics, then climbs six rungs before anyone writes an `ASK`. Its honesty floor is the point of it - craft lives in sequencing and observation, never in evidence, and when every route crosses a gate it says "the block is real" in three lines.
+
 **Two rules that were wrong.** The stop list now has exactly five items, and a savepoint is a commit type rather than a prefix, so an unverified tree is labelled instead of hidden.
 
 93 checks, all green.
