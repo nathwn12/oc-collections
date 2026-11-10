@@ -67,17 +67,13 @@ const call = async (name, input) => {
 };
 
 /**
- * A verdict that must reach the shell as exit 1. This is the shape the older
- * commands always had; `check` prints a `## RED` heading, which this does not
- * match, and the self-test pins that behaviour, so it is left as it was.
+ * A verdict that must reach the shell as exit 1. The tools print markdown, so
+ * the verdict is the first word inside the heading: `## NO-GO — close`,
+ * `## BLOCKED — preflight`. A bare `NO-GO — …` or `Refused.` line still counts.
  */
-const FAILED = /^(NO-GO|RED|Refused)\b/m;
-
-/** close's verdict is a heading; a NO-GO there is the one thing exit 1 is for. */
-const HEADING_VERDICT = /^#{1,6}\s+(?:NO-GO|RED)\b/m;
+const FAILED = /^(?:#+\s*)?(NO-GO|BLOCKED|RED|Refused)\b/m;
 
 let text;
-let failed = false;
 if (command === 'check') {
   if (!['init', 'run', 'show'].includes(sub)) usageError('check takes init, run or show');
   text = await call('check', { op: sub });
@@ -90,7 +86,6 @@ if (command === 'check') {
   if (!['run', 'preflight', 'show'].includes(op)) usageError('close takes run, preflight or show');
   if (op === 'run' && !flags.lesson) usageError('close run needs --lesson <text>');
   text = await call('close', { op, lesson: flags.lesson });
-  failed = HEADING_VERDICT.test(text);
 } else if (command === 'clean') {
   const op = flags.op || 'sweep';
   if (!['sweep', 'report'].includes(op)) usageError('--op takes sweep or report');
@@ -103,4 +98,4 @@ if (command === 'check') {
 }
 
 process.stdout.write(text.endsWith('\n') ? text : `${text}\n`);
-process.exit(failed || FAILED.test(text) ? 1 : 0);
+process.exit(FAILED.test(text) ? 1 : 0);

@@ -1197,22 +1197,22 @@ function criteriaText(criteria) {
 
 /** The receipt, and the one line that decides whether `[done]` is legitimate. */
 function describeClose(dir) {
-  const read = readClose(dir);
-  if (read.error) {
-    return `## NO-GO — close receipt unreadable\n\n\`${CLOSE_PATH}\` cannot be parsed (${read.error.message}). Run \`close\` op=run to replace it.`;
-  }
-  const receipt = read.value;
+  const reasons = closeReasons(dir);
+  const receipt = readClose(dir).value;
+
+  // No receipt (or an unreadable one): closeReasons has already named why.
   if (!receipt) {
-    return `## NO-GO — no close receipt\n\nNothing at \`${CLOSE_PATH}\`, so there is nothing to verify. Run \`close\` op=run with one lesson to seal this session.`;
+    return ['## NO-GO — show', '', ...reasons.map((r) => `- ${r}`), '', 'There is no receipt to print.'].join('\n');
   }
 
   const results = Array.isArray(receipt.checks?.results) ? receipt.checks.results : [];
-  const reasons = closeReasons(dir);
   const head7 = shortSha(receipt.head);
   return [
-    `## ${reasons.length ? 'NO-GO' : 'GO'} — receipt ${receipt.receipt_id || '(no id)'} at ${head7} (${receipt.branch || 'detached'})`,
+    reasons.length ? '## NO-GO — show' : `## GO — show at ${head7}`,
     '',
+    ...(reasons.length ? [...reasons.map((r) => `- ${r}`), ''] : []),
     table(['Fact', 'Value'], [
+      ['receipt', receipt.receipt_id || 'not recorded'],
       ['written', receipt.at || '?'],
       ['head', head7],
       ['branch', receipt.branch || 'detached'],
@@ -1226,7 +1226,7 @@ function describeClose(dir) {
     ]),
     '',
     reasons.length
-      ? `**Not valid at HEAD:**\n\n${reasons.map((r) => `- ${r}`).join('\n')}`
+      ? 'Not valid at HEAD. The receipt above is what was written, not what stands now.'
       : `valid at HEAD ${head7}. An earlier receipt is not inherited by a tree that moved.`,
     ...(reasons.length ? [] : ['', `SEALED ${receipt.sealed || head7}`]),
   ].join('\n');

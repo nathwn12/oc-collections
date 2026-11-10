@@ -195,7 +195,7 @@ export async function preflight(dir, { lesson = '', atlas: runAtlas = true } = {
       atlas = { status: r.ok ? 'pass' : 'fail', code: r.code ?? null, ms: r.ms };
       if (!r.ok) {
         const detail = String(r.display || '').split('\n').map((l) => l.trim()).filter(Boolean).slice(-1)[0] || '';
-        blockers.push(`atlas command failed: \`${str(atlasCfg.command)}\` exited ${r.code}${detail ? ` — ${detail}` : '.'}`);
+        blockers.push(`atlas command failed: \`${str(atlasCfg.command)}\` — exit ${r.code}${detail ? ` — ${detail}` : ''}`);
         rows.push(['atlas', `exit ${r.code}`, 'fix the atlas command, then close again']);
       }
     }
@@ -211,8 +211,9 @@ export async function preflight(dir, { lesson = '', atlas: runAtlas = true } = {
 
   const verdict = blockers.length ? 'BLOCKED' : 'GO';
   const text = [
-    `## Preflight — ${verdict}${blockers.length ? ` on ${blockers.length} blocker${blockers.length === 1 ? '' : 's'}` : ''} — ${shortSha(head(dir))} (${branch(dir) || 'detached'})`,
+    `## ${verdict} — preflight${blockers.length ? ` on ${blockers.length} blocker${blockers.length === 1 ? '' : 's'}` : ''} at ${shortSha(head(dir))} (${branch(dir) || 'detached'})`,
     '',
+    ...(blockers.length ? ['Why:', '', ...blockers.map((b) => `- ${b}`), ''] : []),
     rows.length
       ? table(['Ticket', 'State', 'What it needs'], rows)
       : 'No open ticket. Every ask is answered and every seam is closed.',
