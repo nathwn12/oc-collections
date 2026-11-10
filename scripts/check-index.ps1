@@ -87,6 +87,7 @@ $Omitted = @{
     # allowlist. A row would claim an install target that does not exist.
     'oc-stacked' = 'private: true; developed in-tree until the owner opens the release line'
     'oc-graphify' = 'private: true; source-only plugin, installed by junction'
+    'oc-terminal' = 'private: true; source-only spawn guard, installed by junction'
     # Source is imported here; the npm package is released from the repository
     # that builds its engine, so a version row here would claim a release this
     # repo does not perform.

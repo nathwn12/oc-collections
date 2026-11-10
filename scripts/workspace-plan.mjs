@@ -27,6 +27,7 @@ export const PLAN = {
     "oc-puppet": [["node", "--check", "npm/bin/puppet-mcp.js"]],
     "oc-stacked": [["script", "check"]],
     "oc-talk": [["script", "check"]],
+    "oc-terminal": [["script", "check"]],
     "rea-shim": [["script", "check"], ["script", "test"], ["pack", "--dry-run"]],
   },
   build: {
@@ -40,6 +41,7 @@ export const PLAN = {
     "oc-puppet": [],
     "oc-stacked": [],
     "oc-talk": [],
+    "oc-terminal": [],
     "rea-shim": [],
   },
   test: {
@@ -53,6 +55,7 @@ export const PLAN = {
     "oc-puppet": [],
     "oc-stacked": [],
     "oc-talk": [["script", "test"]],
+    "oc-terminal": [["script", "test"]],
     "rea-shim": [["script", "test"]],
   },
 }

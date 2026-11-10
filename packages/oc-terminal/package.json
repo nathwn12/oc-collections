@@ -1,0 +1,48 @@
+{
+  "name": "oc-terminal",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Windows spawn guard for OpenCode: hidden consoles, real JavaScript runtimes, no dead terminal windows.",
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "windows",
+    "terminal",
+    "spawn",
+    "windowsHide"
+  ],
+  "license": "MIT",
+  "author": "nathwn12",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nathwn12/oc-collections.git",
+    "directory": "packages/oc-terminal"
+  },
+  "homepage": "https://github.com/nathwn12/oc-collections/tree/main/packages/oc-terminal",
+  "bugs": "https://github.com/nathwn12/oc-collections/issues",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./lib": "./lib.js",
+    "./cli": "./cli.js"
+  },
+  "bin": {
+    "oc-terminal": "./cli.js"
+  },
+  "files": [
+    "index.js",
+    "lib.js",
+    "cli.js",
+    "preload.mjs",
+    "README.md",
+    "AGENTS.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test",
+    "check": "node --test"
+  }
+}
