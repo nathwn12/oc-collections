@@ -17,7 +17,7 @@ export async function register(ctx) {
   await checkAsync('ledger appends and the digest is derived from it', async () => {
     const d = configuredRepo();
     await runIn(d, 'brief', {
-      op: 'new', agent: 'employee',
+      op: 'new', agent: 'morph',
       title: 'retry budget',
       out: 'a failing endpoint is retried at most three times',
       check: 'node -e "process.exit(0)"',
@@ -210,7 +210,7 @@ export async function register(ctx) {
     spawnSync('git', ['add', '-A'], { cwd: d, windowsHide: true });
     spawnSync('git', ['-c', 'user.email=c@l', '-c', 'user.name=c', 'commit', '-qm', 'base'], { cwd: d, windowsHide: true });
     await runIn(d, 'ledger', { op: 'log', kind: 'INTAKE', text: 'make webhooks retry honestly' });
-    await runIn(d, 'brief', { op: 'new', agent: 'employee', title: 'audited seam', out: 'a thing', check: 'node -e "process.exit(0)"', owns: ['**'], files: ['n.md'] });
+    await runIn(d, 'brief', { op: 'new', agent: 'morph', title: 'audited seam', out: 'a thing', check: 'node -e "process.exit(0)"', owns: ['**'], files: ['n.md'] });
     await runIn(d, 'check', { op: 'run' });
     await runIn(d, 'ready', { id: 'audited-seam', lean: true });
     await runIn(d, 'brief', { op: 'status', id: 'audited-seam', status: 'landed' });
@@ -229,7 +229,7 @@ export async function register(ctx) {
 
   await checkAsync('a CRLF ledger still yields its verdicts', async () => {
     const d = configuredRepo();
-    await runIn(d, 'brief', { op: 'new', agent: 'employee', title: 'crlf seam', out: 'x', check: 'node -e "process.exit(0)"', owns: ['**'], files: ['n.md'] });
+    await runIn(d, 'brief', { op: 'new', agent: 'morph', title: 'crlf seam', out: 'x', check: 'node -e "process.exit(0)"', owns: ['**'], files: ['n.md'] });
     const ledger = path.join(d, '.stack', 'ledger.md');
     fs.writeFileSync(ledger, fs.readFileSync(ledger, 'utf8').replace(/\r?\n/g, '\r\n'));
     await runIn(d, 'ledger', { op: 'log', kind: 'READY', text: 'crlf-seam: GO' });
@@ -243,12 +243,12 @@ export async function register(ctx) {
 
   await checkAsync('a corrupt brief index is named, not silently emptied', async () => {
     const d = configuredRepo();
-    await runIn(d, 'brief', { op: 'new', agent: 'employee', title: 'keep me', out: 'x', check: 'node -e "process.exit(0)"', owns: ['**'], files: ['n.md'] });
+    await runIn(d, 'brief', { op: 'new', agent: 'morph', title: 'keep me', out: 'x', check: 'node -e "process.exit(0)"', owns: ['**'], files: ['n.md'] });
     const indexFile = path.join(d, '.stack', 'state', 'briefs.json');
     fs.writeFileSync(indexFile, '{ not json');
     const list = await runIn(d, 'brief', { op: 'list' });
     assert(/unreadable|not valid JSON/i.test(list), `the corrupt index read as an empty list:\n${list}`);
-    const created = await runIn(d, 'brief', { op: 'new', agent: 'employee', title: 'new seam', out: 'y', check: 'node -e "process.exit(0)"', owns: ['**'], files: ['n.md'] });
+    const created = await runIn(d, 'brief', { op: 'new', agent: 'morph', title: 'new seam', out: 'y', check: 'node -e "process.exit(0)"', owns: ['**'], files: ['n.md'] });
     assert(/Refused/.test(created), 'a new brief overwrote a corrupt index');
     assert(fs.readFileSync(indexFile, 'utf8') === '{ not json', 'the corrupt index was destroyed');
     fs.rmSync(d, { recursive: true, force: true });
@@ -257,11 +257,11 @@ export async function register(ctx) {
 
   await checkAsync('a blocked temp file leaves the brief index intact', async () => {
     const d = configuredRepo();
-    await runIn(d, 'brief', { op: 'new', agent: 'employee', title: 'atomic seam', out: 'x', check: 'node -e "process.exit(0)"', owns: ['**'], files: ['n.md'] });
+    await runIn(d, 'brief', { op: 'new', agent: 'morph', title: 'atomic seam', out: 'x', check: 'node -e "process.exit(0)"', owns: ['**'], files: ['n.md'] });
     const indexFile = path.join(d, '.stack', 'state', 'briefs.json');
     const before = fs.readFileSync(indexFile, 'utf8');
     fs.mkdirSync(`${indexFile}.tmp`);
-    const out = await runIn(d, 'brief', { op: 'new', agent: 'employee', title: 'second seam', out: 'y', check: 'node -e "process.exit(0)"', owns: ['**'], files: ['n.md'] });
+    const out = await runIn(d, 'brief', { op: 'new', agent: 'morph', title: 'second seam', out: 'y', check: 'node -e "process.exit(0)"', owns: ['**'], files: ['n.md'] });
     assert(/Refused/.test(out), `a failed index write was reported as success:\n${out}`);
     assert(fs.readFileSync(indexFile, 'utf8') === before, 'the index was truncated by the failed write');
     assert(!fs.existsSync(path.join(d, '.stack', 'briefs', 'second-seam.md')), 'the body from the failed write survived');
@@ -272,16 +272,16 @@ export async function register(ctx) {
 
   await checkAsync('a held lock blocks a write instead of racing it', async () => {
     const d = configuredRepo();
-    await runIn(d, 'brief', { op: 'new', agent: 'employee', title: 'locked seam', out: 'x', check: 'node -e "process.exit(0)"', owns: ['**'], files: ['n.md'] });
+    await runIn(d, 'brief', { op: 'new', agent: 'morph', title: 'locked seam', out: 'x', check: 'node -e "process.exit(0)"', owns: ['**'], files: ['n.md'] });
     const indexFile = path.join(d, '.stack', 'state', 'briefs.json');
     const before = fs.readFileSync(indexFile, 'utf8');
     const lock = path.join(d, '.stack', 'state', '.lock');
     fs.writeFileSync(lock, 'held');
-    const blocked = await runIn(d, 'brief', { op: 'new', agent: 'employee', title: 'blocked seam', out: 'y', check: 'node -e "process.exit(0)"', owns: ['**'], files: ['b.md'] });
+    const blocked = await runIn(d, 'brief', { op: 'new', agent: 'morph', title: 'blocked seam', out: 'y', check: 'node -e "process.exit(0)"', owns: ['**'], files: ['b.md'] });
     assert(/Refused/.test(blocked) && /acquire/.test(blocked), `a held lock was ignored:\n${blocked}`);
     assert(fs.readFileSync(indexFile, 'utf8') === before, 'the index changed while the lock was held');
     fs.unlinkSync(lock);
-    const after = await runIn(d, 'brief', { op: 'new', agent: 'employee', title: 'after seam', out: 'z', check: 'node -e "process.exit(0)"', owns: ['**'], files: ['c.md'] });
+    const after = await runIn(d, 'brief', { op: 'new', agent: 'morph', title: 'after seam', out: 'z', check: 'node -e "process.exit(0)"', owns: ['**'], files: ['c.md'] });
     assert(/Brief written/.test(after), 'the lock was not released by the failed writer');
     fs.rmSync(d, { recursive: true, force: true });
     return 'waited, refused, then wrote';
@@ -360,7 +360,7 @@ export async function register(ctx) {
 
   await checkAsync('the digest finds the objective, open ask, and audit across the whole ledger', async () => {
     const d = configuredRepo();
-    await runIn(d, 'brief', { op: 'new', agent: 'employee', title: 'deep seam', out: 'x', check: 'node -e "process.exit(0)"', owns: ['**'], files: ['n.md'] });
+    await runIn(d, 'brief', { op: 'new', agent: 'morph', title: 'deep seam', out: 'x', check: 'node -e "process.exit(0)"', owns: ['**'], files: ['n.md'] });
     await runIn(d, 'check', { op: 'run' });
     assert(/## GO/.test(await runIn(d, 'ready', { id: 'deep-seam', lean: true })), 'setup gate failed');
     await runIn(d, 'brief', { op: 'status', id: 'deep-seam', status: 'landed' });

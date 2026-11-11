@@ -1,6 +1,6 @@
 ---
 name: Stacked Wizard
-description: Align an existing harness to oc-stacked - doctor, repair, init, re-align after an upgrade. Use when oc-stacked is installed but not behaving (agents missing, models unpinned, .stack unseeded, plugin loaded twice, a stale seat, a check that passes on a stale tree), or before a first run on a machine that already has its own config.
+description: Align an existing harness to oc-stacked - doctor, repair, init, re-align after an upgrade. Use when oc-stacked is installed but not behaving (agents missing, .stack unseeded, plugin loaded twice, a stale seat, an agent pinned against routing.json, a check that passes on a stale tree), or before a first run on a machine that already has its own config.
 license: MIT
 ---
 
@@ -25,7 +25,7 @@ Gather all of it before touching anything. Each line is a command, not a feeling
 | plugin loaded | `opencode run --print-logs "say OK" 2>&1 \| Select-String -i oc-stacked` |
 | registered plugins | the `plugins` array in the host config (V2) or `plugin` (V1) |
 | agents shipped vs installed | `agents/` file count in the package against `~/.config/opencode/agents/*.md` |
-| models pinned | `routing.json` against a `model:` line in any installed agent |
+| model lines | any `model:` line in an installed agent - the package ships unpinned; `routing.json` holds the tiers |
 | `.stack/` state | `.stack/config.json`, `.stack/ledger.jsonl`, `.stack/state/checks.json` |
 | check green | `node scripts/check.mjs` in the package - the package's own suite, not the host's |
 | `stack` on PATH | `Get-Command stack` - must resolve, or the fallback gate is a story you tell |
@@ -54,7 +54,7 @@ Order matters. Each step reversible, each named in the report.
 1. **Seed `.stack/`** in the project. It writes its own `.gitignore`; `state/` and `plugin.log` never enter history. A hand-written check in `config.json` is preserved.
 2. **Install the seats.** Only files whose hash differs from the package copy are written; anything that differs gets `.oc-stacked.bak` beside it and an `OWNER` row, because a hand-edited agent is the owner's file.
 3. **Register the plugin once.** Add the spec if absent; if present, change nothing.
-4. **Pin the models** from `routing.json` at install time, in the copies, never in the package.
+4. **Leave the agents unpinned.** The package ships no `model:` line; `routing.json` holds the three tiers and `stack.dispatch` reads it per dispatch. A copy that carries a `model:` line is an `OWNER` row.
 5. **Prove the gate.** `node bin/stack.js check run` in the aligned project. Not `check show` - `show` reads a record, `run` executes.
 
 Do not restart anybody's host mid-flight. Change the config, prove with a handshake in a throwaway process, and let the next start be the replug - a live server swapped under a session is a tool surface that dies silently.
@@ -74,10 +74,10 @@ Report shape:
 
 ```text
 Aligned. <n> changed, <n> already correct, <n> for the owner.
-- agents: 3 installed -> 24, 1 ghost pruned (ceo.md)
-- routing: 22 pinned, lead unpinned
+- agents: 2 installed (lead, morph), 5 legacy seats pruned (employee, auditor, scout, runner, planner)
+- routing: tiers workhorse/thinker/generalist; agents unpinned
 - .stack: seeded, 1 hand-written check preserved
-- OWNER: agents/frontend.md carries `model: ...`; routing.json says `...`. Pick one.
+- OWNER: agents/frontend.md carries `model: ...`; the package ships unpinned and routing.json holds the tiers. Pick one.
 - rollback: node scripts/install.mjs --remove
 ```
 

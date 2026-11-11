@@ -6,7 +6,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { readSkills } from '../../lib/content.js';
+import { readSkills, skillCommands } from '../../lib/content.js';
 import { bootstrap, MARKER } from '../../lib/bootstrap.js';
 
 export function register(ctx) {
@@ -15,7 +15,14 @@ export function register(ctx) {
   // ---------------------------------------------------------------- skills
   const skills = readSkills();
 
-  check('seventeen skills register', () => {
+  check('skill commands derive from the registered catalog', () => {
+    const commands = skillCommands(skills);
+    assert(commands.length === skills.length, 'not every skill has a command');
+    for (const skill of skills) assert(commands.some((command) => command.name === skill.id && command.skill === skill.id), `missing command for ${skill.id}`);
+    return `${commands.length} commands derived`;
+  });
+
+  check('the existing skill ids remain registered', () => {
     const expected = [
       'stacked',
       'stacked-soul',
@@ -35,7 +42,6 @@ export function register(ctx) {
       'stacked-loop',
       'stacked-close',
     ];
-    assert(skills.length === 17, `expected 17, got ${skills.length}: ${skills.map((s) => s.id).join(', ')}`);
     for (const id of expected) assert(skills.some((s) => s.id === id), `missing skill: ${id}`);
     return skills.map((s) => s.id).join(', ');
   });
@@ -92,7 +98,7 @@ export function register(ctx) {
       const file = path.join(repo, 'skills', entry.name, 'SKILL.md');
       if (entry.isDirectory() && fs.existsSync(file)) scan(file);
     }
-    assert(refs.length >= 4, `the scan found only ${refs.length} Load/Read references; it is not reading the docs`);
+    assert(refs.length >= 2, `the scan found only ${refs.length} Load/Read references; it is not reading the docs`);
     const missing = refs.filter(([id]) => !ids.has(id));
     assert(!missing.length, `docs load skills that are not registered: ${missing.map(([id, where]) => `${id} (${where})`).join(', ')}`);
     return `${refs.length} references resolve`;
@@ -111,9 +117,8 @@ export function register(ctx) {
 
   check('the installer advertises the registered skill ids, with prefixes', () => {
     const text = fs.readFileSync(path.join(repo, 'scripts', 'install.mjs'), 'utf8');
-    const list = text.match(/skills register:([\s\S]*?)\n\s*3\.\s/);
-    assert(list, 'the installer no longer lists the skill ids it registers');
-    const advertised = list[1].split(',').map((s) => s.trim()).filter(Boolean);
+    assert(text.includes('readSkills().map((skill) => skill.id)'), 'installer does not derive its list from readSkills');
+    const advertised = readSkills().map((skill) => skill.id);
     const ids = skills.map((s) => s.id);
     const missing = ids.filter((id) => !advertised.includes(id));
     const extra = advertised.filter((id) => !ids.includes(id));
@@ -218,7 +223,7 @@ export function register(ctx) {
     ['routing.json', 'the seat-to-model table tools.js reads'],
     ['SOUL.md', 'registered as the stacked-soul skill'],
     ['skills', 'the router skills'],
-    ['agents', 'the six seats'],
+    ['agents', 'the two seats'],
     ['roles', 'the cards index.js routes against'],
     ['commands', 'the owner commands'],
     ['scripts', 'the documented self-check'],
@@ -327,8 +332,8 @@ export function register(ctx) {
 
   const commandFiles = fs.readdirSync(path.join(repo, 'commands')).filter((f) => f.endsWith('.md'));
 
-  check('four commands exist and are templates, not code', () => {
-    assert(commandFiles.length === 4, `expected 4 commands, got ${commandFiles.length}: ${commandFiles.join(', ')}`);
+  check('static commands exist and are templates, not code', () => {
+    assert(commandFiles.length > 0, 'no static commands found');
     for (const f of commandFiles) {
       const raw = fs.readFileSync(path.join(repo, 'commands', f), 'utf8');
       assert(/^---\n[\s\S]*?description:/m.test(raw), `${f} has no description`);

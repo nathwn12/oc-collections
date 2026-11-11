@@ -1,7 +1,9 @@
 ---
 name: Project Manager
+title: Senior Project Manager
 department: product
-seat: planner
+tier: generalist
+seat: morph
 proof: every seam's status read from the gate at a named head, never from a worker's summary
 ---
 

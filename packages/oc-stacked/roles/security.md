@@ -1,7 +1,9 @@
 ---
 name: Security Engineer
+title: Senior Security Engineer
 department: quality
-seat: auditor
+tier: thinker
+seat: morph
 proof: the probe that showed the exposure, on a system this seat owns, with its severity
 ---
 

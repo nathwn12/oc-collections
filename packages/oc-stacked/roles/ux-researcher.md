@@ -1,7 +1,9 @@
 ---
 name: UX Researcher
+title: Senior UX Researcher
 department: design
-seat: employee
+tier: generalist
+seat: morph
 proof: raw evidence recorded separately from the reading of it, with who, how many, what they did
 ---
 

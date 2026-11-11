@@ -1,7 +1,9 @@
 ---
 name: Data Analyst
+title: Senior Data Analyst
 department: knowledge
-seat: employee
+tier: thinker
+seat: morph
 proof: the query, runnable as written, that produced the reported number
 ---
 

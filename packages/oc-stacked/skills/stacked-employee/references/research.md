@@ -1,6 +1,6 @@
 # Research handbook
 
-Covers `researcher`, `scout` and `fact-checker`. Read this before your first move if your archetype names `research.md`. This department exists because a specialist that guesses costs more than one that looks, and because a remembered API is a hypothesis with good manners.
+Covers `researcher` and `fact-checker`. Read this before your first move if your archetype names `research.md`. This department exists because a specialist that guesses costs more than one that looks, and because a remembered API is a hypothesis with good manners.
 
 ## What right means here
 
@@ -84,4 +84,4 @@ Correction:  <the claim as the source supports it>
 - **A tier 4 thread used to overturn a tier 1 source.** The hierarchy decides; the report says so.
 - **A conclusion the sources do not reach.** It moves to the inference paragraph, labelled as inference.
 - **An open question with no search behind it.** It goes back with the strings that were tried.
-- **A verdict on whether work should ship.** Route it to `reviewer` or the auditor.
+- **A verdict on whether work should ship.** Route it to `reviewer` or the fresh-context audit (`stacked-audit`).

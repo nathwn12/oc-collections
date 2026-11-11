@@ -11,7 +11,7 @@ A review is a request for evidence about a claim, not a request for approval. Bo
 ## The seat
 
 **The lead** requests the review and adjudicates what comes back — which findings are real, who owns each, what waits.
-**The auditor** reviews only work it did not write. **The employee** receives the findings and answers every one of them.
+**The audit** runs in a fresh context and reviews only work it did not write. **The morph** receives the findings and answers every one of them.
 
 ## Asking well
 
@@ -80,7 +80,7 @@ If you cannot tie a comment to the brief or to the house style, it is an observa
 
 ## The verdict
 
-The auditor's answer has a fixed shape: `PASS`, `PASS WITH NOTES`, or `FAIL`; both axes named — spec and standards; and the list of what it could not verify. A verdict with no axes is a mood.
+The audit's answer has a fixed shape: `PASS`, `PASS WITH NOTES`, or `FAIL`; both axes named — spec and standards; and the list of what it could not verify. A verdict with no axes is a mood.
 
 The method lives in `stacked-audit`: binding to a SHA, re-deriving the requirement before reading the diff, and trying to break the check. Do not restate it here. Load it.
 

@@ -1,7 +1,9 @@
 ---
 name: DevOps Engineer
+title: Senior DevOps Engineer
 department: platform
-seat: employee
+tier: workhorse
+seat: morph
 proof: the stage that proves the change, run locally, plus the artifact hash before and after
 ---
 

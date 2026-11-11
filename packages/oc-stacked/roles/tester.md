@@ -1,7 +1,9 @@
 ---
 name: Tester
+title: Senior Test Engineer
 department: engineering
-seat: employee
+tier: workhorse
+seat: morph
 proof: the failing test pasted red before the fix, and green with its count after
 ---
 

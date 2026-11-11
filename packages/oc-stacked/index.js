@@ -15,9 +15,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readSkills, skillsDir } from './lib/content.js';
+import { readSkills, skillCommands, skillsDir } from './lib/content.js';
 import { bootstrap, MARKER } from './lib/bootstrap.js';
-import { classifyAsk, loadCards, route } from './lib/router.js';
+import { classifyAsk, dispatchMorph, loadCards, route } from './lib/router.js';
 import { toolDefinitions } from './lib/tools.js';
 import { seedStack, tryReadJson, withLock, writeJson, log } from './lib/state.js';
 import { ARMED_PATH, closeReasons, closeable, invalidateClose, preflight, readClose, takeCompactMarker } from './lib/close.js';
@@ -32,6 +32,8 @@ const note = (...parts) => {
 
 /** The seat cards ship beside the plugin, not in the project being worked on. */
 const CARD_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'roles');
+const guardedMorphs = new Set();
+const guardedHosts = new WeakSet();
 
 /** One instruction per kind of ask, and no more: the model gets told, not essayed. */
 const ASK_LINES = {
@@ -96,9 +98,38 @@ async function registerSkills(ctx) {
   return added;
 }
 
+async function registerSkillCommands(ctx) {
+  if (typeof ctx?.command?.transform !== 'function') return;
+  await ctx.command.transform((editor) => {
+    for (const command of skillCommands()) {
+      editor.add({ name: command.name, description: command.description,
+        execute: async ({ sessionID, prompt, delivery }) => ctx.session.prompt({ ...prompt, sessionID, delivery, text: `Load \`${command.skill}\` and follow it.\n\n${prompt.text || ''}` }) });
+    }
+  });
+}
+
 async function registerTools(ctx, dir) {
   if (typeof ctx?.tool?.transform !== 'function') return 0;
   const definitions = toolDefinitions({ dir });
+  definitions.push({
+    name: 'dispatch',
+    description: 'Create a morph child with a configured role model and restricted permissions; refuses unsupported hosts.',
+    input: { type: 'object', properties: {
+      role: { type: 'string' }, complexity: { type: 'string', enum: ['cheap', 'standard', 'expert'] },
+      prompt: { type: 'string' }, files: { type: 'array', items: { type: 'string' } },
+    }, required: ['role', 'complexity', 'prompt', 'files'], additionalProperties: false },
+    execute: async (input, context) => {
+      // Session creation replaces the parent's session rules. Until attenuation
+      // is implemented and verified on the host, no child may be created here.
+      const parentAttenuationVerified = false;
+      if (!parentAttenuationVerified) throw new Error('Morph dispatch disabled: parent permission attenuation is not verified.');
+      if (!guardedHosts.has(ctx) || typeof ctx?.session?.get !== 'function') throw new Error('Morph dispatch unavailable: prompt guard or session lookup missing.');
+      const card = loadCards(CARD_DIR).find((item) => item.id === input.role);
+      const routing = JSON.parse(fs.readFileSync(path.join(path.dirname(CARD_DIR), 'routing.json'), 'utf8'));
+      const result = await dispatchMorph(ctx, { parentID: context?.sessionID, source: { type: 'tool', messageID: context?.messageID, id: context?.id }, card, complexity: input.complexity, routing, prompt: input.prompt, files: input.files, directory: dir, onVerified: (id) => { guardedMorphs.add(id); return () => guardedMorphs.delete(id); } });
+      return { content: `Morph ${result.sessionID} finished waiting; tier ${result.tier}, model ${result.model.providerID}/${result.model.id}. Attempts: ${JSON.stringify(result.attempts)}. Inspect the child session for its outcome and result.` };
+    },
+  });
   let added = 0;
   try {
     await ctx.tool.transform((editor) => {
@@ -796,9 +827,9 @@ async function instruct(ctx, sessionID, said) {
       sessionID,
       key: 'route',
       value: [
-        `[oc-stacked] Routed: ${routed.cards[0]} (${routed.department}, ${routed.seat})${also}.`,
-        `Card: roles/${routed.cards[0]}.md; proof: ${routed.proof}.`,
-        `Read the card and skills/stacked-employee/SKILL.md before the first edit; if you delegate, dispatch employee with card "${routed.cards[0]}".`,
+        `[oc-stacked] Routed: ${routed.cards[0]} (${routed.department}, morph · ${routed.tier})${also}.`,
+        `Card: roles/${routed.cards[0]}.md; expertise: ${routed.title}; proof: ${routed.proof}.`,
+        `Read the card and skills/stacked-employee/SKILL.md before the first edit; if you delegate, use stack.dispatch with role "${routed.cards[0]}", the brief, complexity, and exact writable files.`,
         'If this route does not fit, say so in one line and route yourself.',
       ].join(' '),
     });
@@ -815,7 +846,15 @@ async function instruct(ctx, sessionID, said) {
 async function onPrompt(ctx, dir, event) {
   const sessionID = event?.sessionID;
   const prompt = event?.prompt;
-  if (!sessionID || !prompt || typeof prompt.text !== 'string') return;
+  if (!sessionID) return;
+  if (typeof ctx?.session?.get === 'function') {
+    const fetched = await ctx.session.get({ sessionID });
+    const session = fetched?.data ?? fetched;
+    if (session?.agent === 'morph' && !guardedMorphs.has(sessionID)) {
+      throw new Error('Direct morph invocation refused; use stack.dispatch with a role and permissions.');
+    }
+  }
+  if (!prompt || typeof prompt.text !== 'string') return;
   const said = prompt.text;
   // Our own synthetic messages are not the owner's intent, whether or not the
   // host carries their metadata through to this hook.
@@ -956,6 +995,7 @@ async function setup(ctx) {
 
   const dir = rootOf(ctx);
   await registerSkills(ctx);
+  try { await registerSkillCommands(ctx); } catch (err) { note('skill command registration failed:', err?.message || err); }
   await registerTools(ctx, dir);
   await ensureProjectStack(dir);
 
@@ -991,6 +1031,7 @@ async function setup(ctx) {
   ]) {
     try {
       await ctx.session.hook(name, (event) => handler(ctx, dir, event));
+      if (name === 'prompt' && typeof ctx?.session?.get === 'function') guardedHosts.add(ctx);
     } catch (err) {
       note(`session hook "${name}" registration failed:`, err?.message || err);
     }
@@ -1008,6 +1049,7 @@ async function setup(ctx) {
   }
 
   return () => {
+    guardedHosts.delete(ctx);
     for (const stop of cleanups) {
       try {
         stop();

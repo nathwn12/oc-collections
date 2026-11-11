@@ -64,7 +64,7 @@ Write `.stack/reports/<id>.md`. Five sections, all mandatory.
 - **Evidence** — the command and its real output, at the head you are handing back. Not a summary of the output.
 - **Unverified** — every claim you did not check yourself and why. `none` is a claim: it says you looked.
 - **Scope** — the paths you touched, and confirmation that each is inside `Owns`. If you went outside, say so and why.
-- **Lesson** — one paragraph the next employee should know.
+- **Lesson** — one paragraph the next worker should know.
 
 Then return **one paragraph** to the lead: outcome, commits with short SHAs, the check's verdict, and concerns. Never paste the report into the reply — the file is the artifact, the paragraph is the pointer.
 

@@ -1,7 +1,9 @@
 ---
 name: Backend Engineer
+title: Senior Backend Engineer
 department: engineering
-seat: employee
+tier: workhorse
+seat: morph
 proof: the request test, unauthorised and replayed, red first
 ---
 

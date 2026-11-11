@@ -10,7 +10,7 @@ Every other skill in this shelf starts from a request. This one starts from the 
 
 That matters because the four laws point the other way: Law 3 says touch only your seam, and a codebase that has become hard to change has no seam to hold on to. This is the skill that creates one. It is not a licence to wander; it is a licence to move a boundary deliberately and prove the move.
 
-**The seat:** the lead, or an employee dispatched with a deepen brief. Behaviour does not change. If behaviour must change, that is a feature, and it gets its own brief.
+**The seat:** the lead, or a morph dispatched with a deepen brief. Behaviour does not change. If behaviour must change, that is a feature, and it gets its own brief.
 
 ---
 

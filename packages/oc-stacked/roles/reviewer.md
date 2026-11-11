@@ -1,7 +1,9 @@
 ---
 name: Reviewer
+title: Senior Code Reviewer
 department: quality
-seat: auditor
+tier: thinker
+seat: morph
 proof: the check run again with the core fix reverted in a scratch copy
 ---
 

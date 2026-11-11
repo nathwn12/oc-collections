@@ -1,6 +1,6 @@
 # Lead: reconciling reports
 
-Load this when an employee report comes back.
+Load this when a morph report comes back.
 
 ### 5. Reconcile
 

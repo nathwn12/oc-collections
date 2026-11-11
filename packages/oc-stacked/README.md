@@ -1,7 +1,7 @@
 # oc-stacked
 
-A three-rung agent stack for OpenCode: **one lead, a fresh employee per seam, and an auditor that wrote none of it.**
-Local-first, zero MCP, eight tools, no runtime dependencies.
+An agent stack for OpenCode: **one lead, a morph per seam, and an audit from a context that wrote none of it.**
+Local-first, zero MCP, eight tools plus the gated `stack.dispatch`, no runtime dependencies.
 
 ![oc-stacked](preview/readme-hero.png)
 
@@ -28,27 +28,28 @@ oc-stacked answers both with structure rather than exhortation: **seats** with h
 
 ---
 
-## The three seats
+## The two seats
 
 | Seat | Agent id | Owns | May never |
 |---|---|---|---|
 | **LEAD** | `lead` | deciding everything reversible: cutting seams, writing briefs, dispatching, reconciling, landing, the digest | take a seam it already dispatched, land on a worker's word alone, decide what the owner owns |
-| **EMPLOYEE** | `employee` | one seam, one brief, one check, one report | merge, push a shared branch, widen scope, dispatch anyone |
-| **AUDIT** | `auditor` | the verdict on work it did not write | edit what it judges, accept the author's check as the verdict |
+| **MORPH** | `morph` | one seam, one brief, one card: the card's access and model tier, one check, one report | merge, push a shared branch, widen scope, dispatch anyone |
 
 The owner is the CEO; the lead speaks for them. The lead decides everything reversible and asks only for the five stops.
 
-Each seat gets its model from the session unless it is a delegated seat measured in its own right:
+The lead inherits the session model, so the TUI selection always wins. `stack.dispatch` requests a morph child on the card's model tier; an expert complexity override uses the thinker tier:
 
-| Seat | Model |
-|---|---|
-| LEAD | the session model — no pin, whatever you pick in the TUI |
-| EMPLOYEE | opencode-go/deepseek-v4.1-flash |
-| AUDIT | openai/gpt-6.1-terra |
+| Model tier | Runs | Model |
+|---|---|---|
+| `workhorse` | coding, testing | opencode-go/deepseek-v4.1-flash |
+| `thinker` | reasoning, review, verification | openai/gpt-6.1-terra |
+| `generalist` | everything else | opencode-go/muse-spark-1.3-contributor |
 
-The TUI selection always wins for the lead. EMPLOYEE pins `deepseek-v4.1-flash` because a seam is mechanical enough to standardise; AUDIT pins `gpt-6.1-terra` so the verdict comes from a different family than the code it judges. Those pins are applied, not shipped: every agent file in the repository carries no `model:` line, and `scripts/install.mjs` writes the routing from `routing.json` onto the copies it installs, with `lead` always inheriting.
+**`stack.dispatch` is disabled:** child session permissions replace parent session rules, and safe attenuation has not been implemented or verified. It refuses before creating a child. Do not install this mixed redesign as a replacement for the existing agents. Agent files are unpinned; `routing.json` holds the proposed tier models, complexity override, and read-only roles. Shell is denied to morphs, and live model selection and permission enforcement remain unverified.
 
-The prohibitions are enforced, not suggested: the employee agent denies the `subagent` action outright, and the auditor agent denies `edit`.
+The disabled dispatch prototype has an optional `fallbacks` map for up to three ordered `provider/model` identifiers per tier; it ships empty. Its inventory logic is mock-tested only and does not detect generation failures such as `tool_choice`. It never retries after prompt admission because work may have caused side effects.
+
+The morph agent declares a default deny, including shell and subagent actions; the lead agent asks before source edits outside `.stack/`. Whether the running host enforces these rules and the prompt guard is unverified.
 
 The lead writes only `.stack/`. Every source change is a seam, even a one-line fix: one file and one edit is still dispatched, two or more files are seamed and ranked, work with no file yet goes to the department that owns it, and only a question about the stack itself is answered directly. A lead reaching for an editor dispatches instead, because a lead that does the work grades its own writing.
 
@@ -61,7 +62,7 @@ The lead writes only `.stack/`. Every source change is a seam, even a one-line f
 | 1 | **Intake** | The objective is restated in one sentence. Constraints, unknowns, and out-of-scope are named before anything is cut. |
 | 2 | **Rank** | The work is cut into seams and scored value × risk ÷ effort. Every genuinely disjoint seam stays live, up to ten; the rest are parked in the ledger with a reason. |
 | 3 | **Brief** | `brief` writes `.stack/briefs/<id>.md`. A brief missing **Out**, **Check**, or **Owns** is refused and nothing is written. |
-| 4 | **Dispatch** | One employee per seam, all dispatched in one response. Ownership is proved disjoint on exact files first; `swarm` refuses a shared file. The prompt carries a brief path and three fields, never session history. |
+| 4 | **Dispatch** | One morph per seam via `stack.dispatch`, all dispatched in one response. Ownership is proved disjoint on exact files first; `swarm` refuses a shared file. The call carries the role, the complexity, the brief path, and the exact writable files — never session history. |
 | 5 | **Reconcile** | The report is read before chat. `scope` proves the diff stayed inside the brief. `check` is re-run by the lead. |
 | 6 | **Land** | `ready` gates it. One commit, plain words, the check output in the body. The seam is marked landed in the ledger. |
 | 7 | **Digest** | `.stack/digest.md` is rewritten from the ledger: **Needs you / New / In progress**, every row aged. |
@@ -103,7 +104,7 @@ All local. Files and `git` only; no network call, no daemon, no MCP handshake.
 |---|---|---|---|
 | `ledger` | `log` `tail` `digest` | Append one stamped line; read the tail; rewrite the digest from the record. | Never edits. A correction is a new line. |
 | `brief` | `new` `list` `get` `status` | Write one seam contract, index it, move its state. | Missing Out, Check, or Owns: no file, no dispatch. |
-| `swarm` | one call | Write 2 to 10 briefs atomically; return one dispatch prompt per employee. | Two seams naming one file, a duplicate id, a hole, or an eleventh seam: nothing is written. |
+| `swarm` | one call | Write 2 to 10 briefs atomically; return one dispatch prompt per seam. | Two seams naming one file, a duplicate id, a hole, or an eleventh seam: nothing is written. |
 | `check` | `init` `run` `show` | Detect or run the repo's proving commands, bind the result to HEAD. | Reports `RED` on failure and marks a result stale when HEAD moved. |
 | `scope` | — | Compare every touched path with the brief's `Owns`. | Names every path that left the seam. |
 | `ready` | — | Gate a seam for landing. | `NO-GO` with one named reason per failure: no report, red check, stale check, dirty tree, out-of-scope path. |
@@ -112,11 +113,13 @@ All local. Files and `git` only; no network call, no daemon, no MCP handshake.
 
 `check init` looks for the obvious manifests (`package.json` scripts, `pyproject.toml`, `go.mod`, `Cargo.toml`, a `Makefile` `test` target) and writes the four cheapest honest checks, so the first run is not an empty config. `Cargo.toml` yields `cargo test` only when there is code for it to run: a `[package]` with a `src/` directory (or a `[lib]`/`[[bin]]` path that exists), or a `[workspace]` member that resolves to a directory with its own manifest. An empty virtual workspace, a member that does not exist, and a manifest with no code all add nothing — the detector asks what is on disk, not whether the file parses, so a garbage manifest with no `src/` adds nothing either. Until at least one check exists, readiness is `UNPROVEN`, not green.
 
+`stack.dispatch` is the one tool here that creates sessions. It is registered on every V2 host and refuses before creating a child until parent permission attenuation is verified (see the seats section).
+
 ---
 
 ## The skills
 
-Seventeen. They are ordinary `SKILL.md` files with front matter; the plugin registers them natively at startup. One is the hub, the rest are seats, discipline lenses, and the shelf you pull when the moment matches.
+Seventeen. They are ordinary `SKILL.md` files with front matter; the plugin registers them natively at startup. One is the hub, the rest are rungs, discipline lenses, and the shelf you pull when the moment matches.
 
 | Skill id | Loads when |
 |---|---|
@@ -124,7 +127,7 @@ Seventeen. They are ordinary `SKILL.md` files with front matter; the plugin regi
 | `stacked-soul` | The four laws. Registered from the single canonical [`SOUL.md`](SOUL.md) at the repo root, not a copy. |
 | `stacked-pls` | The request is half-shaped: decide the gaps as the owner would, deepen the goal one rung, then work it to green. |
 | `stacked-lead` | Work spans files, decisions, or more than one sitting. |
-| `stacked-employee` | You were dispatched a seam and have a brief path. |
+| `stacked-employee` | You were dispatched a seam and have a brief path. The id is historical: this is the one-seam discipline the morph works from. |
 | `stacked-audit` | A seam is ready to land, or a branch needs a verdict from outside. |
 | `stacked-deepen` | The complaint is about the code, not a feature. |
 | `stacked-plan` | The design is not obvious, or the ask is a feature. |
@@ -133,16 +136,18 @@ Seventeen. They are ordinary `SKILL.md` files with front matter; the plugin regi
 | `stacked-tdd` | Behaviour changes and a test surface exists. |
 | `stacked-review` | You are asking for, receiving, or looping on a review. |
 | `stacked-ship` | The seam is ready to commit, close, or release. |
-| `stacked-wizard` | oc-stacked is installed but not behaving: seats missing, models unpinned, `.stack/` unseeded, a ghost seat, a check green on a stale tree. Aligns a host that already has its own opinions, by adding only. |
+| `stacked-wizard` | oc-stacked is installed but not behaving: seats missing, `.stack/` unseeded, a stale seat, an agent pinned against `routing.json`, a check green on a stale tree. Aligns a host that already has its own opinions, by adding only. |
 | `stacked-oftb` | You are blocked. Names which kind of rule is in the way - owner gate, doctrine default, or physics - then climbs six rungs (invert, confine, split, other door, witness, shrink) to reach the same goal without an authorization nobody gave. |
 | `stacked-loop` | "Don't stop until", "keep going", a vague ask that should still land, or any multi-turn job with a check. The goal lives in `.stack/goal.md`; every turn ends with a verdict from a context that did none of the work. |
 | `stacked-close` | The session is ending, the work is done, or you say close, wrap up, seal, we're done. The fixed closing order: settle every ticket, sweep, align the docs to the diff, one lesson, the report, then the sealed receipt and the compaction. |
 
-**Commands are the owner's.** `/stack` and friends are manual by design: the route table decides which seat handles an ask, and the loop never types a command for itself.
+**Commands are the owner's.** `/stack` and friends are manual by design: the card router decides which role handles a prompt, and the loop never types a command for itself.
 
 ---
 
 ## The commands
+
+The four workflow commands below are static. On V2 hosts that expose the command transform, the plugin also registers one `/<skill-id>` command for each registered skill; invoking one forwards its arguments with an instruction to load that skill. Hosts without that capability retain the skills and static commands, but do not get the generated commands.
 
 | Command | Does |
 |---|---|
@@ -179,7 +184,7 @@ Conversation memory does not survive compaction. `.stack/` does.
 }
 ```
 
-There is no dispatch knob: `swarm` enforces the host's hard ceiling of ten seams, and the lead decides how many it can actually reconcile.
+There is no dispatch knob in `config.json`: model routing lives in `routing.json`, `swarm` enforces the host's hard ceiling of ten seams, and the lead decides how many it can actually reconcile.
 
 ---
 
@@ -195,8 +200,8 @@ node scripts/install.mjs
 The installer:
 
 1. Junctions the repository to `%USERPROFILE%\.config\opencode\plugins\oc-stacked`. Edits here are live after a restart; there is no copy step for the plugin.
-2. Copies the three agents into `%USERPROFILE%\.config\opencode\agents\`.
-3. Copies the four commands into `%USERPROFILE%\.config\opencode\commands\`.
+2. Copies `lead` and `morph` into `%USERPROFILE%\.config\opencode\agents\` and retires the five legacy seats (`employee`, `auditor`, `scout`, `runner`, `planner`) on install.
+3. Copies the static commands into `%USERPROFILE%\.config\opencode\commands\`; skill commands are registered at runtime where supported.
 4. Runs the self-test and fails loudly if anything is wrong.
 
 It does not rewrite your `opencode.jsonc`. To wire it by hand instead, add the directory:
@@ -243,7 +248,7 @@ node bin/stack.js ledger digest
 
 1. The lead restates the objective, lists constraints and unknowns, and cuts seams.
 2. `brief` writes `.stack/briefs/retry-budget.md` with Out, Check, and Owns. If the check is not obvious, the lead proposes the cheapest honest one instead of inventing a green.
-3. An employee is dispatched with `Seam`, `Brief`, and the report path. It reads the brief, makes the smallest change, runs the check, and writes `.stack/reports/retry-budget.md`.
+3. The lead dispatches with `stack.dispatch` — role, complexity, brief path, and the exact writable files including the report. The morph reads the brief, makes the smallest change, runs the check, and writes `.stack/reports/retry-budget.md`. While dispatch is disabled (parent permission attenuation unverified), the lead runs the seam itself under the same brief.
 4. `/stack-check` runs the configured commands and records the result against HEAD.
 5. `/stack-ready retry-budget` answers:
 
@@ -274,8 +279,8 @@ node bin/stack.js ledger digest
 | A check runs where it was written | An unquoted absolute path with a space in a configured check command is refused rather than silently split. |
 | A shim still starts on Windows | `npm`, `npx`, `pnpm`, `yarn`, `corepack` route through the shell; a failed direct spawn falls back to the shell. |
 | A busy file still writes | `writeAtomic` retries `EPERM`/`EACCES`/`EBUSY`; a lock records its pid so a dead holder is recovered immediately. A leading BOM in a JSON state file is ignored, not treated as corruption. |
-| A worker cannot multiply | The employee agent's permissions deny `subagent`; the dispatch template forbids it. |
-| Verdicts are independent | The auditor runs the check itself and may not edit; its skill forbids fixing the code it judges. |
+| A worker cannot multiply | The morph agent's permissions deny `subagent`, and a direct morph invocation is refused at the prompt hook; only `stack.dispatch` creates children. |
+| Verdicts are independent | The audit runs in a fresh context that wrote none of the work; it runs the check itself, and its skill (`stacked-audit`) forbids fixing the code it judges. |
 | Nothing is lost to compaction | The ledger is append-only and the digest is derived from it, not hand-maintained. |
 
 ---
@@ -285,7 +290,7 @@ node bin/stack.js ledger digest
 - **OpenCode 2.0.4 or newer**, verified on 2.2.6. A V1-compatible export is kept for older hosts (skills and bootstrap; the tool domain does not exist there).
 - **Node 20 or newer.** No build step, no transpiler, no dependencies.
 - **git is optional.** Without a repository, `scope` says it cannot audit and `ready` gates on brief, report, and checks only. It says so rather than assuming clean.
-- **Two pins, no surprises.** The lead inherits the session model, so the TUI selection always wins. EMPLOYEE is pinned to `deepseek-v4.1-flash` and AUDIT to `gpt-6.1-terra`; a brief records a tier (`cheap`, `standard`, `expert`) and the delegated seat supplies the model.
+- **Configurable routing.** The lead inherits the session model. `stack.dispatch` requests the card's configured model, with the configured complexity override, and refuses to prompt when the host does not confirm the requested child settings.
 - **No GitHub coupling.** Nothing reads or writes a remote, a PR, or an issue.
 - **No telemetry.** The only files written are inside the project's `.stack/` and the OpenCode config directory at install time.
 - **`check` is code execution by design.** It runs the shell commands in `.stack/config.json`. That file is repo-controlled, so treat a cloned project's config the way you treat a `Makefile` or a `package.json` script: read it before you run it. `check` prints every command and its exit code, and refuses to run at all when `OC_STACKED_NO_EXEC=1`.

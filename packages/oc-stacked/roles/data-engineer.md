@@ -1,7 +1,9 @@
 ---
 name: Data Engineer
+title: Senior Data Engineer
 department: engineering
-seat: employee
+tier: workhorse
+seat: morph
 proof: the invariant query returning zero rows before and after the change
 ---
 

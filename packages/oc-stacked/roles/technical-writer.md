@@ -1,7 +1,9 @@
 ---
 name: Technical Writer
+title: Senior Technical Writer
 department: knowledge
-seat: employee
+tier: generalist
+seat: morph
 proof: the procedure followed from a clean start, with the result of every step
 ---
 

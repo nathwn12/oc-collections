@@ -1,7 +1,9 @@
 ---
 name: SRE
+title: Senior Site Reliability Engineer
 department: platform
-seat: employee
+tier: workhorse
+seat: morph
 proof: the measured value at expected load and at twice it, with the alert that fires
 ---
 

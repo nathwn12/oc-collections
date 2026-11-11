@@ -6,19 +6,22 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { bootstrap } from '../../lib/bootstrap.js';
 
-/** The six seats: a permission boundary and a model, never a personality. */
-const SEATS = ['lead', 'employee', 'auditor', 'scout', 'runner', 'planner'];
-/** The seats that return words, not diffs: each ends its edit rules on a deny. */
-const READ_ONLY = ['auditor', 'scout', 'planner', 'runner'];
+/** The two seats: a permission boundary and a model, never a personality. */
+const SEATS = ['lead', 'morph'];
+/** The three model tiers a role card may name: workhorse codes and tests, thinker reasons and verifies, generalist covers the rest. */
+const TIERS = ['workhorse', 'thinker', 'generalist'];
+/** The morph seat returns diffs, so no seat in this roster is read-only. */
+const READ_ONLY = [];
 /** The seven departments a role card may name. */
 const DEPARTMENTS = ['engineering', 'quality', 'platform', 'design', 'knowledge', 'product', 'research'];
 /** A card's body, in this order, and nothing else. */
 const CARD_HEADINGS = ['Owns', 'Must not', 'Proof', 'Handoff'];
 /** A card's frontmatter keys, exactly. */
-const CARD_KEYS = ['name', 'department', 'seat', 'proof'];
+const CARD_KEYS = ['name', 'title', 'department', 'seat', 'tier', 'proof'];
 /** The cap a card is held to, in characters. */
-const CARD_CAP = 1200;
+const CARD_CAP = 1300;
 /**
  * The archetype agents the six seats replaced. A stale agent is still a
  * description the model can pick, so their absence is asserted, not assumed.
@@ -72,7 +75,7 @@ export async function register(ctx) {
   const MUSE = 'opencode-go/muse-spark-1.3-contributor';
   const DEEPSEEK = 'opencode-go/deepseek-v4.1-flash';
 
-  check('six seats exist with valid V2 frontmatter', () => {
+  check('two seats exist with valid V2 frontmatter', () => {
     assert(agentFiles.length === SEATS.length, `expected ${SEATS.length} seats, got ${agentFiles.length}: ${agentFiles.join(', ')}`);
     assert(
       agentIds.join(',') === [...SEATS].sort().join(','),
@@ -129,6 +132,19 @@ export async function register(ctx) {
     return `${others.length} seats cannot delegate`;
   });
 
+  check('a direct morph denies all actions unless explicitly safe', () => {
+    const rules = agentPermissions('morph');
+    const broad = rules.findIndex((r) => r.action === '*' && r.resource === '*' && r.effect === 'deny');
+    assert(broad >= 0, 'morph has no default deny for direct children');
+    for (const action of ['edit', 'shell', 'subagent']) {
+      const matching = rules.filter((r) => (r.action === '*' || r.action === action) && r.resource === '*');
+      assert(matching.at(-1)?.effect === 'deny', `direct morph permits ${action}`);
+    }
+    assert(!rules.some((r, i) => i > broad && r.effect === 'allow' && (r.action === '*' || r.action === 'edit' || r.action === 'shell')), 'direct morph widens its default deny');
+    assert(bootstrap().includes('stack.dispatch'), 'bootstrap does not route dispatch through the guard');
+    return 'unconfigured morph denies edit, shell, subagents and unknown actions';
+  });
+
   check('each seat ends its edit rules on the boundary its work needs', () => {
     for (const id of READ_ONLY) {
       const edits = agentPermissions(id).filter((r) => r.action === 'edit');
@@ -139,14 +155,14 @@ export async function register(ctx) {
         `${id}.md ends its edit rules on ${last.effect} ${last.resource}; a read-only seat returns words, not diffs`,
       );
     }
-    const edits = agentPermissions('employee').filter((r) => r.action === 'edit');
-    assert(edits.length, 'employee.md has no edit rule');
+    const edits = agentPermissions('morph').filter((r) => r.action === 'edit');
+    assert(edits.length, 'morph.md has no edit rule');
     const last = edits[edits.length - 1];
     assert(
-      last.effect === 'allow',
-      `employee.md ends its edit rules on ${last.effect} ${last.resource}; the seat that writes must end on an allow`,
+      last.effect === 'deny',
+      `morph.md ends its edit rules on ${last.effect} ${last.resource}; direct morph must deny edits`,
     );
-    return `${READ_ONLY.length} read-only seats deny, employee allows`;
+    return `${READ_ONLY.length} read-only seats deny, direct morph denies`;
   });
 
   check('every edit deny names a path the engine can actually send', () => {
@@ -204,33 +220,32 @@ export async function register(ctx) {
     return 'unpinned in the repository';
   });
 
-  check('routing.json carries the six seats exactly, and the lead inherits', () => {
-    const ids = Object.keys(routing).filter((key) => key !== '_comment').sort();
-    assert(
-      ids.join(',') === [...SEATS].sort().join(','),
-      `routing.json has ${ids.length} ids (${ids.join(', ')}), expected exactly the six seats`,
-    );
-    assert(routing.lead === null, `lead is ${JSON.stringify(routing.lead)}, expected null`);
+  check('routing.json carries the two seats, both inheriting, plus the three model tiers', () => {
+    const table = routing;
+    const ids = Object.keys(table)
+      .filter((key) => !['_comment', 'tiers', 'complexity', 'readOnlyRoles', 'fallbacks'].includes(key))
+      .sort();
+    assert(ids.join(',') === [...SEATS].sort().join(','), `routing.json has ${ids.length} seat ids (${ids.join(', ')}), expected exactly the two seats (${[...SEATS].sort().join(', ')})`);
+    assert(table.lead === null, `lead is ${JSON.stringify(table.lead)}, expected null`);
+    assert(table.morph === null, `morph is ${JSON.stringify(table.morph)}, expected null`);
 
-    const EXPECT = new Map([
-      ['employee', DEEPSEEK],
-      ['runner', DEEPSEEK],
-      ['auditor', TERRA],
-      ['planner', TERRA],
-      ['scout', MUSE],
-    ]);
+    const tiers = table.tiers && typeof table.tiers === 'object' ? table.tiers : null;
+    assert(tiers, 'routing.json has no tiers table');
+    const EXPECT = new Map(TIERS.map((id) => [id, tiers[id]]));
+    const tierIds = Object.keys(tiers).sort();
+    assert(tierIds.join(',') === [...EXPECT.keys()].sort().join(','), `tiers are ${tierIds.join(', ')}, expected ${[...EXPECT.keys()].sort().join(', ')}`);
     for (const [id, model] of EXPECT) {
-      assert(routing[id] === model, `${id} should be ${model.split('/').pop()}, is ${routing[id]}`);
+      assert(typeof model === 'string' && /^[^/\s]+\/[^/\s]+$/.test(model), `${id} must name a provider/model`);
     }
     const pinnedRoles = RETIRED.filter((id) => Object.prototype.hasOwnProperty.call(routing, id));
     assert(
       !pinnedRoles.length,
       `routing.json pins ${pinnedRoles.length} role card(s) as if they were seats: ${pinnedRoles.join(', ')}; a card is read by a seat and never gets a model pin`,
     );
-    return `deepseek employee,runner · terra auditor,planner · muse scout · lead inherit`;
+    return `workhorse deepseek · thinker terra · generalist muse · lead, morph inherit`;
   });
 
-  check('stacked-lead routes the six seats, and picks a card by department', () => {
+  check('stacked-lead routes the two seats, and picks a card by department', () => {
     const skillDir = path.join(repo, 'skills', 'stacked-lead');
     const text = fs.readFileSync(path.join(skillDir, 'SKILL.md'), 'utf8');
     const start = text.search(/^## Routing$/m);
@@ -281,6 +296,17 @@ export async function register(ctx) {
     return `${RETIRED.length} retired agents absent`;
   });
 
+  check('installer names all five retired seats and docs warn of retirement', () => {
+    const installer = fs.readFileSync(path.join(repo, 'scripts', 'install.mjs'), 'utf8');
+    const docs = fs.readFileSync(path.join(repo, 'README.md'), 'utf8');
+    for (const id of ['employee', 'auditor', 'scout', 'runner', 'planner']) {
+      assert(installer.includes(`'${id}.md'`), `installer omits ${id}`);
+      assert(docs.includes(`\`${id}\``), `README omits ${id}`);
+    }
+    assert(/retire.*on install/i.test(docs), 'README does not warn seats retire on install');
+    return 'five legacy seats named in installer and install warning';
+  });
+
   // ---------------------------------------------------------------- role cards
   const rolesDir = path.join(repo, 'roles');
   const cardFiles = fs.existsSync(rolesDir) ? fs.readdirSync(rolesDir).filter((f) => f.endsWith('.md')).sort() : [];
@@ -311,7 +337,10 @@ export async function register(ctx) {
       faults.push(`${file} department "${fields.department}" is not one of the seven (${DEPARTMENTS.join(', ')})`);
     }
     if (fields.seat && !SEATS.includes(fields.seat)) {
-      faults.push(`${file} seat "${fields.seat}" is not one of the six seats (${SEATS.join(', ')})`);
+      faults.push(`${file} seat "${fields.seat}" is not one of the two seats (${SEATS.join(', ')})`);
+    }
+    if (fields.tier && !TIERS.includes(fields.tier)) {
+      faults.push(`${file} tier "${fields.tier}" is not one of the three tiers (${TIERS.join(', ')})`);
     }
     const headings = [...body.matchAll(/^##[ \t]+(.+?)[ \t\r]*$/gm)].map((m) => m[1]);
     if (headings.join('|') !== CARD_HEADINGS.join('|')) {
@@ -324,52 +353,60 @@ export async function register(ctx) {
   }
 
   /** A minimal valid card, for the two cases that need a fixture of their own. */
-  const sampleCard = (seat, department) =>
-    `---\nname: Sample\ndepartment: ${department}\nseat: ${seat}\nproof: node -e "process.exit(0)"\n---\n\n` +
+  const sampleCard = (seat, department, tier = 'workhorse') =>
+    `---\nname: Sample\ntitle: Senior Sample\ndepartment: ${department}\nseat: ${seat}\ntier: ${tier}\nproof: node -e "process.exit(0)"\n---\n\n` +
     `## Owns\none decision\n\n## Must not\none failure\n\n## Proof\none command\n\n## Handoff\none paragraph\n`;
 
-  check('the role cards carry a seat, a department and the four sections', () => {
+  check('the role cards carry a seat, a tier, a department and the four sections', () => {
     assert(
       cardFiles.length === 22,
       `expected 22 role cards in roles/, got ${cardFiles.length}: ${cardFiles.join(', ') || 'none'}`,
     );
     const cards = cardFiles.map((f) => [f, fs.readFileSync(path.join(rolesDir, f), 'utf8')]);
     const faults = cards.flatMap(([f, raw]) => cardFaults(f, raw));
+    for (const [file, raw] of cards) assert(/^Senior\s+\S/.test(cardOf(raw).fields.title || ''), `${file} has no exported senior expertise title`);
     assert(!faults.length, faults.join('\n        '));
     const counts = SEATS.map((seat) => `${seat} ${cards.filter(([, raw]) => cardOf(raw).fields.seat === seat).length}`);
     return `${cardFiles.length} cards (${counts.join(' · ')})`;
   });
 
-  check('a card naming an unknown seat fails, a seat with no card in a department passes', () => {
+  check('a card naming an unknown seat or tier fails, cards stay optional per seat', () => {
     const bogus = cardFaults('ghost.md', sampleCard('wizard', 'engineering'));
     assert(
       bogus.some((f) => /seat "wizard"/.test(f)),
       `an unknown seat was accepted: ${bogus.join('; ') || 'no fault found'}`,
     );
+    const bogusTier = cardFaults('ghost-tier.md', sampleCard('morph', 'engineering', 'ultraviolet'));
+    assert(
+      bogusTier.some((f) => /tier "ultraviolet"/.test(f)),
+      `an unknown tier was accepted: ${bogusTier.join('; ') || 'no fault found'}`,
+    );
 
-    // Cards are optional per department: a deck may carry one engineering card
-    // and no runner at all. Only the six seat files are mandatory.
+    // Cards are optional per seat and department: a deck may carry one morph
+    // engineering card and no lead card at all. Only the two seat files are mandatory.
     const deck = [
-      ['one-employee.md', sampleCard('employee', 'engineering')],
-      ['one-auditor.md', sampleCard('auditor', 'quality')],
+      ['one-morph.md', sampleCard('morph', 'engineering', 'workhorse')],
+      ['two-morph.md', sampleCard('morph', 'quality', 'thinker')],
     ];
     const faults = deck.flatMap(([f, raw]) => cardFaults(f, raw));
-    assert(!faults.length, `a deck with no card for four seats was refused: ${faults.join('; ')}`);
-    return 'unknown seat refused, cards optional per department';
+    assert(!faults.length, `a deck with no card for one seat was refused: ${faults.join('; ')}`);
+    return 'unknown seat and tier refused, cards optional per seat';
   });
 
-  await checkAsync('a dispatch block names the seat, its routed model, or unassigned', async () => {
+  await checkAsync('a dispatch block names the seat, its tier model, or unassigned', async () => {
     const d = configuredRepo();
     const assigned = await runIn(d, 'brief', {
       op: 'new',
-      agent: 'auditor',
+      agent: 'morph',
       title: 'named seat',
       out: 'a thing',
       check: 'node -e "process.exit(0)"',
       owns: ['**'],
       files: ['n.md'],
     });
-    assert(/Agent: auditor \(openai\/gpt-6\.1-terra\)/.test(assigned), `the block did not name the seat and model:\n${assigned}`);
+    assert(/Agent: morph \(inherit\)/.test(assigned), `the block did not name the seat and model:\n${assigned}`);
+    assert(/Model tiers \(routing\.json\):/.test(assigned), `the block did not name the tier table:\n${assigned}`);
+    assert(/workhorse → /.test(assigned), `the block did not name the workhorse tier:\n${assigned}`);
 
     const unassigned = await runIn(d, 'brief', {
       op: 'new',

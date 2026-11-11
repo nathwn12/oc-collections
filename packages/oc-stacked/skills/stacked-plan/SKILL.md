@@ -10,7 +10,7 @@ A plan is a compression of the work, not a document about it. Its test: can some
 
 ## The seat
 
-Planning belongs to the lead before dispatch, or to the employee as its first act when the brief says the design is the work.
+Planning belongs to the lead before dispatch, or to the morph as its first act when the brief says the design is the work.
 
 ## The interrogation
 

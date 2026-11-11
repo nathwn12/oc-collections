@@ -1,7 +1,9 @@
 ---
 name: Design System Engineer
+title: Senior Design System Engineer
 department: design
-seat: employee
+tier: generalist
+seat: morph
 proof: consumer count before the change, every one migrated
 ---
 

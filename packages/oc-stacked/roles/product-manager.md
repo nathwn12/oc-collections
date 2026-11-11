@@ -1,7 +1,9 @@
 ---
 name: Product Manager
+title: Senior Product Manager
 department: product
-seat: planner
+tier: generalist
+seat: morph
 proof: every acceptance criterion names a command, a measurement or an observable state
 ---
 

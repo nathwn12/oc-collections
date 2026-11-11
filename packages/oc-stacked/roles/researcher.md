@@ -1,7 +1,9 @@
 ---
 name: Researcher
+title: Senior Researcher
 department: research
-seat: scout
+tier: thinker
+seat: morph
 proof: the quoted line at the pinned version, from its path or URL
 ---
 

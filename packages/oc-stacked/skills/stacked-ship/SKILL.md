@@ -12,7 +12,7 @@ A ship is a seam that leaves the room with evidence attached. Everything before 
 
 **The lead** lands. It runs the pre-flight, writes the commit, picks the branch verb, and says what shipped.
 
-**The employee** never merges. It hands back a diff and a report; the branch is not its to close.
+**The morph** never merges. It hands back a diff and a report; the branch is not its to close.
 
 ## The pre-flight
 
@@ -86,7 +86,7 @@ Then re-open the seam with the new evidence. Not with an apology.
 | A red check | You are shipping a known failure and calling it a landing. |
 | A stale check | Green at an older SHA describes code you are not shipping. |
 | An `Unverified` list nobody read | The reader is the only control on the claims the check could not cover. |
-| A diff wider than the brief | Nobody reviewed the extra paths — not the auditor, not the brief, not you. |
+| A diff wider than the brief | Nobody reviewed the extra paths - not the audit, not the brief, not you. |
 | A secret, in any form | Once it is in the history it is in every clone, every fork, every cache. |
 | A commit that explains nothing | The diff says what; only the message says why, and why is what gets lost. |
 

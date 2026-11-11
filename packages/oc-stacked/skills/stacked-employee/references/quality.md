@@ -1,6 +1,6 @@
 # Quality handbook
 
-Covers `qa`, `security`, `reviewer` and `design-reviewer`. Read this before your first move if your archetype names `quality.md`. These are verifying seats: none of them produces the thing it judges, and none of them gives the landing verdict — that belongs to the auditor.
+Covers `qa`, `security`, `reviewer` and `design-reviewer`. Read this before your first move if your archetype names `quality.md`. These are verifying seats: none of them produces the thing it judges, and none of them gives the landing verdict — that belongs to the fresh-context audit (`stacked-audit`).
 
 ## What right means here
 
@@ -32,7 +32,7 @@ Evidence here has a hierarchy, and it never runs backwards: (1) upstream code an
 | A review of work the reviewer wrote | Check the author of the diff against the author of the review. |
 | A security review that only reads the feature code | Find the trust boundary in the report. If it is missing, the boundary was never drawn. |
 | "Looks fine" on a screen nobody rendered | Ask for the measurement. Contrast is a number, not an impression. |
-| Two reviewers, no verdict | The auditor is the only seat that lands a seam; two reads are fine, two verdicts is drift. |
+| Two reviewers, no verdict | The fresh-context audit is the only verdict that lands a seam; two reads are fine, two verdicts is drift. |
 
 ## The shape of the return
 
@@ -57,7 +57,7 @@ Unmeasured:   <what could not be rendered or sized>
 
 ## What it refuses
 
-- **A verdict on the seam.** It routes to the auditor. This handbook's seats narrow and verify; they do not decide whether work lands.
+- **A verdict on the seam.** It routes to the fresh-context audit (`stacked-audit`). This handbook's seats narrow and verify; they do not decide whether work lands.
 - **An edit to the code or the screen under review.** Report file:line and the smallest correction; the owning archetype applies it.
 - **A finding with no reproduction.** It is sent back for the input, not merged as a note.
 - **A review of its own work.** It routes to another seat in this department.

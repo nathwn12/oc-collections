@@ -36,7 +36,7 @@ export async function register(ctx) {
     assert(!dirty.length, `a git warning on stderr made a clean tree dirty: ${JSON.stringify(dirty)}`);
 
     await runIn(d, 'brief', {
-      op: 'new', agent: 'employee',
+      op: 'new', agent: 'morph',
       title: 'stderr noise',
       out: 'a thing',
       check: 'node -e "process.stderr.write(\'warning: something\')"',

@@ -4,6 +4,12 @@ One entry per landed pass. Written in plain words; internals live in the commit 
 
 ## Unreleased
 
+The catalog follows the two seats.
+
+**Added.** On hosts that expose the command transform, the plugin registers one command per skill: `/stacked-debug <args>` forwards to the `stacked-debug` skill with the arguments intact, and the same for every other registered id. Hosts without the transform keep the four static commands and the skills.
+
+**Changed.** The skill catalog is aligned to the two-seat redesign with no id folded — all seventeen are preserved, and the one-seam discipline keeps its historical id `stacked-employee` while the seat it serves is the morph. The audit is taught as a fresh context that wrote none of the work rather than a seat: the loop, the review lens and the lead references route the verdict to fresh context + `stacked-audit`. The installer derives its advertised skill list from the registry, so what ships and what is advertised cannot drift, and the wizard aligns to unpinned agents with the three model tiers read from `routing.json`.
+
 The close seals itself, and the receipt is evidence.
 
 **Added.** Closing a session is a fixed ceremony a skill owns now: `stacked-close` settles every open ticket, sweeps the leftovers, aligns the docs to the diff, records one lesson, writes the report, then seals the receipt and compacts. The last thing a session does is loaded, not remembered — a step skipped is named in the report, and the session ends on evidence, not on a summary.

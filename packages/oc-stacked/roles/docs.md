@@ -1,7 +1,9 @@
 ---
 name: Docs
+title: Senior Documentation Specialist
 department: knowledge
-seat: employee
+tier: generalist
+seat: morph
 proof: each documented claim paired with the command output or source line that proves it
 ---
 

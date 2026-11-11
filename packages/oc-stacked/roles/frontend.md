@@ -1,7 +1,9 @@
 ---
 name: Frontend Engineer
+title: Senior Frontend Engineer
 department: engineering
-seat: employee
+tier: workhorse
+seat: morph
 proof: the failing render test, red for the right reason before the fix
 ---
 

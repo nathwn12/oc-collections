@@ -12,7 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import plugin from '../../index.js';
-import { cacheStats, classifyAsk, loadCards, route } from '../../lib/router.js';
+import { cacheStats, classifyAsk, loadCards, route, dispatchMorph } from '../../lib/router.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const ROLE_DIR = path.resolve(here, '..', '..', 'roles');
@@ -63,8 +63,8 @@ const ASKS = [
   ['idea', 'How about we cache the index in the plugin storage?'],
 ];
 
-const CARD = (name, department, seat, owns) =>
-  `---\nname: ${name}\ndepartment: ${department}\nseat: ${seat}\nproof: the ${name.toLowerCase()} proof, run at the head handed back\n---\n\n## Owns\n\n${owns}\n\n## Must not\n\n- Skip the proof.\n`;
+const CARD = (name, department, seat, owns, tier = 'workhorse') =>
+  `---\nname: ${name}\ntitle: Senior ${name}\ndepartment: ${department}\nseat: ${seat}\ntier: ${tier}\nproof: the ${name.toLowerCase()} proof, run at the head handed back\n---\n\n## Owns\n\n${owns}\n\n## Must not\n\n- Skip the proof.\n`;
 
 function fixtureDir(cards) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-stacked-routing-'));
@@ -80,6 +80,110 @@ const ASK_COMMAND =
 export async function register(ctx) {
   const { check, checkAsync, assert } = ctx;
 
+  await checkAsync('fallback is bounded before prompt and never repeats an ambiguous task', async () => {
+    const events = [];
+    const routing = { tiers: { thinker: 'a/primary' }, complexity: { expert: 'thinker' }, readOnlyRoles: ['reviewer'], fallbacks: { thinker: ['b/backup'] } };
+    const host = { model: { list: async () => { events.push('list'); return { location: {}, data: [{ providerID: 'b', id: 'backup' }] }; } },
+      permission: { assert: async () => events.push('permission') }, session: {
+        create: async (value) => { events.push(`create:${value.model.id}`); return { id: 'ses_child', ...value }; },
+        prompt: async () => { events.push('prompt'); }, wait: async () => {},
+      } };
+    const args = { parentID: 'ses_parent', card: loadCards(ROLE_DIR).find((c) => c.id === 'reviewer'), complexity: 'expert', routing, prompt: 'review' };
+    const result = await dispatchMorph(host, args);
+    assert(result.model.id === 'backup', 'unavailable primary did not fall back');
+    assert(result.attempts.filter((a) => a.model === 'a/primary' && a.error).length === 2, 'two primary failures were not retained');
+    assert(events.filter((e) => e === 'prompt').length === 1, 'task prompted more than once');
+    const before = events.length;
+    host.session.prompt = async () => { events.push('prompt-error'); throw new Error('ambiguous'); };
+    let failure;
+    try { await dispatchMorph(host, args); } catch (err) { failure = err; }
+    assert(failure && failure.attempts?.some((a) => a.stage === 'prompt'), 'ambiguous prompt failure not recorded');
+    assert(events.slice(before).filter((e) => e.startsWith('create:')).length === 1, 'retried after prompt failure');
+    let calls = 0;
+    const denied = { ...host, permission: { assert: async () => { calls += 1; throw Object.assign(new Error('denied'), { code: 'DENIED' }); } } };
+    try { await dispatchMorph(denied, args); } catch (err) { failure = err; }
+    assert(calls === 1 && failure.attempts?.[0]?.error === 'DENIED', 'permission denial was retried or lost');
+    let creates = 0;
+    const createDenied = { ...host, session: { ...host.session, create: async () => { creates += 1; throw Object.assign(new Error('denied'), { code: 'DENIED' }); } } };
+    try { await dispatchMorph(createDenied, args); } catch (err) { failure = err; }
+    assert(creates === 1 && failure.attempts.at(-1).error === 'DENIED', 'create denial retried or lost');
+    let inventories = 0;
+    const unavailable = { ...host, model: { list: async () => { inventories += 1; return []; } } };
+    try { await dispatchMorph(unavailable, args); } catch (err) { failure = err; }
+    assert(inventories === 4 && failure.attempts.length === 4, 'exhaustion not bounded or attempts lost');
+    try { await dispatchMorph(host, { ...args, routing: { ...routing, fallbacks: { thinker: ['a/primary'] } } }); failure = null; } catch (err) { failure = err; }
+    assert(failure && /duplicate fallback/.test(failure.message), 'duplicate cycle accepted');
+    return 'two unavailable probes, fallback once, no retry after prompt failure (mock)';
+  });
+
+  await checkAsync('dispatch uses configured model and refuses missing host enforcement', async () => {
+    const calls = [];
+    const host = { permission: { assert: async (value) => calls.push(['assert', value]) }, session: {
+      create: async (value) => { calls.push(['create', value]); return { id: 'ses_child', ...value }; },
+      prompt: async (value) => calls.push(['prompt', value]),
+      wait: async (value) => calls.push(['wait', value]),
+    } };
+    const routing = { tiers: { workhorse: 'test/worker', thinker: 'test/reasoner', generalist: 'test/general' }, complexity: { expert: 'thinker' }, readOnlyRoles: ['reviewer'] };
+    await dispatchMorph(host, { parentID: 'ses_parent', card: loadCards(ROLE_DIR).find((c) => c.id === 'reviewer'), complexity: 'expert', routing, prompt: 'Review this brief' });
+    const created = calls.find(([name]) => name === 'create')[1];
+    assert(created.model.providerID === 'test' && created.model.id === 'reasoner', 'configured complexity model not used');
+    assert(created.parentID === 'ses_parent' && created.agent === 'morph', 'child identity not set');
+    assert(created.permissions.some((r) => r.action === 'edit' && r.effect === 'deny'), 'edit not denied');
+    assert(created.permissions.some((r) => r.action === 'shell' && r.effect === 'deny'), 'shell can bypass edit policy');
+    assert(calls.map(([name]) => name).join(',') === 'assert,create,prompt,wait', 'wrong dispatch order');
+    let refused = false;
+    try { await dispatchMorph({}, { parentID: 'ses_parent', card: loadCards(ROLE_DIR)[0], routing, prompt: 'test' }); } catch { refused = true; }
+    assert(refused, 'host without permission API accepted');
+    let prompted = false;
+    const mismatch = { permission: host.permission, session: { ...host.session,
+      create: async (value) => ({ id: 'ses_bad', ...value, permissions: [] }),
+      prompt: async () => { prompted = true; },
+    } };
+    refused = false;
+    try { await dispatchMorph(mismatch, { parentID: 'ses_parent', card: loadCards(ROLE_DIR)[0], complexity: 'cheap', routing, prompt: 'test' }); } catch { refused = true; }
+    assert(refused && !prompted, 'host policy mismatch prompted a child');
+    let realShapePrompted = false;
+    const realShape = { permission: host.permission, session: { ...host.session,
+      create: async (value) => ({ id: 'ses_real_shape', parentID: value.parentID, agent: value.agent,
+        model: { id: value.model.id, providerID: value.model.providerID, variant: 'default' },
+        permissions: value.permissions.map(({ action, resource, effect }) => ({ effect, resource, action })) }),
+      prompt: async () => { realShapePrompted = true; },
+    } };
+    await dispatchMorph(realShape, { parentID: 'ses_parent', card: loadCards(ROLE_DIR).find((c) => c.id === 'reviewer'), complexity: 'expert', routing, prompt: 'test' });
+    assert(realShapePrompted, 'host-normalized default model refused');
+    realShape.session.create = async (value) => ({ id: 'ses_wrong', parentID: value.parentID, agent: value.agent, model: { ...value.model, variant: 'high' }, permissions: value.permissions });
+    realShapePrompted = false;
+    refused = false;
+    try { await dispatchMorph(realShape, { parentID: 'ses_parent', card: loadCards(ROLE_DIR)[0], complexity: 'cheap', routing, prompt: 'test' }); } catch { refused = true; }
+    assert(refused && !realShapePrompted, 'unexpected variant accepted');
+    let active = false;
+    const failing = { permission: host.permission, session: { ...host.session,
+      prompt: async () => { assert(active, 'guard was not active before prompt'); throw new Error('prompt rejected'); },
+    } };
+    try { await dispatchMorph(failing, { parentID: 'ses_parent', card: loadCards(ROLE_DIR)[0], complexity: 'cheap', routing, prompt: 'test', onVerified: () => { active = true; return () => { active = false; }; } }); } catch {}
+    assert(!active, 'guard remains authorized after prompt failure');
+    for (const file of ['./.stack/config.json', '../escape', 'file:stream']) {
+      refused = false;
+      try { await dispatchMorph(host, { parentID: 'ses_parent', card: loadCards(ROLE_DIR).find((c) => c.id === 'backend'), complexity: 'cheap', routing, prompt: 'test', directory: process.cwd(), files: [file] }); } catch { refused = true; }
+      assert(refused, `unsafe writable path accepted: ${file}`);
+    }
+    return 'configured model, permission gate, create before prompt, unsupported host refused (mock)';
+  });
+
+  await checkAsync('direct morph prompt is rejected before ordinary prompt routing', async () => {
+    const hooks = new Map();
+    const host = {
+      location: { directory: process.cwd() },
+      skill: { transform: async (f) => f({ add() {} }) },
+      session: { hook: async (name, f) => hooks.set(name, f), get: async ({ sessionID }) => ({ id: sessionID, agent: 'morph', parentID: 'ses_parent' }) },
+    };
+    await plugin.setup(host);
+    let refused = false;
+    try { await hooks.get('prompt')({ sessionID: 'ses_direct', prompt: { text: 'Do this work' } }); } catch { refused = true; }
+    assert(refused, 'direct morph prompt accepted without guarded dispatch');
+    return 'unregistered direct morph refused (mock host)';
+  });
+
   // ------------------------------------------------------------------ cards
 
   check('the shipped cards load: 22 of them, none skipped', () => {
@@ -87,7 +191,7 @@ export async function register(ctx) {
     assert(cards.length >= 20, `only ${cards.length} cards loaded from ${ROLE_DIR}`);
     assert(cards.skipped.length === 0, `skipped: ${cards.skipped.map((c) => `${c.id} (${c.reason})`).join(', ')}`);
     for (const card of cards) {
-      for (const key of ['id', 'name', 'department', 'seat', 'proof', 'text']) {
+      for (const key of ['id', 'name', 'department', 'seat', 'tier', 'proof', 'text']) {
         assert(typeof card[key] === 'string' && card[key].length, `${card.id} is missing ${key}`);
       }
     }
@@ -143,8 +247,8 @@ export async function register(ctx) {
 
   check('a card written at runtime is routable with no code change', () => {
     const dir = fixtureDir({
-      backend: CARD('Backend Engineer', 'engineering', 'employee', '- The endpoint, its status codes and its auth.'),
-      docs: CARD('Docs', 'knowledge', 'employee', '- The changelog entry written for the person upgrading.'),
+      backend: CARD('Backend Engineer', 'engineering', 'morph', '- The endpoint, its status codes and its auth.'),
+      docs: CARD('Docs', 'knowledge', 'morph', '- The changelog entry written for the person upgrading.', 'generalist'),
     });
     try {
       const before = loadCards(dir);
@@ -166,8 +270,8 @@ export async function register(ctx) {
 
   check('a malformed card is skipped and reported, never thrown', () => {
     const dir = fixtureDir({
-      good: CARD('Good Seat', 'quality', 'auditor', '- The check run again with the fix reverted.'),
-      bad: '---\nname: Half A Card\nseat: employee\n---\n\nNo department, no proof.\n',
+      good: CARD('Good Seat', 'quality', 'morph', '- The check run again with the fix reverted.', 'thinker'),
+      bad: '---\nname: Half A Card\nseat: morph\n---\n\nNo department, no proof.\n',
     });
     try {
       const cards = loadCards(dir);
@@ -292,8 +396,8 @@ export async function register(ctx) {
       assert(ask.split('\n').length <= 2, 'the ask entry is more than two lines');
 
       const routed = f.entries.find((entry) => entry.key === 'route').value;
-      const named = /Routed: ([a-z0-9-]+) \(([a-z]+), ([a-z]+)\)/.exec(routed);
-      assert(named, `the route does not name a card and department: ${routed.slice(0, 90)}`);
+      const named = /Routed: ([a-z0-9-]+) \(([a-z]+), morph · ([a-z]+)\)/.exec(routed);
+      assert(named, `the route does not name a card, department and tier: ${routed.slice(0, 120)}`);
       assert(routed.includes(`roles/${named[1]}.md`), 'the route does not name its card');
       assert(/route yourself/.test(routed), 'the route carries no room to disagree');
       const proof = f.entries.find((entry) => entry.key === 'proof').value;

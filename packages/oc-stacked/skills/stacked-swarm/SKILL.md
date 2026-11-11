@@ -10,7 +10,7 @@ Parallel is not faster. Parallel is faster only when the seams never touch the s
 
 ## The seat
 
-You are the lead, coordinating up to ten employees, and reconciling every one of them yourself.
+You are the lead, coordinating up to ten morphs, and reconciling every one of them yourself.
 
 ## The bar for fanning out
 
@@ -51,7 +51,7 @@ Before dispatch, list every path from every brief and look for repeats. A repeat
 
 ## The atomic fan-out
 
-Use `swarm` for the whole batch. In one call it validates the seam ids, the checks, the exact files, and cross-seam collisions, then writes every brief and returns a dispatch line per employee.
+Use `swarm` for the whole batch. In one call it validates the seam ids, the checks, the exact files, and cross-seam collisions, then writes every brief and returns a dispatch line per seam.
 
 That is the entire operation: a list of seams in, briefs and dispatch lines out. It does not dispatch for you, it does not reconcile, and it does not land.
 
@@ -59,7 +59,7 @@ If it refuses, the refusal is the finding. Do not hand-write the briefs around i
 
 ## Dispatch shape
 
-One employee per brief. Use the dispatch block `brief` or `swarm` printed, verbatim. Add one `Interfaces:` line only when the brief cannot know a signature from a seam that already landed.
+One morph per brief. Use the dispatch block `brief` or `swarm` printed, verbatim. Add one `Interfaces:` line only when the brief cannot know a signature from a seam that already landed.
 
 No session history. No summary of the other seams. No plan for the whole swarm. Every pasted byte is re-read on every later turn of that worker, and a worker who knows the other seams will start "helping" with them.
 

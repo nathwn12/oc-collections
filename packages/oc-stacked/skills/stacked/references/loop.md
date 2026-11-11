@@ -7,7 +7,7 @@ Load this when running the intake-to-close loop.
 1. **Intake.** Restate the objective in one sentence. Name what is out of scope. Name every unknown you would otherwise guess.
 2. **Rank.** Cut into seams. Score value × risk ÷ effort. Keep live every seam that is genuinely disjoint, up to ten; everything else is `PARKED` with a reason.
 3. **Brief.** One brief per seam: Out, Check, Owns, and the exact Files. `brief` refuses a hole. For more than one seam, `swarm` writes them all in one atomic call and refuses any shared file.
-4. **Dispatch.** One employee per seam, in one response so they run at once. The prompt carries the brief path and nothing else that could be pasted history.
+4. **Dispatch.** One morph per seam, in one response so they run at once. The dispatch carries the role, the complexity, the brief path, and the exact files — never pasted history.
 5. **Reconcile.** Read the report before chat. Re-run the cheap check yourself. A worker's claim is not evidence.
 6. **Land.** `ready` gates it. One commit, plain words, the check output in the body. Then mark the seam landed, which needs a recorded GO — `brief op=status status=landed` refuses without one.
 7. **Digest.** Rewrite `.stack/digest.md` every turn: Needs you / New / In progress, every row aged. A pass is not closed until `clean` reports and the digest is current.
@@ -37,14 +37,14 @@ Ten is the ceiling, not a target. Fan out only when each seam has its own check 
   ledger.md      append-only, one stamped line per event
   digest.md      derived from the ledger, rewritten every turn
   briefs/<id>.md the seam contract, including its exact files
-  reports/<id>.md what the employee found and proved
+  reports/<id>.md what the morph found and proved
   state/checks.json the last real check, bound to a HEAD
   config.json    this repo's checks and ownership rules
 ```
 
 Trust the ledger and `git log` over your own recollection. A stack without written state re-does finished work — the most expensive failure this system exists to prevent.
 
-## The six tools
+## The eight tools
 
 | Tool | Use it to |
 |---|---|
@@ -54,6 +54,10 @@ Trust the ledger and `git log` over your own recollection. A stack without writt
 | `check` | run the repo's proving commands and bind the result to HEAD |
 | `scope` | prove the working tree stayed inside the brief |
 | `ready` | gate a seam: GO or NO-GO with each reason named |
+| `clean` | sweep the stack's own leftovers, name junk it did not create |
+| `close` | preflight the open tickets, run the ceremony, read the receipt |
+
+`stack.dispatch` is the one tool that creates sessions; it refuses until parent permission attenuation is verified.
 
 ## The rest of the shelf
 

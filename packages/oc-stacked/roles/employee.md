@@ -1,7 +1,9 @@
 ---
 name: Employee
+title: Senior Generalist
 department: engineering
-seat: employee
+tier: generalist
+seat: morph
 proof: the named Check, run at the head handed back, output pasted
 ---
 

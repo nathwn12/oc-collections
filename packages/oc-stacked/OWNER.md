@@ -6,11 +6,10 @@ The owner's standing decisions for this repository, so no session re-asks them.
 
 ## Seats
 
-- **Three kinds of seat.** `lead` decides and dispatches. Specialised employees build one seam each. `auditor` judges work it did not write. The owner is the CEO and is not an agent in the stack. *(2026-11-10)*
-- **Employees are a standing family of specialists**, not one generic worker reused per seam. The seats are permanent; the seams are disposable. *(2026-11-10)*
-- **Six seats, twenty-two role cards in seven departments.** The seats are the six agent files (`lead`, `employee`, `auditor`, `scout`, `runner`, `planner`); the cards in `roles/` name a department (Product, Design, Engineering, Platform, Quality, Knowledge, Research) and the seat that reads them. Department boundaries are card boundaries, and no department gets a lead; the lead routes directly. *(2026-11-10)*
-- **The Research department answers before the seam is briefed.** A seam that turns on external behaviour routes to `researcher` or `scout` first, so no specialist guesses at an API it could have read. *(2026-11-10)*
-- **The auditor is not a department.** It answers to the owner and never shares a model family with the seat that wrote the work. *(2026-11-10)*
+- **Two kinds of seat.** `lead` decides and dispatches. One `morph` specialist builds every seam, taking its access and model tier from the role card the brief names. The verdict comes from a fresh context running `stacked-audit`, never from the seat that wrote the work. The owner is the CEO and is not an agent in the stack. *(2026-11-11)*
+- **Morph replaces the single-purpose seats.** `employee`, `auditor`, `scout`, `runner` and `planner` are retired: their agent files are deleted from this repository, one morph agent plus 22 role cards covers their ground, and the installer prunes the ghost seats from the installed config on upgrade. *(2026-11-11)*
+- **Two seats, twenty-two role cards in seven departments.** The seats are the two agent files (`lead`, `morph`); the cards in `roles/` name a department (Product, Design, Engineering, Platform, Quality, Knowledge, Research) and the seat that reads them. Department boundaries are card boundaries, and no department gets a lead; the lead routes directly. *(2026-11-11)*
+- **Research runs before the seam is briefed.** A seam that turns on external behaviour gets the research card first, so no specialist guesses at an API it could have read. *(2026-11-11)*
 
 ## Work
 
@@ -63,7 +62,7 @@ The lead stops and asks the owner for exactly five things, and no others. *(2026
 
 ## Releases
 
-- Releases follow `RELEASING.md`; a version is tagged only after the suite is green and an auditor has passed the pass it belongs to. *(2026-11-10)*
+- Releases follow `RELEASING.md`; a version is tagged only after the suite is green and the audit has passed the pass it belongs to. *(2026-11-10)*
 - **Adopt the upstream format when one exists** — Conventional Commits for messages, semver for versions, the registry's own metadata schema, the host's own config schema, the project's own lint and test commands. Invent a house format only where upstream has none, and say in one line why. *(2026-11-10)*
 - The current version lives in `package.json`; do not restate it here, because two copies of a version is one stale copy. *(2026-11-10)*
 
@@ -78,7 +77,7 @@ A session title is `[status] <short subject>`, and the status is one of exactly 
 | `[done]` | genuinely finished: closing remarks written, session compacted, no afterthoughts | **terminal** |
 
 1. The title always carries the status in square brackets, first, so a tab list scans by state.
-2. The subject is short and names the work, not the week: `[active] oc-stacked · 24-agent org`.
+2. The subject is short and names the work, not the week: `[active] oc-stacked · two-seat stack`.
 3. The lead renames at every transition and logs it to the ledger as one line: `NOTE · session active -> parked: <why>`.
 4. `[done]` is immutable. A done session is never renamed, never reopened under the same title, and never resumed; new work starts a new session. The fate is sealed by the closing remarks, which are final.
 5. No fourth status, no colour, no emoji, no date suffix.

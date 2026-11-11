@@ -10,7 +10,7 @@ A bug is a claim about the world that turned out false. Find the claim before yo
 
 ## The seat
 
-You are whoever owns the broken seam: an employee holding a brief, or the lead when nothing has been dispatched yet. The prohibition is one line — **never fix what you have not reproduced.** A patch for an imagined cause is a second bug laid on top of the first.
+You are whoever owns the broken seam: a morph holding a brief, or the lead when nothing has been dispatched yet. The prohibition is one line — **never fix what you have not reproduced.** A patch for an imagined cause is a second bug laid on top of the first.
 
 ## Capture before you reason
 

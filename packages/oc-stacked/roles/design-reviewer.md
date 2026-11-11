@@ -1,7 +1,9 @@
 ---
 name: Design Reviewer
+title: Senior Design Reviewer
 department: design
-seat: auditor
+tier: thinker
+seat: morph
 proof: the rendered screen measured at the seam breakpoints: contrast ratio, box, focus order
 ---
 

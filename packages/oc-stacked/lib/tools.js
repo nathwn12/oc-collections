@@ -254,7 +254,7 @@ function buildBrief(dir, spec) {
     '',
     `${tier}. ${TIER_NOTE[tier] || TIER_NOTE.standard}`,
     '',
-    'The archetype names the seat, and `routing.json` pins its model at install. The tier says how much judgement the brief expects, not which model runs: an expert seam is designed by the lead before it reaches you.',
+    'Your archetype names the seat, and `routing.json` pins the model tiers at install. The tier says how much judgement the brief expects, not which model runs: an expert seam is designed by the lead before it reaches you.',
     '',
     '## Rules that bind this seam',
     '',
@@ -346,16 +346,23 @@ const routing = (() => {
   }
 })();
 
-const isArchetype = (name) => Object.prototype.hasOwnProperty.call(routing, name);
+const isArchetype = (name) => SEATS.includes(name);
 
-/** The six seats, read from the table so no message can name a dead id. */
-const SEATS = Object.keys(routing).filter((key) => !key.startsWith('_'));
+/** The two seats, read from the table so no message can name a dead id. `tiers` is the model table, not a seat. */
+const SEATS = Object.keys(routing).filter((key) => !key.startsWith('_') && !['tiers', 'complexity', 'readOnlyRoles', 'fallbacks'].includes(key));
 const SEAT_HELP = SEATS.length ? `one of: ${SEATS.join(', ')}` : 'an id from routing.json';
+
+/** The tier table, for the dispatch block: the card names the tier, the tier names the model. */
+const TIERS = routing.tiers && typeof routing.tiers === 'object' ? routing.tiers : {};
+const tiersLine = () =>
+  Object.keys(TIERS).length
+    ? `Model tiers (routing.json): ${Object.entries(TIERS).map(([tier, model]) => `${tier} → ${model}`).join(' · ')}. The card names the tier; dispatch morph on that tier's model.`
+    : 'No model tiers in routing.json; dispatch morph unpinned.';
 
 const dispatchBlock = (id, tier, agent) => {
   const name = str(agent);
   const seat = !name ? 'unassigned' : `${name} (${routing[name] || 'inherit'})`;
-  return `Seam: ${id}\nBrief: ${PATHS.briefs}/${id}.md\nAgent: ${seat}\nTier: ${tier || 'standard'}\nReport: ${PATHS.reports}/${id}.md\n\nRead the brief first; it is your requirements. Build nothing outside its Files. Return one paragraph: outcome, commits, check result, concerns.`;
+  return `Seam: ${id}\nBrief: ${PATHS.briefs}/${id}.md\nAgent: ${seat}\nTier: ${tier || 'standard'}\n${tiersLine()}\nReport: ${PATHS.reports}/${id}.md\n\nRead the brief first; it is your requirements. Build nothing outside its Files. If dispatched as morph, read the card the brief names and run on its tier's model. Return one paragraph: outcome, commits, check result, concerns.`;
 };
 
 function briefTool(dir) {
@@ -375,7 +382,7 @@ function briefTool(dir) {
         files: { type: 'array', items: { type: 'string' }, description: 'Exact files this seam may edit. Two live seams may not share one.' },
         avoid: { type: 'array', items: { type: 'string' }, description: 'Paths this seam must not touch.' },
         read: { type: 'array', items: { type: 'string' }, description: 'Files the employee must read first.' },
-        tier: { type: 'string', enum: ['cheap', 'standard', 'expert'], description: 'Model tier for the employee.' },
+        tier: { type: 'string', enum: ['cheap', 'standard', 'expert'], description: 'Effort tier for the morph seat. The model comes from the card tier in routing.json, not from here.' },
         agent: {
           type: 'string',
           description: `Seat id from routing.json, ${SEAT_HELP}. A seam with no seat prints Agent: unassigned and ready refuses it.`,
@@ -464,7 +471,7 @@ function briefTool(dir) {
         }
         if (written.refusal) return ok(written.refusal);
         return ok(
-          `Brief written: ${PATHS.briefs}/${id}.md\n\nDispatch one employee with:\n\`\`\`text\n${dispatchBlock(id, written.record.tier, written.record.agent)}\n\`\`\``,
+          `Brief written: ${PATHS.briefs}/${id}.md\n\nDispatch one morph with:\n\`\`\`text\n${dispatchBlock(id, written.record.tier, written.record.agent)}\n\`\`\``,
         );
       }
 
@@ -1431,4 +1438,3 @@ export function toolDefinitions({ dir }) {
     closeTool(dir),
   ];
 }
-

@@ -1,7 +1,9 @@
 ---
 name: Fact Checker
+title: Senior Fact Checker
 department: research
-seat: auditor
+tier: thinker
+seat: morph
 proof: the verdict on one claim, with the quoted line that settles it
 ---
 

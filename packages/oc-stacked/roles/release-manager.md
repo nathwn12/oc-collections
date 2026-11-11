@@ -1,7 +1,9 @@
 ---
 name: Release Manager
+title: Senior Release Manager
 department: platform
-seat: auditor
+tier: thinker
+seat: morph
 proof: every seam in the release has a GO at the head being tagged, and the rollback, timed
 ---
 

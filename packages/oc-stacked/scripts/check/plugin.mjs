@@ -11,10 +11,10 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import plugin, { StackedPlugin } from '../../index.js';
 import { loadCards } from '../../lib/router.js';
-import { skillsDir } from '../../lib/content.js';
+import { readSkills, skillsDir } from '../../lib/content.js';
 
-/** The six seats this package ships, and the only agent files it may install. */
-const SEATS = ['lead', 'employee', 'auditor', 'scout', 'runner', 'planner'];
+/** The two seats this package ships, and the only agent files it may install. */
+const SEATS = ['lead', 'morph'];
 /** Long enough to be a task, and worded so the cards route it to `backend`. */
 const VANILLA_PROMPT = 'the login endpoint in our backend returns 500 on every request';
 const VANILLA_SESSION = 'ses_vanilla';
@@ -128,6 +128,36 @@ async function buildVanilla() {
 export async function register(ctx) {
   const { check, checkAsync, assert, repo } = ctx;
 
+  await checkAsync('registered skill commands forward the invocation to the named skill', async () => {
+    const host = fakeHost(repo);
+    const commands = [];
+    let sent;
+    host.ctx.command = { transform: async (fn) => fn({ add: (command) => commands.push(command) }) };
+    host.ctx.session.prompt = async (input) => { sent = input; };
+    await plugin.setup(host.ctx);
+    const ids = readSkills().map((skill) => skill.id);
+    assert(commands.length === ids.length && ids.every((id) => commands.some((command) => command.name === id)), 'host did not get every skill command');
+    await commands.find((command) => command.name === 'stacked-debug').execute({ sessionID: 'ses_test', prompt: { text: 'crash' }, delivery: 'queue' });
+    assert(sent.sessionID === 'ses_test' && sent.delivery === 'queue' && sent.text.includes('`stacked-debug`') && sent.text.includes('crash'), 'command lost skill or arguments');
+    return `${commands.length} skill commands registered and one forwarded (mock)`;
+  });
+
+  await checkAsync('dispatch refuses before creating a child while parent attenuation is unproven', async () => {
+    const host = fakeHost(repo);
+    let created = 0;
+    host.ctx.permission = { assert: async () => {} };
+    host.ctx.session.create = async (value) => { created += 1; return { id: 'ses_child', ...value }; };
+    host.ctx.session.prompt = async () => {};
+    host.ctx.session.wait = async () => {};
+    await plugin.setup(host.ctx);
+    const tool = host.tools.find((item) => item.name === 'dispatch');
+    assert(tool, 'dispatch tool missing');
+    let refused = false;
+    try { await tool.execute({ role: 'reviewer', complexity: 'expert', prompt: 'test', files: [] }, { sessionID: 'ses_parent' }); } catch { refused = true; }
+    assert(refused && created === 0, 'dispatch created a child without proving parent permission attenuation');
+    return 'refused before child creation (mock)';
+  });
+
   check('plugin exports a V2 id', () => {
     assert(plugin && typeof plugin === 'object', 'default export is not an object');
     assert(plugin.id === 'oc-stacked', `id is ${JSON.stringify(plugin.id)}`);
@@ -214,7 +244,7 @@ export async function register(ctx) {
     return `config + ledger + digest, ${config.checks.length} detected check(s)`;
   });
 
-  check('the catalogue reaches the host: six seats, 22 readable cards', () => {
+  check('the catalogue reaches the host: two seats, 22 readable cards', () => {
     takenOver();
     const agentsDir = path.join(repo, 'agents');
     const ids = fs
@@ -224,7 +254,7 @@ export async function register(ctx) {
       .sort();
     assert(
       ids.length === SEATS.length && ids.every((id, at) => id === [...SEATS].sort()[at]),
-      `agents/ installs ${ids.join(', ')}; the six seats are ${SEATS.join(', ')}`,
+      `agents/ installs ${ids.join(', ')}; the two seats are ${SEATS.join(', ')}`,
     );
 
     // The cards are read the way the plugin reads them on every prompt, from

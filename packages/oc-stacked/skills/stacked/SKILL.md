@@ -1,11 +1,11 @@
 ---
 name: Stacked
-description: The three-rung agent stack. Use when a request is bigger than one edit — planning, delegating, reviewing, or landing work with a lead and employees. Tells you which rung you are on, how to fan out safely, and what each rung may not do.
+description: The agent stack. Use when a request is bigger than one edit — planning, delegating, reviewing, or landing work with a lead and morphs. Tells you which rung you are on, how to fan out safely, and what each rung may not do.
 license: MIT
 ---
 # Stacked
 
-Three seats. The owner is the CEO; the lead speaks for them. Every seat has one job and one thing it may not do.
+Two seats, lead and morph. The owner is the CEO; the lead speaks for them. Every seat has one job and one thing it may not do. The audit is not a seat: it is a fresh context that wrote none of the work.
 
 The lead decides everything reversible and asks only for the five stops.
 

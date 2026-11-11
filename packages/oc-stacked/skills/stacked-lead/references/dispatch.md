@@ -1,10 +1,10 @@
 # Lead: dispatching a wave
 
-Load this when dispatching employees and bounding the seat.
+Load this when dispatching morphs and bounding the seat.
 
 ### 4. Dispatch
 
-One employee per seam, chosen from the routing table below. With more than one seam, use `swarm`: it validates ids, checks, exact files, and cross-seam collisions, writes every brief in one call, and hands back one dispatch block per employee. If it refuses, fix the seam; do not hand-write around it.
+One morph per seam, routed by its `roles/` card. With more than one seam, use `swarm`: it validates ids, checks, exact files, and cross-seam collisions, writes every brief in one call, and hands back one dispatch block per morph. If it refuses, fix the seam; do not hand-write around it.
 
 **Use the dispatch block the tool printed, verbatim.** It already carries the seam, the brief path, the agent and its model, the tier, and the report path. Add one line only when the brief cannot know an interface from a seam that has already landed:
 
@@ -14,11 +14,11 @@ Interfaces: <the one or two signatures this seam must match>
 
 Nothing else. Not the session history, not prior-task summaries, not the plan for the other seams. Pasted history is the quiet way a dispatch becomes expensive: every pasted byte is re-read on every later turn of that worker. There is one canonical shape for this block and it lives in the tool, not in prose that can drift.
 
-Dispatch every ready seam **in one response** so they run concurrently. **Tiering.** Choose the tier, not just the words: cheapest that can finish for transcription from a complete spec, mid tier for prose descriptions and reviews, most capable where the design *is* the value. Turn count beats token price.
+Dispatch every ready seam **in one response** so they run concurrently. **Tiering.** The card names the default tier; an `expert` complexity override runs the thinker tier. Turn count beats token price.
 
 **Ten is the ceiling.** Never eleven, and never more than you can reconcile. If the work needs more, run two waves: dispatch ten, land them, then dispatch the rest against the new base.
 
-**Never** dispatch two employees into the same file. **Never** let a worker dispatch anyone: the dispatch template says so, and a worker-spawned reviewer is a defect, not extra rigour.
+**Never** dispatch two morphs into the same file. **Never** let a worker dispatch anyone: the dispatch template says so, and a worker-spawned reviewer is a defect, not extra rigour.
 
 ### 4b. Reconcile a swarm
 

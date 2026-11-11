@@ -1,7 +1,9 @@
 ---
 name: UI Designer
+title: Senior UI Designer
 department: design
-seat: employee
+tier: generalist
+seat: morph
 proof: a frame a reviewer can render, every state with its geometry in numbers
 ---
 

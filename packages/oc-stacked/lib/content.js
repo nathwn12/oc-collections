@@ -11,6 +11,11 @@ export const skillsDir = path.join(packageRoot, 'skills');
 export const agentsDir = path.join(packageRoot, 'agents');
 export const commandsDir = path.join(packageRoot, 'commands');
 
+/** One command per registered skill; IDs remain the public entry points. */
+export function skillCommands(skills = readSkills()) {
+  return skills.map((skill) => ({ name: skill.id, skill: skill.id, description: skill.description }));
+}
+
 /**
  * Every skill, decoded into the host's Skill.Info shape.
  * `SOUL.md` at the package root is the one canonical copy of the four laws and

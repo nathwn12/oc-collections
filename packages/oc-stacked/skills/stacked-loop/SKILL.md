@@ -8,7 +8,7 @@ license: MIT
 
 One job: **do not stop while the goal is still reachable, and do not declare it met on your own word.**
 
-This is oc-stacked's own goal loop. It borrows the one idea worth borrowing - a fresh judge decides completion, not the worker - and replaces the parts that do not fit here: the goal is a file in `.stack/`, the judge is an auditor that can run the check, and the loop only ever routes to seats that exist.
+This is oc-stacked's own goal loop. It borrows the one idea worth borrowing - a fresh judge decides completion, not the worker - and replaces the parts that do not fit here: the goal is a file in `.stack/`, the judge is a fresh context that can run the check, and the loop only ever routes to rungs that exist.
 
 ## The goal is a file, not a feeling
 
@@ -32,7 +32,7 @@ A file, because the loop outlives the context window: after a compaction the fil
 1. **Read** `.stack/goal.md`. No goal? Make one - see *Vague is a first turn*.
 2. **Route.** First matching row in the table below. One seat per turn, and say which.
 3. **Act.** The smallest change that could plausibly move the verdict. Not the whole plan.
-4. **Judge** from a context that did none of it: the `auditor` subagent, or the Check's own output when the Check is unambiguous. **Never the context that just acted.**
+4. **Judge** from a context that did none of it: a fresh context (load `stacked-audit`), or the Check's own output when the Check is unambiguous. **Never the context that just acted.**
 5. **Record** one ledger line: `kind=GOAL turn=<n> seat=<x> verdict=met|not-yet|impossible reason="<short>"`.
 6. **Branch.** `not-yet` - the reason becomes the next turn's directive, verbatim. `met` - clear the goal, write the AUDIT line with the sha, update the digest. `impossible` - stop and ASK, with the evaluator's reason quoted.
 
@@ -46,16 +46,16 @@ First match wins. Log the route; a silent route is a guess with good manners.
 |---|---|
 | The ask is vague, half-shaped, or "just sort it out" | `stacked-pls` - turn it into a candidate Out before acting |
 | The design is not obvious | `stacked-plan` |
-| One file, one edit | employee discipline inline - do not build a stack for one seam |
+| One file, one edit | morph discipline inline - do not build a stack for one seam |
 | More than one genuinely disjoint seam | `stacked-swarm` |
 | Cause unknown: throws, hangs, slow, lies | `stacked-debug` |
 | Behaviour must change and a test surface exists | `stacked-tdd` |
 | Code fights every edit, no behaviour change wanted | `stacked-deepen` |
 | Blocked, "it won't let us", no path | `stacked-oftb` |
-| The host is misconfigured: seats missing, models unpinned | `stacked-wizard` |
+| The host is misconfigured: seats missing or stale | `stacked-wizard` |
 | Someone asked for or gave a review | `stacked-review` |
 | The seam is ready to commit, close, or release | `stacked-ship` |
-| A verdict is due on work already done | `auditor` |
+| A verdict is due on work already done | fresh context + `stacked-audit` |
 
 **The groundhog rule.** If two consecutive turns route to the same seat and return the same verdict with the same reason, the route is wrong, not the work. Change seat, or change the Out. Looping harder is not a strategy.
 

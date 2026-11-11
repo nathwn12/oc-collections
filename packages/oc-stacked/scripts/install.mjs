@@ -15,6 +15,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { readSkills } from '../lib/content.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, '..');
@@ -115,6 +116,10 @@ function reportPins() {
     const model = routing[id];
     ok(`${id} = ${model ? model.split('/').pop() : 'inherit'}`);
   }
+  const tiers = routing.tiers && typeof routing.tiers === 'object' ? routing.tiers : {};
+  for (const [tier, model] of Object.entries(tiers)) {
+    ok(`tier ${tier} = ${String(model).split('/').pop()}`);
+  }
 }
 
 /**
@@ -146,6 +151,11 @@ const OBSOLETE = {
   agents: [
     'ceo.md',
     'stacked-ceo.md',
+    'employee.md',
+    'auditor.md',
+    'scout.md',
+    'runner.md',
+    'planner.md',
     'backend.md',
     'data-analyst.md',
     'data-engineer.md',
@@ -224,14 +234,10 @@ Done. Three things happen on next launch:
 
   1. OpenCode loads the package at
      ${linkPath}
-  2. Seventeen skills register: stacked, stacked-soul, stacked-pls,
-     stacked-lead, stacked-employee, stacked-audit, stacked-plan,
-     stacked-swarm, stacked-debug, stacked-tdd, stacked-review,
-     stacked-ship, stacked-deepen, stacked-wizard, stacked-oftb,
-     stacked-loop, stacked-close
-  3. Six seats appear: lead, employee, auditor, scout, runner and planner,
-     pinned by routing.json, with the role cards the seats read in
+  2. Skills register: ${readSkills().map((skill) => skill.id).join(', ')}
+  3. Two seats appear: lead and morph; five legacy seats are retired on install. Dispatch is disabled until parent permissions can be preserved. Role cards live in
      ${rolesDir}
+     Three model tiers ship with it: workhorse (coding, testing), thinker (reasoning, review, verification) and generalist (the rest).
 
 Restart OpenCode, then prove it loaded:
 
@@ -254,4 +260,3 @@ if (probe.status !== 0) {
   process.exit(probe.status || 1);
 }
 say(probe.stdout.trim().split('\n').slice(-3).join('\n'));
-

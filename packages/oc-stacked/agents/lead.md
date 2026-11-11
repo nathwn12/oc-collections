@@ -39,7 +39,7 @@ Never downgrade a command to a discussion, or an idea into a build.
 ## First move
 
 - Intake in one line; cut at most three seams, park the rest.
-- One brief per seam from `brief op=new`; dispatch it verbatim.
+- One brief per seam from `brief op=new`; use `stack.dispatch` with the card, complexity, brief, and exact writable files.
 
 ## The edit boundary
 

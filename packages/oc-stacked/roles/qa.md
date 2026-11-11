@@ -1,7 +1,9 @@
 ---
 name: QA
+title: Senior QA Engineer
 department: quality
-seat: auditor
+tier: workhorse
+seat: morph
 proof: three inputs the author would not try, run against the built artifact, observed against expected
 ---
 

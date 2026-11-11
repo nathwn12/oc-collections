@@ -10,7 +10,7 @@ A test is a claim about behaviour that a machine can settle. Write the claim fir
 
 ## The seat
 
-The employee, before the first production edit. The cycle is the seam's work, not a phase after it: a test written after the code describes what you built, never what was asked.
+The morph, before the first production edit. The cycle is the seam's work, not a phase after it: a test written after the code describes what you built, never what was asked.
 
 ## Why red first
 

@@ -15,7 +15,115 @@
 // same prompt routes the same way on every machine, every run.
 import fs from 'node:fs';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { splitFrontmatter } from './text.js';
+
+/** Dispatch only after the host confirms the child model and permission rules. */
+export async function dispatchMorph(ctx, { parentID, card, complexity, routing, prompt, files = [], directory, source, onVerified }) {
+  if (!parentID || !card || card.seat !== 'morph' || !prompt || typeof ctx?.permission?.assert !== 'function' ||
+      typeof ctx?.session?.create !== 'function' || typeof ctx?.session?.prompt !== 'function' || typeof ctx?.session?.wait !== 'function') {
+    throw new Error('Morph dispatch unavailable: missing validated input or host capability.');
+  }
+  if (!['cheap', 'standard', 'expert'].includes(complexity)) throw new Error('Morph dispatch refused: unknown complexity.');
+  const tier = routing?.complexity?.[complexity] || card.tier;
+  const model = routing?.tiers?.[tier];
+  if (routing?.fallbacks !== undefined && (!routing.fallbacks || typeof routing.fallbacks !== 'object' || Array.isArray(routing.fallbacks))) throw new Error('Morph dispatch refused: invalid fallback configuration.');
+  const fallbacks = routing?.fallbacks?.[tier] ?? [];
+  if (!Array.isArray(fallbacks) || fallbacks.length > 3) throw new Error('Morph dispatch refused: fallback list must contain at most three models.');
+  const candidates = [model, ...fallbacks].map((name) => {
+    const match = typeof name === 'string' && /^([^/\s]+)\/([^/#\s]+)(?:#([^\s#]+))?$/.exec(name);
+    if (!match) throw new Error(`Morph dispatch refused: invalid model for tier ${tier}.`);
+    return { name, ref: { providerID: match[1], id: match[2], ...(match[3] ? { variant: match[3] } : {}) } };
+  });
+  if (new Set(candidates.map((entry) => `${entry.ref.providerID}/${entry.ref.id}#${entry.ref.variant || 'default'}`)).size !== candidates.length) throw new Error('Morph dispatch refused: duplicate fallback model.');
+  if (!Array.isArray(routing?.readOnlyRoles)) throw new Error('Morph dispatch refused: missing role access policy.');
+  const readonly = routing.readOnlyRoles.includes(card.id);
+  if (!Array.isArray(files) || (files.length && !directory)) throw new Error('Morph dispatch refused: invalid writable files.');
+  const permissions = [
+    { action: 'edit', resource: '*', effect: 'deny' },
+    { action: 'shell', resource: '*', effect: 'deny' },
+    { action: 'subagent', resource: '*', effect: 'deny' },
+  ];
+  for (const file of files) {
+    if (typeof file !== 'string' || !file || path.isAbsolute(file) || /[*?\[\]{}:]/.test(file) || file.split(/[\\/]/).some((part) => part === '..')) throw new Error('Morph dispatch refused: unsafe file path.');
+    const full = path.resolve(directory, file);
+    if (!full.startsWith(path.resolve(directory) + path.sep)) throw new Error('Morph dispatch refused: file outside project.');
+    const normal = path.relative(path.resolve(directory), full).replace(/\\/g, '/').toLowerCase();
+    const report = /^\.stack\/reports\/[a-z0-9][a-z0-9._-]*\.md$/.test(normal);
+    if ((normal.startsWith('.stack/') && !report) || (readonly && !report)) throw new Error('Morph dispatch refused: role cannot write this path.');
+    let part = path.resolve(directory);
+    for (const segment of path.relative(part, full).split(path.sep)) {
+      part = path.join(part, segment);
+      try {
+        const stat = fs.lstatSync(part);
+        if (stat.isSymbolicLink() || (part === full && stat.isDirectory())) throw new Error('unsafe');
+      } catch (err) {
+        if (err.code !== 'ENOENT') throw new Error('Morph dispatch refused: symlink or directory in writable path.');
+      }
+    }
+    permissions.push({ action: 'edit', resource: full.replace(/\\/g, '/'), effect: 'allow' });
+  }
+  const attempts = [];
+  const fail = (stage, name, err) => {
+    const code = typeof err?.code === 'string' && /^[A-Z0-9_]{1,64}$/.test(err.code) ? err.code : 'ERROR';
+    attempts.push({ model: name, stage, error: code });
+    const error = new Error(`Morph dispatch stopped at ${stage}; attempts: ${JSON.stringify(attempts)}`, { cause: err });
+    error.attempts = attempts;
+    throw error;
+  };
+  try { await ctx.permission.assert({ sessionID: parentID, source, action: 'subagent', resources: ['morph'], save: ['morph'] }); }
+  catch (err) { fail('permission', model, err); }
+  let selected = candidates[0];
+  if (fallbacks.length) {
+    if (typeof ctx?.model?.list !== 'function') fail('availability', model, new Error('Host model inventory unavailable'));
+    selected = null;
+    for (const candidate of candidates) {
+      for (let count = 0; count < 2; count += 1) {
+        let available;
+        try { available = await ctx.model.list(); }
+        catch (err) { fail('availability', candidate.name, err); }
+        if (!Array.isArray(available)) available = available?.data;
+        if (!Array.isArray(available)) fail('availability', candidate.name, new Error('Invalid model inventory'));
+        if (available.some((item) => item.providerID === candidate.ref.providerID && item.id === candidate.ref.id)) {
+          selected = candidate;
+          break;
+        }
+        attempts.push({ model: candidate.name, stage: 'availability', error: 'MODEL_NOT_AVAILABLE' });
+      }
+      if (selected) break;
+    }
+    if (!selected) {
+      const error = new Error(`Morph dispatch stopped: no configured model available; attempts: ${JSON.stringify(attempts)}`);
+      error.attempts = attempts;
+      throw error;
+    }
+  }
+  const modelRef = selected.ref;
+  const requested = { parentID, agent: 'morph', model: modelRef, permissions };
+  let response;
+  try { response = await ctx.session.create(requested); }
+  catch (err) { fail('create', selected.name, err); }
+  const child = response?.data ?? response;
+  const actualModel = child?.model;
+  const modelMatches = actualModel && actualModel.providerID === modelRef.providerID && actualModel.id === modelRef.id &&
+    (modelRef.variant === undefined ? actualModel.variant === undefined || actualModel.variant === 'default' : actualModel.variant === modelRef.variant);
+  if (!child?.id || child.parentID !== parentID || child.agent !== 'morph' || !modelMatches || !isDeepStrictEqual(child.permissions, permissions)) {
+    fail('confirmation', selected.name, new Error('Host did not confirm child model and permissions; no prompt sent.'));
+  }
+  let release;
+  try { release = onVerified?.(child.id); }
+  catch (err) { fail('guard', selected.name, err); }
+  try {
+    try { await ctx.session.prompt({ sessionID: child.id, text: `Role: ${card.title}. Role card: ${card.id}. Read roles/${card.id}.md before work.\n\n${prompt}` }); }
+    catch (err) { fail('prompt', selected.name, err); }
+    try { await ctx.session.wait({ sessionID: child.id }); }
+    catch (err) { fail('wait', selected.name, err); }
+    attempts.push({ model: selected.name, stage: 'started', error: null });
+    return { sessionID: child.id, tier, model: modelRef, attempts };
+  } finally {
+    release?.();
+  }
+}
 
 /** How much a term is worth by where it appears in a card. */
 const WEIGHT = { name: 3, department: 2, body: 1 };
@@ -148,7 +256,7 @@ export function loadCards(dir) {
       continue;
     }
     const { data, body } = splitFrontmatter(source);
-    const missing = ['name', 'department', 'seat', 'proof'].filter((key) => !data[key]);
+    const missing = ['name', 'title', 'department', 'seat', 'tier', 'proof'].filter((key) => !data[key]);
     if (missing.length) {
       skipped.push({ id, reason: `missing ${missing.join(', ')}` });
       continue;
@@ -156,8 +264,10 @@ export function loadCards(dir) {
     cards.push({
       id,
       name: data.name,
+      title: data.title,
       department: data.department.toLowerCase(),
       seat: data.seat.toLowerCase(),
+      tier: data.tier.toLowerCase(),
       proof: data.proof,
       text: body,
     });
@@ -325,7 +435,9 @@ export function route(prompt, cards) {
   return {
     seat: cards[best].seat,
     department: cards[best].department,
+    title: cards[best].title,
     cards: ids,
+    tier: cards[best].tier,
     proof: cards[best].proof,
     score: round(top),
     took: round(Number(process.hrtime.bigint() - started) / 1e6),
