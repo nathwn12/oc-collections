@@ -1,8 +1,0 @@
-{
-  "checks": [],
-  "ownership": {
-    "ignore": [
-      ".stack/**"
-    ]
-  }
-}
