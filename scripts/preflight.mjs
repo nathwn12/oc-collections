@@ -27,6 +27,7 @@
  *                        origin/main...HEAD` plus uncommitted changes, and
  *                        always the repo-wide static steps
  *   --all                every package: the pre-merge ceremony
+ *   --jobs <n>           package legs at once; default 1, cap 8
  *   --install            write .git/hooks/pre-push running `--changed`
  *   --uninstall          remove that hook, and only that hook
  *
@@ -47,15 +48,19 @@ import { workspaceDirs } from "./workspace-plan.mjs"
 export const ROOT = path.resolve(import.meta.dirname, "..")
 
 const USAGE =
-  "usage: node scripts/preflight.mjs [--changed|--all] | --install | --uninstall"
+  "usage: node scripts/preflight.mjs [--changed|--all] [--jobs <n>] | --install | --uninstall"
 
 /**
  * Package legs run as separate processes, exactly as the CI legs do, so a red
- * package cannot fail another's leg. Four at once bounds the concurrent npm
- * installs oc-harness-setup performs; the root fan-out's own cap is 8, but it
- * shares one process and one cache.
+ * package cannot fail another's leg. They run one at a time by default, because
+ * they are not independent in the way the matrix makes them look: CI gives each
+ * leg its own runner, and two of the packages assert their own wall clock.
+ * oc-stacked's self-test refuses a `route()` worst case over 5 ms, and under
+ * four concurrent legs it reported 8.353 ms - a flake the local gate would have
+ * manufactured, on a push that had nothing wrong with it. `--jobs <n>` (cap 8)
+ * buys the parallel path back when the machine is idle and the tree is trusted.
  */
-const CONCURRENCY = Math.max(1, Math.min(os.cpus().length || 4, 4))
+const MAX_JOBS = Math.max(1, Math.min(os.cpus().length || 4, 8))
 
 /** Root-level paths whose change can affect every package's check. */
 const WHOLE_REPO = new Set([
@@ -207,11 +212,25 @@ export async function runPreflight({
   clock = () => performance.now(),
 } = {}) {
   const flags = argv.filter((arg) => arg.startsWith("-"))
-  const unknown = flags.filter((flag) => flag !== "--changed" && flag !== "--all")
+  const unknown = flags.filter(
+    (flag) => flag !== "--changed" && flag !== "--all" && flag !== "--jobs" && !flag.startsWith("--jobs="),
+  )
   if (unknown.length > 0) {
     log(`preflight: unknown argument ${unknown.join(" ")}`)
     log(USAGE)
     return { exitCode: 2, passed: 0, failed: 0, failures: [], results: [] }
+  }
+
+  const jobsAt = argv.findIndex((arg) => arg === "--jobs" || arg.startsWith("--jobs="))
+  let jobs = 1
+  if (jobsAt >= 0) {
+    const raw = argv[jobsAt].includes("=") ? argv[jobsAt].slice("--jobs=".length) : argv[jobsAt + 1]
+    if (!/^\d+$/.test(raw ?? "") || Number(raw) < 1) {
+      log(`preflight: --jobs needs a positive integer (got "${raw ?? ""}")`)
+      log(USAGE)
+      return { exitCode: 2, passed: 0, failed: 0, failures: [], results: [] }
+    }
+    jobs = Math.min(Number(raw), MAX_JOBS)
   }
 
   const chosen = flags.includes("--all") ? [...names] : selectPackages(paths, names)
@@ -242,10 +261,11 @@ export async function runPreflight({
   }
 
   // Static steps are a second in total and share the tree's index files: run
-  // them in gate order. Package legs are separate processes and independent.
+  // them in gate order. Package legs are separate processes; `jobs` is 1 unless
+  // asked for more, so a timing assertion inside a package is never starved.
   for (const step of steps.filter((step) => step.group === "static")) await run(step)
   const legs = steps.filter((step) => step.group === "package")
-  await forEachLimit(legs, CONCURRENCY, run)
+  await forEachLimit(legs, jobs, run)
 
   for (const failure of failures) {
     log(`\n--- ${failure.group === "package" ? `pkg ${failure.name}` : failure.name} output ---`)
