@@ -268,32 +268,42 @@ test('setup: a host without the hook, a hostile ctx, and no config are all silen
 });
 
 test('setup: six reads registered, and the hooks land when the tool editor refuses', async () => {
-  const added = [];
-  const hooks = [];
-  plugin.setup({
-    session: { hook: (name) => hooks.push(name) },
-    tool: {
-      transform: (fn) => {
-        fn({ add: (def) => added.push(def.name), namespace: () => {} });
-        return Promise.resolve();
+  // Same reason as the hook test above: a clean runner has no atlas record, and
+  // setup returns early without one. Point it at a fixture so this asserts
+  // registration, not whether this machine happens to be configured.
+  const previous = process.env.OC_GRAPHIFY_CONFIG
+  process.env.OC_GRAPHIFY_CONFIG = tmp('reads-config.json', JSON.stringify({ atlas: path.join(os.tmpdir(), 'atlas') }))
+  try {
+    const added = [];
+    const hooks = [];
+    plugin.setup({
+      session: { hook: (name) => hooks.push(name) },
+      tool: {
+        transform: (fn) => {
+          fn({ add: (def) => added.push(def.name), namespace: () => {} });
+          return Promise.resolve();
+        },
       },
-    },
-  });
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(added.sort(), ['graph_god_nodes', 'graph_neighbors', 'graph_node', 'graph_path', 'graph_query', 'graph_stats']);
-  assert.deepEqual(hooks.sort(), ['compaction', 'context', 'generate']);
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(added.sort(), ['graph_god_nodes', 'graph_neighbors', 'graph_node', 'graph_path', 'graph_query', 'graph_stats']);
+    assert.deepEqual(hooks.sort(), ['compaction', 'context', 'generate']);
 
-  const stillHooked = [];
-  plugin.setup({
-    session: { hook: (name) => stillHooked.push(name) },
-    tool: {
-      transform: () => {
-        throw new Error('no tool domain');
+    const stillHooked = [];
+    plugin.setup({
+      session: { hook: (name) => stillHooked.push(name) },
+      tool: {
+        transform: () => {
+          throw new Error('no tool domain');
+        },
       },
-    },
-  });
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(stillHooked.length, 3, 'a refused tool editor must not cost the injection');
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(stillHooked.length, 3, 'a refused tool editor must not cost the injection');
+  } finally {
+    if (previous === undefined) delete process.env.OC_GRAPHIFY_CONFIG
+    else process.env.OC_GRAPHIFY_CONFIG = previous
+  }
 });
 
 test('freshness: the vault command decides, hidden and with a real runtime', () => {
