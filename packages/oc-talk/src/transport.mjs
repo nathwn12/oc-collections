@@ -14,7 +14,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 
-const STATE_FILE = path.join(os.homedir(), '.local', 'state', 'opencode', 'service.json');
+const STATE_FILE = process.env.OC_TALK_STATE_FILE || path.join(os.homedir(), '.local', 'state', 'opencode', 'service.json');
 const AUTH_USER = 'opencode';
 const REQUEST_TIMEOUT_MS = 20000;
 // One keep-alive agent for the whole module: the service is a sibling process on
@@ -22,18 +22,35 @@ const REQUEST_TIMEOUT_MS = 20000;
 const agent = new http.Agent({ keepAlive: true, maxSockets: 8 });
 
 let cached = null;
+// The resolved password, held only so every outgoing detail can be scrubbed of it.
+// It is never serialized, never logged, and never returned.
+let resolvedSecret = '';
+
+// No detail ever leaves this module carrying the credential: a server message can
+// echo the request it rejected, and a parse error can quote the file it choked on.
+function redact(text) {
+  const value = String(text === undefined || text === null ? '' : text);
+  if (!resolvedSecret) return value;
+  return value.split(resolvedSecret).join('[redacted]');
+}
 
 // Resolve and cache the endpoint: base URL plus the one auth header ever built.
 // A missing or malformed state file is `backend_unavailable`, never a throw.
+//
+// The cache is droppable: this machine's service reboots on a new port within a
+// couple of minutes, so a refused connection or a 401 must re-read the state file
+// rather than pin a dead port or a stale credential for the process's lifetime.
 function serviceEndpoint() {
   if (cached) return cached;
   let raw;
   try {
     raw = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
-  } catch (err) {
-    return { error: { ok: false, code: 'backend_unavailable', detail: 'opencode service state is unreadable: ' + String((err && err.message) || err) } };
+  } catch {
+    // A fixed detail: the reader's own error message can quote the file's bytes.
+    return { error: { ok: false, code: 'backend_unavailable', detail: 'opencode service state is unreadable' } };
   }
   const password = raw && raw.password;
+  if (typeof password === 'string' && password) resolvedSecret = password;
   // The state file publishes `http://0.0.0.0:<port>`; rewrite the host to
   // loopback, which is the only address this client dials.
   let published = null;
@@ -57,6 +74,12 @@ function serviceEndpoint() {
   return cached;
 }
 
+// Forget the cached endpoint so the next call re-reads the state file.
+function dropEndpoint() {
+  cached = null;
+  return undefined;
+}
+
 function query(params) {
   const sp = new URLSearchParams();
   for (const [k, v] of Object.entries(params || {})) {
@@ -67,9 +90,10 @@ function query(params) {
   return s ? '?' + s : '';
 }
 
-// One request. `body` is an object serialized as JSON or undefined. `signal`
-// comes from the tool execute context, so an aborted turn cancels the call.
-function request(method, pathname, opts) {
+// One attempt at one request. `body` is an object serialized as JSON or
+// undefined. `signal` comes from the tool execute context, so an aborted turn
+// cancels the call.
+function attempt(method, pathname, opts) {
   const settings = opts || {};
   const ep = serviceEndpoint();
   if (ep.error) return Promise.resolve(ep.error);
@@ -143,6 +167,35 @@ function request(method, pathname, opts) {
     if (payload) req.write(payload);
     req.end();
   });
+}
+
+// Retry-once policy. The service on this machine reboots onto a new port every
+// 80-258s, so a refused socket or a 401 means the cached endpoint is stale: drop
+// it and try once more with a freshly read one. A POST is only retried when it
+// carries the client-chosen `msg_` id, which makes admission idempotent; anything
+// else (a prompt without one) is never replayed blindly.
+function retryable(method, settings, failure) {
+  const stale = failure.code === 'backend_unavailable' || failure.status === 401;
+  if (!stale) return false;
+  if (method === 'GET') return true;
+  const id = settings && settings.body && settings.body.id;
+  return typeof id === 'string' && id.startsWith('msg_');
+}
+
+// Every failure leaving this module is scrubbed, and a stale endpoint gets exactly
+// one retry. A second failure in a row is returned as it came.
+async function request(method, pathname, opts) {
+  const settings = opts || {};
+  const first = await attempt(method, pathname, settings);
+  if (first.ok || !retryable(method, settings, first)) return scrub(first);
+  dropEndpoint();
+  const second = await attempt(method, pathname, settings);
+  return scrub(second);
+}
+
+function scrub(result) {
+  if (!result || result.ok !== false || typeof result.detail !== 'string') return result;
+  return { ...result, detail: redact(result.detail) };
 }
 
 // Durable admission of one input, 200 in milliseconds. `id` is client-chosen and
@@ -227,4 +280,4 @@ function call(args, opts) {
   return Promise.resolve({ ok: false, code: 'backend_error', detail: 'unsupported call: ' + String(verb) });
 }
 
-export { call, createSession, messages, prompt, request, searchSessions, serviceEndpoint, session };
+export { call, createSession, dropEndpoint, messages, prompt, redact, request, searchSessions, serviceEndpoint, session };
