@@ -5,6 +5,20 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-11-13
+
+The lane is chosen, not fixed: a correction reaches the peer inside its turn, and a handoff still waits for the next one.
+
+### Added
+
+- `talk_send` takes `delivery`: `auto` (default), `steer` or `queue`. `steer` is admitted into the target's current turn at its next step boundary; `queue` waits for the next turn. Any other value is a typed `bad_request`, and nothing is sent.
+- Under `auto` the lane is resolved in this order: an explicit `delivery`; a leading `[steer]`, `[queue]`, `STEER:` or `QUEUE:` marker, stripped from the delivered text; a positive `wait`, which means a handoff; a message of 400 characters or fewer carrying a halt or correction phrase, which steers; everything else queues.
+- The reply carries `delivery` and `deliveryReason` (`explicit`, `marker`, `wait`, `urgent`, `handoff`) beside `{id, sessionID, title, delivered}`.
+
+### Changed
+
+- `talk_send` no longer hardcodes `queue`: a short "stop, that's wrong" reaches the peer's current turn instead of waiting a full turn to be read. A long brief still queues, however many stop words it contains.
+
 ## [0.3.0] - 2026-11-13
 
 The surface is two tools. Everything else is gone, and the backend is the local

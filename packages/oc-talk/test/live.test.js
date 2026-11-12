@@ -84,3 +84,43 @@ test('live: talk_inbox resolves a title through search, and the default session 
   assert.equal(own.sessionID, sessionID);
   assert.ok(own.messages.some((m) => typeof m.text === 'string' && m.text.includes(text)));
 });
+
+// The steer lane, judged where a stub cannot see it: the running service's own
+// enum, and an admission it actually accepted. The probe session is left in
+// place on purpose - deleting a session is not this package's capability.
+test('live: a steer send is admitted into a real session, and the enum is the server\'s', { skip: SKIP }, async () => {
+  const transport = await import(pathToFileURL(TRANSPORT).href);
+  const mod = await import(pathToFileURL(ENTRY).href);
+
+  // The lane is a server-side enum, never a local convention.
+  const doc = await transport.request('GET', '/openapi.json');
+  assert.equal(doc.ok, true, 'openapi read failed: ' + JSON.stringify(doc));
+  const schema = doc.json.components.schemas['Session.Inbox.Delivery'];
+  assert.deepEqual(schema.enum, ['steer', 'queue'], 'the service declares exactly steer and queue');
+  const props = doc.json.paths['/api/session/{sessionID}/prompt'].post.requestBody.content['application/json'].schema.properties;
+  assert.ok(props.delivery, 'the prompt route must accept a delivery field');
+
+  const created = await transport.createSession({ title: 'oc-talk-live-steer ' + Date.now() });
+  assert.equal(created.ok, true, 'probe session creation failed: ' + JSON.stringify(created));
+  const sessionID = created.json.data.id;
+  assert.match(sessionID, /^ses_/, 'the service must return a real session id');
+
+  const { ctx, added } = host();
+  await mod.default.setup(ctx);
+  const context = { sessionID, signal: undefined };
+  const text = 'stop, that is wrong: probe correction ' + Date.now();
+  const sent = JSON.parse(
+    (await added.find((t) => t.name === 'talk_send').execute({ session: sessionID, text, delivery: 'steer' }, context)).content,
+  );
+  assert.equal(sent.error, undefined, 'steer send failed: ' + JSON.stringify(sent));
+  assert.equal(sent.delivered, true);
+  assert.equal(sent.delivery, 'steer', 'an explicit steer must be the lane the server accepted');
+  assert.equal(sent.deliveryReason, 'explicit');
+
+  const inbox = JSON.parse((await added.find((t) => t.name === 'talk_inbox').execute({ session: sessionID, limit: 20 }, context)).content);
+  assert.equal(inbox.error, undefined, 'inbox failed: ' + JSON.stringify(inbox));
+  const found = inbox.messages.find((m) => typeof m.text === 'string' && m.text.includes(text));
+  assert.ok(found, 'the steered text must be admitted: ' + JSON.stringify(inbox.messages));
+  assert.equal(found.role, 'user', 'the correction is a user message in the target session');
+  console.log('live steer probe: session=' + sessionID + ' row=' + JSON.stringify(found));
+});

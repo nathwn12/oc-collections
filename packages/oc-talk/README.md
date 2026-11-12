@@ -7,7 +7,7 @@ Gives an agent two tools to talk across sessions: put a message into another ses
 The package is published on npm as `oc-talk`, and OpenCode installs it from the registry: add it to the `plugins` array in your `opencode.jsonc`.
 
 ```json
-{ "plugins": ["oc-talk@0.3.0"] }
+{ "plugins": ["oc-talk@0.4.0"] }
 ```
 
 Restart OpenCode. The plugin registers both tools when the session starts, and reaches the server OpenCode is already running over loopback HTTP.
@@ -41,10 +41,24 @@ Restart OpenCode either way.
 
 | Tool | What it does for you |
 | --- | --- |
-| `talk_send` | Delivers one message into a session by id or unique title. Queued behind the target's current turn, acted on at its next one; returns the admission in milliseconds. |
+| `talk_send` | Delivers one message into a session by id or unique title. A short correction steers into the target's current turn, a work handoff queues to its next one; returns the admission, the lane and the reason in milliseconds. |
 | `talk_inbox` | Reads one session's messages as `{id, role, text, tools, time}`; defaults to the calling session, pages with `cursor`, filters with `since` and `type`, and blocks with `wait`. |
 
 Every failure is a typed JSON payload (`session_not_found`, `ambiguous_session`, `bad_request`, `backend_unavailable`, `timeout`, `backend_error`), never a throw. An unknown or ambiguous title comes back with the candidate list as data, so a caller never guesses.
+
+## Delivery
+
+`talk_send` takes `delivery`: `auto` (default), `steer` or `queue`. `steer` reaches the target inside its current turn, at its next step boundary; `queue` waits for that turn to end.
+
+Under `auto` the lane is resolved in this order:
+
+- an explicit `delivery` wins;
+- a leading `[steer]`, `[queue]`, `STEER:` or `QUEUE:` in the text wins over the scorer, and is removed from what is delivered;
+- a positive `wait` means a handoff, so it queues;
+- a message of 400 characters or fewer carrying a halt or correction phrase (`stop`, `wrong`, `revert`, `failing`, …) steers;
+- everything else queues.
+
+The reply reports both fields: `delivery` is the lane used, and `deliveryReason` is one of `explicit`, `marker`, `wait`, `urgent`, `handoff`. Steer is for a correction the target should not finish its turn without; queue is for work that starts a new turn.
 
 ## One session hands work to another
 
@@ -52,7 +66,8 @@ A dispatcher hands a build lane its next task, then reads what came back:
 
 ```json
 talk_send { "session": "build lane", "text": "Run the test suite and report failures." }
-→ { "id": "msg_0f3c…", "sessionID": "ses_9a1…", "title": "active build lane", "delivered": true }
+→ { "id": "msg_0f3c…", "sessionID": "ses_9a1…", "title": "active build lane", "delivered": true,
+    "delivery": "queue", "deliveryReason": "handoff" }
 ```
 
 The call returns at once: the message is admitted, not answered. To wait for the lane to finish the turn it was already in, ask for a bounded block — it returns the messages plus the outcome of the wait:
@@ -60,6 +75,7 @@ The call returns at once: the message is admitted, not answered. To wait for the
 ```json
 talk_send { "session": "build lane", "text": "Summarize the failures.", "wait": 90 }
 → { "id": "msg_…", "sessionID": "ses_9a1…", "title": "active build lane", "delivered": true,
+    "delivery": "queue", "deliveryReason": "wait",
     "timedOut": false, "waitedMs": 41230, "messages": [ … ] }
 ```
 
@@ -79,7 +95,7 @@ talk_inbox { "limit": 20 }
 
 ## How it talks
 
-`src/transport.mjs` is the only file that touches the wire. It reads the running service's published state once, rewrites the wildcard bind to loopback, and dials the routes the host actually serves: `POST /api/session/{id}/prompt` to admit a message (queued, with a client id so a retry is idempotent), `GET /api/session/{id}/message` to read, and `GET /api/session?search=` to turn a title into an id. No `opencode` child process per call, no shell, no dependency beyond the plugin SDK.
+`src/transport.mjs` is the only file that touches the wire. It reads the running service's published state once, rewrites the wildcard bind to loopback, and dials the routes the host actually serves: `POST /api/session/{id}/prompt` to admit a message (with the chosen delivery, and a client id so a retry is idempotent), `GET /api/session/{id}/message` to read, and `GET /api/session?search=` to turn a title into an id. No `opencode` child process per call, no shell, no dependency beyond the plugin SDK.
 
 ## Requirements
 

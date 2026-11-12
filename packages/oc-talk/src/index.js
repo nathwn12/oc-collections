@@ -20,6 +20,75 @@ const WAIT_DEFAULT_SECONDS = 0;
 const WAIT_MAX_SECONDS = 600;
 const POLL_INTERVAL_MS = 250;
 
+// Delivery routing. `steer` reaches the target inside its current turn, at its
+// next step boundary; `queue` waits for that turn to end. `auto` is the default
+// and is the only value that has to be decided, in this order: an explicit
+// argument, then an inline marker, then `wait`, then the urgent-and-short scorer,
+// then a handoff. Two ways to say one thing is duplicate state, so `auto` has no
+// alias and no config.
+const DELIVERY_DEFAULT = 'auto';
+const DELIVERY_VALUES = ['auto', 'steer', 'queue'];
+// A long brief is never steered, however many stop words it contains. Length is
+// the false-positive guard that keeps the scorer from reading a task as a halt.
+const STEER_MAX_CHARS = 400;
+// The halt/correct vocabulary, as data: a phrase here means "this is a
+// correction or a stop", and a short message carrying one belongs in the current
+// turn. Prune it here, never in the logic below.
+const STEER_SIGNALS = [
+  'stop',
+  'halt',
+  'abort',
+  'cancel',
+  'hold off',
+  'wait',
+  "don't",
+  'do not',
+  'never mind',
+  'revert',
+  'undo',
+  'roll back',
+  'wrong',
+  'incorrect',
+  'broken',
+  'failing',
+  'failed',
+  'red',
+  'emergency',
+  'urgent',
+  'asap',
+  'immediately',
+  'critical',
+  'blocker',
+  'instead',
+  'no longer',
+];
+const SIGNAL_RE = new RegExp(
+  '\\b(?:' +
+    STEER_SIGNALS.map((phrase) => phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/'/g, "['\u2019]")).join('|') +
+    ')\\b',
+  'i',
+);
+// A leading `[steer]`, `[queue]`, `STEER:` or `QUEUE:` in any case, with its
+// surrounding whitespace. The marker is routing, not content: it is stripped from
+// whatever is delivered, even when an explicit argument already settled the lane.
+const MARKER_RE = /^\s*(?:\[(steer|queue)\]|(steer|queue)\s*:)\s*/i;
+
+// Pure routing for one send: no I/O, no clock, exported so the precedence is
+// proved offline. `waitSeconds` is the parsed wait (0 when absent) and `delivery`
+// is the caller's argument, already validated as one of DELIVERY_VALUES. Returns
+// the lane, the reason it was chosen, and the text to deliver — the marker, when
+// there is one, is removed here and nowhere else.
+function classifyDelivery(text, waitSeconds, delivery) {
+  const raw = typeof text === 'string' ? text : '';
+  const marker = MARKER_RE.exec(raw);
+  const body = marker ? raw.slice(marker[0].length) : raw;
+  if (delivery === 'steer' || delivery === 'queue') return { delivery, reason: 'explicit', text: body };
+  if (marker) return { delivery: (marker[1] || marker[2]).toLowerCase(), reason: 'marker', text: body };
+  if (typeof waitSeconds === 'number' && waitSeconds > 0) return { delivery: 'queue', reason: 'wait', text: body };
+  if (body.length <= STEER_MAX_CHARS && SIGNAL_RE.test(body)) return { delivery: 'steer', reason: 'urgent', text: body };
+  return { delivery: 'queue', reason: 'handoff', text: body };
+}
+
 // One live tool-transform registration per host location, keyed by location.
 // The host boots this plugin once per location (workspace + directory) and each
 // boot has its own tool domain, so a single module-level handle was the bug: the
@@ -327,14 +396,15 @@ async function ensureTools(ctx) {
     tools.add({
       name: 'talk_send',
       description:
-        'Deliver one text message into another session by id (ses_...) or unambiguous title substring; it is queued behind the target\'s current turn and acted on at its next one, and the call returns in milliseconds with the admission, not an answer. ' +
-        'Fire to hand work or a correction to a peer; with `wait` seconds it then blocks until that session reaches a turn boundary and returns what it said. ' +
+        'Deliver one text message into another session by id (ses_...) or unambiguous title substring; it is admitted in milliseconds rather than answered, and `delivery` defaults to `auto`: a short correction or stop steers into the target\'s current turn, a work handoff queues to its next turn, and an explicit steer or queue overrides. ' +
+        'Fire to hand work or a correction to a peer, put a leading [steer] or [queue] in the text to choose without the argument, or pass `wait` seconds to block until that session reaches a turn boundary and return what it said. ' +
         'Never guesses: an unknown or ambiguous title returns the candidate list as data.',
       input: {
         type: 'object',
         properties: {
           session: { type: 'string', description: 'Session id (ses_...) or exact title substring' },
-          text: { type: 'string', description: 'Message text, delivered verbatim' },
+          text: { type: 'string', description: 'Message text; a leading [steer] or [queue] marker is stripped before delivery' },
+          delivery: { type: 'string', enum: DELIVERY_VALUES, description: 'auto (default) routes by urgency, steer reaches the target\'s current turn at its next step, queue waits for its next turn' },
           wait: { type: 'number', description: 'Seconds to block after sending until the target reaches a turn boundary; default 0 (never block)' },
         },
         required: ['session', 'text'],
@@ -346,8 +416,12 @@ async function ensureTools(ctx) {
         if (typeof args.text !== 'string' || !args.text) {
           return fail('bad_request', 'text must be a non-empty string');
         }
+        if (args.delivery !== undefined && (typeof args.delivery !== 'string' || !DELIVERY_VALUES.includes(args.delivery))) {
+          return fail('bad_request', 'delivery must be auto, steer, or queue');
+        }
         const w = parseWait(args.wait, WAIT_DEFAULT_SECONDS);
         if (!w.ok) return fail(w.error, w.reason);
+        const route = classifyDelivery(args.text, w.value, args.delivery === undefined ? DELIVERY_DEFAULT : args.delivery);
         const t = await resolveTarget(args.session);
         if (!t.ok) return fail(t.error, t.reason, t.candidates, t.truncated);
         // The baseline is read before the send: the turn boundary this call waits
@@ -365,13 +439,15 @@ async function ensureTools(ctx) {
         // The service types this field as a message id (`msg_...`): a fresh one per
         // send keeps the admission idempotent without ever replaying a real one.
         const clientID = 'msg_' + randomUUID().replaceAll('-', '');
-        const r = await runApi(['post', '/api/session/' + t.id + '/prompt', '--data', JSON.stringify({ text: args.text, delivery: 'queue', id: clientID })], { signal });
+        const r = await runApi(['post', '/api/session/' + t.id + '/prompt', '--data', JSON.stringify({ text: route.text, delivery: route.delivery, id: clientID })], { signal });
         if (!r.ok) {
           if (r.code === 'session_not_found') return fail('session_not_found', 'session ' + t.id + ' is gone: ' + r.detail);
           return fail(r.code, 'send failed: ' + r.detail);
         }
         const d = r.json.data || {};
-        const out = { id: d.id || '', sessionID: d.sessionID || t.id, title: t.title || '', delivered: true };
+        // The lane and the reason for it are reported, not assumed: a reader has
+        // to be able to see which turn the message landed in, and why.
+        const out = { id: d.id || '', sessionID: d.sessionID || t.id, title: t.title || '', delivered: true, delivery: route.delivery, deliveryReason: route.reason };
         if (w.value > 0) {
           const waited = await waitForIdle(t.id, w.value * 1000, baseline);
           if (!waited.ok) {
@@ -493,7 +569,18 @@ async function ensureTools(ctx) {
   return registration;
 }
 
-export { collectMessages, ensureTools, listSessions, messageRow, resolveTarget, setApiRunner, waitForIdle };
+export {
+  classifyDelivery,
+  collectMessages,
+  ensureTools,
+  listSessions,
+  messageRow,
+  resolveTarget,
+  setApiRunner,
+  STEER_MAX_CHARS,
+  STEER_SIGNALS,
+  waitForIdle,
+};
 
 // V2 plugin definition, and the only shape the V2 host executes: a V1 object
 // export is loaded (it appears in `opencode plugin list`) but its `setup` is

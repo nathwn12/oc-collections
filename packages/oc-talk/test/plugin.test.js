@@ -3,8 +3,9 @@
 // These prove what a host can break without any peer running: exactly two tools
 // register with their exact routing descriptions, title resolution answers with
 // candidates or near-misses instead of a guess, a capped resolution refuses
-// instead of authorizing a single match, the send carries the queue delivery and
-// a client id, the inbox defaults to the calling session, and the transport file
+// instead of authorizing a single match, the send chooses its delivery lane by
+// urgency (by default, not as a constant) and carries a client id, the inbox
+// defaults to the calling session, and the transport file
 // is the only place a credential or a loopback address appears.
 //
 // Nothing here reaches the network or starts a real peer: every resolution test
@@ -29,8 +30,8 @@ const TOOLS = ['talk_send', 'talk_inbox'];
 
 const DESCRIPTIONS = {
   talk_send:
-    'Deliver one text message into another session by id (ses_...) or unambiguous title substring; it is queued behind the target\'s current turn and acted on at its next one, and the call returns in milliseconds with the admission, not an answer. ' +
-    'Fire to hand work or a correction to a peer; with `wait` seconds it then blocks until that session reaches a turn boundary and returns what it said. ' +
+    'Deliver one text message into another session by id (ses_...) or unambiguous title substring; it is admitted in milliseconds rather than answered, and `delivery` defaults to `auto`: a short correction or stop steers into the target\'s current turn, a work handoff queues to its next turn, and an explicit steer or queue overrides. ' +
+    'Fire to hand work or a correction to a peer, put a leading [steer] or [queue] in the text to choose without the argument, or pass `wait` seconds to block until that session reaches a turn boundary and return what it said. ' +
     'Never guesses: an unknown or ambiguous title returns the candidate list as data.',
   talk_inbox:
     'Read one session\'s messages as id, role, text, tools and time, newest first, default 20; `session` defaults to the session that called this tool, `since` keeps only what is newer, and `cursor` pages. ' +
@@ -280,14 +281,28 @@ function promptBody(calls) {
 
 const CALLER = { sessionID: 'ses_caller', signal: undefined };
 
-test('talk_send queues the message, carries a client id, and returns the admission', async () => {
+// A long, neutral brief: far past the length guard, and carrying `red` and `now`
+// inside real instructions, where they are context and not a stop signal.
+const LONG_HANDOFF =
+  'Take the parser lane from red to green: read the failure output, find the input that breaks it, fix the smallest thing that explains it, add a regression case, and run the full suite before reporting. '.repeat(
+    4,
+  ) + 'Do that now.';
+
+test('talk_send queues a handoff by default, carries a client id, and returns the admission', async () => {
   const { tool, calls } = await toolWith('talk_send');
   const out = JSON.parse((await tool.execute({ session: 'ses_a', text: 'do the thing' }, CALLER)).content);
-  assert.deepEqual(out, { id: 'msg_sent', sessionID: 'ses_a', title: 'active work', delivered: true });
+  assert.deepEqual(out, {
+    id: 'msg_sent',
+    sessionID: 'ses_a',
+    title: 'active work',
+    delivered: true,
+    delivery: 'queue',
+    deliveryReason: 'handoff',
+  });
 
   const body = promptBody(calls);
   assert.equal(body.text, 'do the thing');
-  assert.equal(body.delivery, 'queue', 'a send never preempts a running turn');
+  assert.equal(body.delivery, 'queue', 'a neutral short task is a handoff: it waits for the next turn');
   assert.equal(body.resume, undefined, 'the admission shape carries no resume flag');
   assert.match(body.id, /^msg_[0-9a-f]{32}$/, 'the id is a client-generated msg id, so a retry is idempotent');
 
@@ -296,6 +311,113 @@ test('talk_send queues the message, carries a client id, and returns the admissi
   assert.equal(again.delivered, true);
   const bodies = calls.filter((a) => a[0] === 'post' && String(a[1]).endsWith('/prompt')).map((a) => JSON.parse(a[3]));
   assert.notEqual(bodies[0].id, bodies[1].id);
+});
+
+test('a short stop or correction steers into the target\'s current turn', async () => {
+  const { tool, calls } = await toolWith('talk_send');
+  const out = JSON.parse((await tool.execute({ session: 'ses_a', text: 'Stop — that migration is wrong, revert it.' }, CALLER)).content);
+  assert.equal(out.error, undefined);
+  assert.equal(out.delivery, 'steer', 'a correction must not wait a whole turn to be read');
+  assert.equal(out.deliveryReason, 'urgent');
+  assert.equal(promptBody(calls).delivery, 'steer');
+});
+
+test('a [steer] marker chooses the current turn and is stripped from the delivered text', async () => {
+  const { tool, calls } = await toolWith('talk_send');
+  const out = JSON.parse((await tool.execute({ session: 'ses_a', text: '[steer] Stop the deploy.' }, CALLER)).content);
+  assert.equal(out.error, undefined);
+  assert.equal(out.delivery, 'steer');
+  assert.equal(out.deliveryReason, 'marker');
+  const body = promptBody(calls);
+  assert.equal(body.delivery, 'steer');
+  assert.equal(body.text, 'Stop the deploy.', 'the marker is routing, not content');
+});
+
+test('a [queue] marker beats the urgent phrase it wraps', async () => {
+  const { tool, calls } = await toolWith('talk_send');
+  const out = JSON.parse((await tool.execute({ session: 'ses_a', text: '[queue] stop, that\'s wrong' }, CALLER)).content);
+  assert.equal(out.delivery, 'queue');
+  assert.equal(out.deliveryReason, 'marker');
+  const body = promptBody(calls);
+  assert.equal(body.delivery, 'queue');
+  assert.equal(body.text, 'stop, that\'s wrong');
+});
+
+// The anti-false-positive case: a task brief that mentions `red` and `now` is
+// still a handoff. Removing the length guard must turn this red.
+test('an 817-character handoff containing red and now still queues', async () => {
+  assert.ok(LONG_HANDOFF.length > 800, 'the fixture must be far past the guard: ' + LONG_HANDOFF.length);
+  const { tool, calls } = await toolWith('talk_send');
+  const out = JSON.parse((await tool.execute({ session: 'ses_a', text: LONG_HANDOFF }, CALLER)).content);
+  assert.equal(out.delivery, 'queue', 'a long brief is never steered');
+  assert.equal(out.deliveryReason, 'handoff');
+  assert.equal(promptBody(calls).delivery, 'queue');
+});
+
+test('an explicit delivery wins over the scorer, in both directions', async () => {
+  const { tool, calls } = await toolWith('talk_send');
+  const steered = JSON.parse((await tool.execute({ session: 'ses_a', text: LONG_HANDOFF, delivery: 'steer' }, CALLER)).content);
+  assert.equal(steered.delivery, 'steer');
+  assert.equal(steered.deliveryReason, 'explicit');
+  assert.equal(promptBody(calls).delivery, 'steer');
+
+  const queued = JSON.parse((await tool.execute({ session: 'ses_a', text: 'Stop, that is wrong.', delivery: 'queue' }, CALLER)).content);
+  assert.equal(queued.delivery, 'queue', 'an explicit queue overrides the urgent scorer');
+  assert.equal(queued.deliveryReason, 'explicit');
+});
+
+test('wait implies a handoff: an urgent line under auto still queues when the caller waits', async () => {
+  const mod = await load();
+  const calls = [];
+  let posted = false;
+  mod.setApiRunner(async (args) => {
+    calls.push(args);
+    const [verb, target] = args;
+    if (verb === 'session.get') return { ok: true, json: { data: { id: 'ses_a', title: 'active work' } } };
+    if (verb === 'post' && String(target).endsWith('/prompt')) {
+      posted = true;
+      return { ok: true, json: { data: { id: 'msg_sent', sessionID: 'ses_a' } } };
+    }
+    return { ok: true, json: { data: [{ id: posted ? 'msg_new_idle' : 'msg_prev_idle', type: 'idle', time: { created: 1 } }] } };
+  });
+  const { ctx, added } = host();
+  await mod.default.setup(ctx);
+  const out = JSON.parse(
+    (await added.find((t) => t.name === 'talk_send').execute({ session: 'ses_a', text: 'Stop, that is the wrong file.', wait: 30 }, CALLER)).content,
+  );
+  assert.equal(out.delivery, 'queue', 'waiting for the answer makes it a new turn by definition');
+  assert.equal(out.deliveryReason, 'wait');
+  const posts = calls.filter((a) => a[0] === 'post');
+  assert.equal(JSON.parse(posts.at(-1)[3]).delivery, 'queue');
+});
+
+test('an invalid delivery is a typed bad_request and sends nothing', async () => {
+  const { tool, calls } = await toolWith('talk_send');
+  const out = await tool.execute({ session: 'ses_a', text: 'hi', delivery: 'now' }, CALLER);
+  assert.equal(JSON.parse(out.content).error, 'bad_request');
+  assert.equal(JSON.parse(out.content).reason, 'delivery must be auto, steer, or queue');
+
+  const notString = await tool.execute({ session: 'ses_a', text: 'hi', delivery: 5 }, CALLER);
+  assert.equal(JSON.parse(notString.content).error, 'bad_request');
+  assert.equal(calls.length, 0, 'the refusal happens before any backend call');
+});
+
+test('classifyDelivery is pure: marker strip, precedence, and the length boundary', async () => {
+  const { classifyDelivery, STEER_SIGNALS, STEER_MAX_CHARS } = await load();
+  assert.ok(Array.isArray(STEER_SIGNALS) && STEER_SIGNALS.includes('stop'), 'the signals are quotable data');
+  assert.equal(STEER_MAX_CHARS, 400);
+
+  assert.deepEqual(classifyDelivery('  [STEER]   Stop it.', 0, 'auto'), { delivery: 'steer', reason: 'marker', text: 'Stop it.' });
+  assert.deepEqual(classifyDelivery('queue: STOP', 0, 'auto'), { delivery: 'queue', reason: 'marker', text: 'STOP' });
+  assert.equal(classifyDelivery('Stop it.', 0, 'queue').reason, 'explicit');
+  assert.equal(classifyDelivery('Stop it.', 30, 'auto').reason, 'wait');
+  assert.equal(classifyDelivery('run the tests', 0, 'auto').reason, 'handoff');
+
+  // The guard is a length rule, exactly at its boundary.
+  const atLimit = 'stop ' + 'x'.repeat(STEER_MAX_CHARS - 5);
+  assert.equal(atLimit.length, STEER_MAX_CHARS);
+  assert.equal(classifyDelivery(atLimit, 0, 'auto').delivery, 'steer');
+  assert.equal(classifyDelivery(atLimit + 'x', 0, 'auto').delivery, 'queue');
 });
 
 test('talk_send is fire-and-forget by default and reports timedOut only when asked to wait', async () => {
