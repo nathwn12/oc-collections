@@ -28,8 +28,18 @@ import path from "node:path"
 
 import { PLAN, ROOT, checkPlan, workspaceDirs } from "./workspace-plan.mjs"
 
+/**
+ * `npm_execpath` is npm's own JS entry when npm runs this script, and the bun
+ * binary when `bun run` does. Only a JS entry can be handed to node, so any
+ * other value falls back to the `npm` shim on PATH.
+ */
+function npmExecpath() {
+  const exec = process.env.npm_execpath
+  return exec && /\.[cm]?js$/i.test(exec) ? exec : undefined
+}
+
 function npm(args) {
-  const npmCli = process.env.npm_execpath
+  const npmCli = npmExecpath()
   return npmCli
     ? spawnSync(process.execPath, [npmCli, ...args], { cwd: ROOT, encoding: "utf8" })
     : spawnSync(process.platform === "win32" ? "npm.cmd" : "npm", args, {

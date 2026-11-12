@@ -30,7 +30,7 @@
   "scripts": {
     "check": "npm pack --dry-run",
     "test": "node --check bin/cli.js && node --test \"test/**/*.test.js\"",
-    "prepublishOnly": "npm run check"
+    "prepublishOnly": "bun run check"
   },
   "publishConfig": {
     "access": "public"

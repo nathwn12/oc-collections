@@ -33,8 +33,18 @@ import { clear as cacheClear, read as cacheRead, workspaceKey, write as cacheWri
 
 const CONCURRENCY = Math.max(1, Math.min(os.cpus().length || 4, 8))
 
+/**
+ * `npm_execpath` is npm's own JS entry when npm runs this script, and the bun
+ * binary when `bun run` does. Only a JS entry can be handed to node, so any
+ * other value falls back to the `npm` shim on PATH.
+ */
+function npmExecpath() {
+  const exec = process.env.npm_execpath
+  return exec && /\.[cm]?js$/i.test(exec) ? exec : undefined
+}
+
 function npmCommand(args) {
-  const npmCli = process.env.npm_execpath
+  const npmCli = npmExecpath()
   return npmCli
     ? { cmd: process.execPath, args: [npmCli, ...args], opts: {} }
     : {
@@ -45,7 +55,7 @@ function npmCommand(args) {
 }
 
 function runNpm(args, cwd) {
-  const npmCli = process.env.npm_execpath
+  const npmCli = npmExecpath()
   const result = npmCli
     ? spawnSync(process.execPath, [npmCli, ...args], { cwd, stdio: "inherit" })
     : spawnSync(process.platform === "win32" ? "npm.cmd" : "npm", args, {

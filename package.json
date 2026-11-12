@@ -1,6 +1,7 @@
 {
   "name": "oc-collections",
   "version": "0.2.6",
+  "packageManager": "bun@1.4.4",
   "private": true,
   "description": "The nathwn12 oc-* family index, and the npm-workspaces monorepo where the family's packages are developed.",
   "license": "MIT",
@@ -15,7 +16,7 @@
     "check": "node scripts/check-vocabulary.mjs && node scripts/check-launchers.mjs && pwsh -NoProfile -File scripts/check-index.ps1 --structural && pwsh -NoProfile -File scripts/check-index.selftest.ps1 && node scripts/check-docs.mjs && node scripts/check-docs.selftest.mjs && node scripts/workspace-run.mjs check",
     "build": "node scripts/workspace-run.mjs build",
     "test": "node scripts/workspace-run.mjs test",
-    "pack:check": "npm run check && npm run build && node scripts/pack-check.mjs",
+    "pack:check": "bun run check && bun run build && node scripts/pack-check.mjs",
     "cleanroom": "node scripts/cleanroom.mjs",
     "cleanroom:check": "node scripts/cleanroom.mjs --check",
     "npm:passkey": "node scripts/npm-passkey.mjs"

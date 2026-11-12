@@ -160,8 +160,18 @@ if (loadFailures > 0) process.exit(1)
 console.log(\`  PASS \${name}@\${manifest.version}: \${entries.size} entry point(s) and \${files.length} files entr\${files.length === 1 ? "y" : "ies"} present\`)
 `
 
+/**
+ * `npm_execpath` is npm's own JS entry when npm runs this script, and the bun
+ * binary when `bun run` does. Only a JS entry can be handed to node, so any
+ * other value falls back to the `npm` shim on PATH.
+ */
+function npmExecpath() {
+  const exec = process.env.npm_execpath
+  return exec && /\.[cm]?js$/i.test(exec) ? exec : undefined
+}
+
 function npm(args, cwd) {
-  const npmCli = process.env.npm_execpath
+  const npmCli = npmExecpath()
   return npmCli
     ? spawnSync(process.execPath, [npmCli, ...args], { cwd, encoding: "utf8" })
     : spawnSync(process.platform === "win32" ? "npm.cmd" : "npm", args, {
@@ -179,7 +189,7 @@ const PACK_CONCURRENCY = Math.max(1, Math.min(os.cpus().length || 4, 8))
 /** Async npm with captured output, for the concurrent pack phase. */
 function npmAsync(args, cwd) {
   return new Promise((resolve) => {
-    const npmCli = process.env.npm_execpath
+    const npmCli = npmExecpath()
     const child = npmCli
       ? spawn(process.execPath, [npmCli, ...args], { cwd })
       : spawn(process.platform === "win32" ? "npm.cmd" : "npm", args, {
@@ -267,7 +277,7 @@ function runOwnTest(app, name) {
     console.log(`  test  ${name}: not shipped (the tarball carries no test tree); the probe is the install's proof`)
     return true
   }
-  const npmCli = process.env.npm_execpath
+  const npmCli = npmExecpath()
   const result = npmCli
     ? spawnSync(process.execPath, [npmCli, "test"], { cwd: dir, stdio: "inherit" })
     : spawnSync(process.platform === "win32" ? "npm.cmd" : "npm", ["test"], {

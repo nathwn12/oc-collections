@@ -49,11 +49,11 @@
   "scripts": {
     "compile": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "pretest": "npm run compile",
+    "pretest": "bun run compile",
     "test": "node --test test/*.test.js",
-    "check": "npm run typecheck && npm run compile && npm run test",
+    "check": "bun run typecheck && bun run compile && bun run test",
     "vendor:update": "node scripts/vendor-update.mjs",
-    "prepublishOnly": "npm run check"
+    "prepublishOnly": "bun run check"
   },
   "peerDependencies": {
     "@opencode/plugin": ">=2.2.6 <3"

@@ -159,7 +159,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.4
 
       - name: Derive the package version
         # The same derivation the plan ran, against this job's tree. A refusal
@@ -227,14 +227,14 @@ jobs:
         uses: actions/cache@v4
         with:
           path: node_modules
-          key: ${{ runner.os }}-node-${{ hashFiles('package-lock.json') }}
+          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
           restore-keys: |
-            ${{ runner.os }}-node-
+            ${{ runner.os }}-bun-
 
       - name: Install dependencies
         if: ${{ env.REFUSED != '1' && env.SKIP != '1' && steps.cache-node.outputs.cache-hit != 'true' }}
         shell: pwsh
-        run: npm ci
+        run: bun install --frozen-lockfile
 
       - name: Close the changelog at the derived version
         # Before the pack, in the runner only: the tarball ships a changelog

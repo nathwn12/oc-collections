@@ -123,15 +123,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
 
-      # oc-flight-deck's check is `bun run typecheck && bun test`, so bun is
-      # a gate dependency for that leg only, pinned to the version the
-      # release workflow already runs.
+      # bun is the package manager and a gate dependency for every leg: the
+      # workspace scripts invoke `bun run`, and oc-flight-deck's check is
+      # `bun run typecheck && bun test`. Pinned to the version the root
+      # manifest's `packageManager` names.
       - uses: oven-sh/setup-bun@v2
-        if: matrix.package == 'oc-flight-deck'
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.4
 
       - name: Toolchain versions
         # Logged, never asserted: when a leg goes red, the first question is
@@ -139,13 +138,13 @@ jobs:
         run: |
           node --version
           npm --version
-          if (Get-Command bun -ErrorAction SilentlyContinue) { bun --version }
+          bun --version
 
       - name: Install workspaces
         # The root manifest declares no dependencies, and each workspace's
         # check resolves its bins through the hoisted root node_modules
-        # that `npm ci` builds from package-lock.json.
-        run: npm ci
+        # that `bun install` builds from bun.lock.
+        run: bun install --frozen-lockfile
 
       - name: Check ${{ matrix.package }}
         env:
@@ -168,12 +167,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
 
-      # Only janua: the root gate covers every workspace on Windows, and this
-      # job exists to exercise this package's POSIX pipe path.
-      - name: Install janua workspace
-        run: npm ci --workspace @nathwn12/janua
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+
+      # bun installs the whole workspace; this job still runs only janua's
+      # POSIX pipe path, which a Windows run cannot reach.
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
 
       - name: Run POSIX pipe and upgrade tests
         working-directory: packages/janua
