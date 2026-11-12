@@ -146,3 +146,36 @@ test("runPreflight: an unknown flag is a usage error, not a green run", async ()
   assert.equal(result.exitCode, 2)
   assert.equal(steps.length, 0)
 })
+
+/** Peak overlap of package legs: 1 proves the default cannot starve a timing test. */
+async function peakConcurrency(argv) {
+  let active = 0
+  let peak = 0
+  const runner = async (step) => {
+    if (step.group !== "package") return { status: 0, output: "" }
+    active++
+    peak = Math.max(peak, active)
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    active--
+    return { status: 0, output: "" }
+  }
+  await runPreflight({ argv, root: "R", names: NAMES, changedPaths: [], runner, log: () => {} })
+  return peak
+}
+
+test("runPreflight: package legs run one at a time by default", async () => {
+  assert.equal(await peakConcurrency(["--all"]), 1)
+})
+
+test("runPreflight --jobs runs legs concurrently when asked", async () => {
+  assert.ok((await peakConcurrency(["--all", "--jobs", "3"])) > 1)
+})
+
+test("runPreflight: a bad --jobs is a usage error", async () => {
+  const { steps, runner } = recorder()
+  for (const argv of [["--all", "--jobs"], ["--all", "--jobs", "0"], ["--all", "--jobs", "x"]]) {
+    const result = await runPreflight({ argv, root: "R", names: NAMES, runner, log: () => {} })
+    assert.equal(result.exitCode, 2, `expected a usage error for ${argv.join(" ")}`)
+  }
+  assert.equal(steps.length, 0)
+})
