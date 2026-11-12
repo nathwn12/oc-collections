@@ -266,6 +266,18 @@ Adapted for monorepo truth on the way in, with no runtime change: `repository` n
 
 Rewired with it, in reverse of the removal: the workspace plan (`scripts/workspace-plan.mjs`: `check` runs the package's own `check`, `test` and a pack dry-run, `test` runs its test script), `package-lock.json` (regenerated offline; its two workspace entry blocks are back, and the regeneration also refreshed the three sibling workspace versions the committed lock still carried from before the release commit that bumped their manifests), the release allowlist (`scripts/release-target.mjs`) and its test, the dispatch choice list (`.github/workflows/release.yml`), the index-registry scope table (`scripts/index-registry.ps1`), the README install text and index row at `0.2.2`, the doc checker's scope and front-door map (`scripts/check-docs.mjs`), and the structural index self-test's synthetic tree and five-row expectations (`scripts/check-index.selftest.ps1`).
 
+## 2026-11-13 - removed: `packages/oc-stacked`
+
+The owner retired the package: it is dead, and it will not be revived. The directory is deleted from the tree, not archived beside it, because a second copy is what the retirement is meant to end.
+
+| Removed path | What it was | Why |
+| --- | --- | --- |
+| `packages/oc-stacked/` | the three-rung agent stack plugin imported from `nathwn12/oc-stacked` on 2026-11-10 at 0.4.0 | retired by the owner; private, never published, never to be revived |
+
+Rewired with it: the root workspace plan (`scripts/workspace-plan.mjs`, all three purposes), the root lockfile (`bun.lock`: its two workspace entry blocks), the structural index check's omission list (`scripts/check-index.ps1`, `$Omitted`), the Retired repositories note below, and this changelog. Git history retains the removed tree at `8d833a8`; `git log -- packages/oc-stacked` is the only surviving copy.
+
+Nothing else named it: the package was already absent from the release allowlist, the dispatch choice list, the index-registry scope table, the doc checker's scope and front-door map, and the structural index self-test (which reads the package inventory rather than listing it). The repo releases the same seven packages as before.
+
 ## Retired repositories
 
 The four published packages - `@nathwn12/oc-bifrost`, `oc-flight-deck`, `oc-harness-setup`, `rea-shim` - build, tag and publish from `oc-collections` only. Their former repositories - `nathwn12/oc-bifrost`, `nathwn12/oc-flight-deck`, `nathwn12/oc-harness-setup`, `nathwn12/rea-shim` - are archived and private. `rea-shim` spent part of 2026-10-29 back on its own repository and returned here with the 0.2.2 source the same day. An archived repository stays readable, its npm metadata stays immutable, and nothing resolves it at install time.
@@ -276,7 +288,7 @@ The four published packages - `@nathwn12/oc-bifrost`, `oc-flight-deck`, `oc-harn
 
 **Where their launcher source lives now.** From 2026-11-10 the launcher is developed here, in `packages/oc-gladius/npm/` and `packages/oc-puppet/npm/`; those two repositories keep the Rust engine and the release lane that builds it. A launcher change therefore has to land here first and be carried to the release repo before that repo's next engine release - otherwise the engine either ships without the fix or with a launcher that no longer matches `engine-manifest.json`. `scripts/check-launchers.mjs` fails the root check when a launcher's version and its engine pin disagree, which is the failure that cost three red release runs on import day.
 
-`nathwn12/oc-stacked` stays public and is now the **older** of two copies: development moved to `packages/oc-stacked/` on 2026-11-10, and that repository has not been retired. Anyone opening it by habit would fork the plugin. Archiving it is the owner's call and has not been made; until it is, the monorepo copy is the source of record and the standalone checkout on disk is a backup.
+`nathwn12/oc-stacked` is the only copy that exists. Development moved into `packages/oc-stacked/` on 2026-11-10; the owner retired the package on 2026-11-13 and the monorepo copy was deleted (see the removal record above), so that public repository is what remains of the project, and nothing here develops or releases it. Whether that repository is archived is the owner's call and has not been made.
 
 ## Naming decisions - closed, not pending
 
@@ -284,6 +296,6 @@ These are settled so they stop resurfacing as open questions.
 
 - **`@nathwn12/janua` and `rea-shim` keep their npm names.** Both are published and installed. A rename would mean publishing a new name that CI cannot create (trusted publishing attests an existing package, so the first publish needs a manual OTP) and freezing the old name against updates - a cost paid by every `npx` user, for no gain on the surface anyone reads: the MCP keys and the sidebar rows are already `oc-janua` and `oc-rea`. The visible naming is done; the package names are identity, and identity changes are deprecations.
 - **`oc-phone-link` stays where it is.** It is installed as a plain directory under `~/.config/opencode/plugins/`, has no source repository and is not on npm. Moving it into the collection would create a second copy with no history and no tests to hold it, which is the divergence this repo exists to avoid. It works in place; it is recorded here.
-- **`oc-stacked` and `oc-graphify` are private and stay unreleased** until the owner explicitly opens the release line. `resolvePackage` refuses a private package by name, and `scripts/check-launchers.mjs` fails the root check if one is admitted to `ALLOWED`.
+- **`oc-graphify` stays private and never ships to npm.** The owner ruled it is kept in the repository and never released, so it is not in `ALLOWED` and will not be admitted: it is developed in-tree and installed by junction. `resolvePackage` refuses a private package by name, and `scripts/check-launchers.mjs` fails the root check if one is admitted to `ALLOWED`.
 
 Published packages' older versions still name their original repositories in immutable npm metadata; that is historical, not a fetch target.

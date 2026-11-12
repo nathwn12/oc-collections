@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Retired `packages/oc-stacked` on the owner's ruling and deleted it: the directory, its three `scripts/workspace-plan.mjs` entries, its two `bun.lock` workspace blocks, its `$Omitted` entry in `scripts/check-index.ps1`, and the two `MIGRATIONS.md` passages that described it as a live copy. It was already absent from the release allowlist, the dispatch choice list, the index-registry scope table, the doc checker's map and the structural self-test, so the repo releases the same seven packages. `oc-graphify` stays in the tree and stays off npm; `MIGRATIONS.md` now records that as a ruling rather than an open release line. No version moved and nothing is published by this commit.
+
 - Imported three repositories into the workspace: `oc-stacked` (branch `master`, HEAD `67eeef4`), `oc-puppet` (`8eb1c2d`) and `oc-gladius` (`abba9b1`), the last two by `git subtree`, history included. Two were renamed on the way in: `puppet-mcp@7.0.2` -> `oc-puppet`, `gladius-mcp@0.7.1` -> `oc-gladius`; both old names stay on npm frozen rather than disappearing. Their npx launcher manifests moved from `npm/package.json` to the package root so each directory is a valid workspace, with `bin` and `files` pointing into `npm/` and no source file moved. `MIGRATIONS.md` records the same facts.
 
 - Kept private packages out of the release allowlist: `oc-stacked` is `private: true` and a private package inside `ALLOWED` aborts the whole plan at `resolvePackage`, so one plugin commit would have blocked every other release. Privacy is now expressed by omission from `ALLOWED` plus the flag; the allowlist guard moves to nine names.

@@ -98,13 +98,6 @@
         "oc-puppet": "./npm/bin/puppet-mcp.js",
       },
     },
-    "packages/oc-stacked": {
-      "name": "oc-stacked",
-      "version": "0.4.0",
-      "bin": {
-        "stack": "./bin/stack.js",
-      },
-    },
     "packages/oc-talk": {
       "name": "oc-talk",
       "version": "0.2.2",
@@ -698,8 +691,6 @@
     "oc-plugin-view": ["oc-plugin-view@workspace:packages/oc-plugin-view"],
 
     "oc-puppet": ["oc-puppet@workspace:packages/oc-puppet"],
-
-    "oc-stacked": ["oc-stacked@workspace:packages/oc-stacked"],
 
     "oc-talk": ["oc-talk@workspace:packages/oc-talk"],
 
