@@ -245,19 +245,28 @@ test('setup: registers the three request hooks on a host that offers them', () =
   }
 })
 
-test('setup: injecting puts the block once, in front of the first user message', { skip: !hasHost }, () => {
-  const hooks = new Map();
-  plugin.setup({ session: { hook: (name, fn) => hooks.set(name, fn) } });
-  const inject = hooks.get('context');
-  const event = { sessionID: 'ses_x', messages: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }] };
+test('setup: injecting puts the block once, in front of the first user message', () => {
+  // Injection is package behaviour, not a fact about this machine: a fixture
+  // atlas with no graph still renders the block, so no host install is needed.
+  const previous = process.env.OC_GRAPHIFY_CONFIG
+  process.env.OC_GRAPHIFY_CONFIG = tmp('inject-config.json', JSON.stringify({ atlas: path.join(os.tmpdir(), 'atlas') }))
+  try {
+    const hooks = new Map();
+    plugin.setup({ session: { hook: (name, fn) => hooks.set(name, fn) } });
+    const inject = hooks.get('context');
+    const event = { sessionID: 'ses_x', messages: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }] };
 
-  inject(event);
-  assert.equal(event.messages[0].content.length, 2);
-  assert.ok(event.messages[0].content[0].text.startsWith(MARKER));
-  assert.equal(event.messages[0].content[1].text, 'hello');
+    inject(event);
+    assert.equal(event.messages[0].content.length, 2);
+    assert.ok(event.messages[0].content[0].text.startsWith(MARKER));
+    assert.equal(event.messages[0].content[1].text, 'hello');
 
-  inject(event); // the marker already travels: no second copy
-  assert.equal(event.messages[0].content.length, 2);
+    inject(event); // the marker already travels: no second copy
+    assert.equal(event.messages[0].content.length, 2);
+  } finally {
+    if (previous === undefined) delete process.env.OC_GRAPHIFY_CONFIG
+    else process.env.OC_GRAPHIFY_CONFIG = previous
+  }
 });
 
 test('setup: a host without the hook, a hostile ctx, and no config are all silent', () => {
