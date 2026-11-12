@@ -54,7 +54,7 @@
     "compile": "bun scripts/build.ts",
     "check": "bun run typecheck && bun test",
     "check:dist": "bun run compile && git diff --exit-code -- dist",
-    "prepublishOnly": "bun run check && bun run compile"
+    "prepublishOnly": "node ../../scripts/check-version-cell.mjs . && bun run check && bun run compile"
   },
   "publishConfig": {
     "access": "public"

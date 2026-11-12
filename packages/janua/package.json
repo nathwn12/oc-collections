@@ -17,6 +17,7 @@
     "janua": "bin/janua.js"
   },
   "scripts": {
+    "prepublishOnly": "node ../../scripts/check-version-cell.mjs .",
     "test": "node --test \"test/**/*.test.js\"",
     "check": "node --check bin/janua.js && node --check bin/janua-cli.js && node --check lib/ansi.js && node --check lib/cli.js && node --check lib/errors.js && node --check lib/ring.js && node --check lib/server.js && node --check lib/sessions.js && node --check lib/upgrade.js"
   },

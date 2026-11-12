@@ -41,7 +41,7 @@
   "scripts": {
     "check": "node --check src/transport.mjs && node --check src/index.js",
     "test": "node --test \"test/**/*.test.js\"",
-    "prepublishOnly": "bun run check && bun run test"
+    "prepublishOnly": "node ../../scripts/check-version-cell.mjs . && bun run check && bun run test"
   },
   "publishConfig": {
     "access": "public"
