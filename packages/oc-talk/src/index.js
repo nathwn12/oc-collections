@@ -250,17 +250,31 @@ function sleep(ms) {
   });
 }
 
-// The turn boundary, read rather than guessed: the newest message of type `idle`
-// marks the end of a turn. Poll until it appears or the budget runs out; a peer
-// that never idles reports timedOut:true and is never reported as done.
-async function waitForIdle(sessionID, waitMs) {
+// The id of the newest message in a session, or '' when it has none. Captured
+// before a send or a blocking read: the turn boundary that follows must be a
+// message this capture did not see.
+async function newestMessageID(sessionID) {
+  const r = await runApi(['session.message.list', '--param', 'sessionID=' + sessionID, '--param', 'limit=1']);
+  if (!r.ok) return { ok: false, code: r.code || 'backend_error', detail: r.detail || 'read failed' };
+  const rows = Array.isArray(r.json.data) ? r.json.data : [];
+  return { ok: true, id: (rows[0] && rows[0].id) || '' };
+}
+
+// The turn boundary, read rather than guessed: a message that was not there
+// before the caller acted, of type `idle`, marks the end of the turn that action
+// started. A bare `idle` is not enough — the session's previous boundary marker
+// is still the newest message until the new turn produces anything, and accepting
+// it would report a completion that never happened. Poll until both hold or the
+// budget runs out; a peer that never idles reports timedOut:true.
+async function waitForIdle(sessionID, waitMs, sinceID) {
   const start = Date.now();
   for (;;) {
     const r = await runApi(['session.message.list', '--param', 'sessionID=' + sessionID, '--param', 'limit=1']);
     if (!r.ok) return { ok: false, code: r.code || 'backend_error', detail: r.detail || 'read failed' };
     const rows = Array.isArray(r.json.data) ? r.json.data : [];
     const newest = rows[0];
-    if (newest && newest.type === 'idle') return { ok: true, timedOut: false, waitedMs: Date.now() - start };
+    const fresh = !!newest && newest.id !== sinceID;
+    if (fresh && newest.type === 'idle') return { ok: true, timedOut: false, waitedMs: Date.now() - start };
     if (Date.now() - start >= waitMs) return { ok: true, timedOut: true, waitedMs: Date.now() - start };
     await sleep(POLL_INTERVAL_MS);
   }
@@ -336,6 +350,17 @@ async function ensureTools(ctx) {
         if (!w.ok) return fail(w.error, w.reason);
         const t = await resolveTarget(args.session);
         if (!t.ok) return fail(t.error, t.reason, t.candidates, t.truncated);
+        // The baseline is read before the send: the turn boundary this call waits
+        // for must be a message that did not exist when the message was queued.
+        let baseline = '';
+        if (w.value > 0) {
+          const before = await newestMessageID(t.id);
+          if (!before.ok) {
+            if (before.code === 'session_not_found') return fail('session_not_found', 'session ' + t.id + ' is gone: ' + before.detail);
+            return fail(before.code, 'read failed: ' + before.detail);
+          }
+          baseline = before.id;
+        }
         const signal = context && context.signal;
         // The service types this field as a message id (`msg_...`): a fresh one per
         // send keeps the admission idempotent without ever replaying a real one.
@@ -348,7 +373,7 @@ async function ensureTools(ctx) {
         const d = r.json.data || {};
         const out = { id: d.id || '', sessionID: d.sessionID || t.id, title: t.title || '', delivered: true };
         if (w.value > 0) {
-          const waited = await waitForIdle(t.id, w.value * 1000);
+          const waited = await waitForIdle(t.id, w.value * 1000, baseline);
           if (!waited.ok) {
             if (waited.code === 'session_not_found') return fail('session_not_found', 'session ' + t.id + ' is gone: ' + waited.detail);
             return fail(waited.code, 'wait failed: ' + waited.detail);
@@ -400,16 +425,26 @@ async function ensureTools(ctx) {
         if (!t.ok) return fail(t.error, t.reason, t.candidates, t.truncated);
         const out = {};
         if (w.value > 0) {
-          const waited = await waitForIdle(t.id, w.value * 1000);
+          // Same baseline rule as a blocking send: the boundary must be a message
+          // this call did not already see.
+          const before = await newestMessageID(t.id);
+          if (!before.ok) {
+            if (before.code === 'session_not_found') return fail('session_not_found', 'session ' + t.id + ' is gone: ' + before.detail);
+            return fail(before.code, 'read failed: ' + before.detail);
+          }
+          const waited = await waitForIdle(t.id, w.value * 1000, before.id);
           if (!waited.ok) {
             if (waited.code === 'session_not_found') return fail('session_not_found', 'session ' + t.id + ' is gone: ' + waited.detail);
             return fail(waited.code, 'wait failed: ' + waited.detail);
           }
           out.timedOut = waited.timedOut;
         }
-        // A message id is satisfied from the page itself (everything newer than
-        // it); anything else the caller passes is an opaque cursor and goes to the
-        // server verbatim. Never construct a cursor, never mix it with `order`.
+        // Dispatch on shape, never on absence: a `msg_` value is a message id and
+        // must be found on the page it is read against — silently treating a
+        // missing id as a cursor pages somewhere the caller never asked for.
+        // Anything else is an opaque cursor and goes to the server verbatim, with
+        // the same `type` filter, never combined with `order`.
+        const isMessageID = args.since !== undefined && /^msg_/.test(args.since);
         const listArgs = ['session.message.list', '--param', 'sessionID=' + t.id, '--param', 'limit=' + limit];
         if (args.type !== undefined) listArgs.push('--param', 'type=' + args.type);
         const r = await runApi(listArgs, { signal: context && context.signal });
@@ -420,11 +455,22 @@ async function ensureTools(ctx) {
         const rows = Array.isArray(r.json.data) ? r.json.data : [];
         let kept = rows;
         if (args.since !== undefined) {
-          const at = rows.findIndex((m) => m && m.id === args.since);
-          if (at >= 0) {
+          if (isMessageID) {
+            const at = rows.findIndex((m) => m && m.id === args.since);
+            if (at < 0) {
+              return {
+                content: JSON.stringify({
+                  error: 'since_not_on_page',
+                  reason: 'message ' + args.since + ' is not in this page of ' + rows.length + ' message(s)',
+                  hint: 'page further with cursor from a previous talk_inbox, or pass that cursor as since',
+                }),
+              };
+            }
             kept = rows.slice(0, at);
           } else {
-            const paged = await runApi(['session.message.list', '--param', 'sessionID=' + t.id, '--param', 'limit=' + limit, '--param', 'cursor=' + args.since], { signal: context && context.signal });
+            const pagedArgs = ['session.message.list', '--param', 'sessionID=' + t.id, '--param', 'limit=' + limit, '--param', 'cursor=' + args.since];
+            if (args.type !== undefined) pagedArgs.push('--param', 'type=' + args.type);
+            const paged = await runApi(pagedArgs, { signal: context && context.signal });
             if (!paged.ok) {
               if (paged.code === 'session_not_found') return fail('session_not_found', 'session ' + t.id + ' is gone: ' + paged.detail);
               return fail(paged.code, 'read failed: ' + paged.detail);

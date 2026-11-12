@@ -304,15 +304,21 @@ test('talk_send is fire-and-forget by default and reports timedOut only when ask
   assert.equal(plain.timedOut, undefined, 'no wait, no polling');
   assert.equal(plain.messages, undefined);
 
-  // A blocking send polls the newest message until the turn boundary marker.
+  // A blocking send polls the newest message until the turn boundary marker that
+  // follows the send: the marker already there before it must not count.
   const mod = await load();
   const calls = [];
+  let posted = false;
   mod.setApiRunner(async (args) => {
     calls.push(args);
     const [verb] = args;
     if (verb === 'session.get') return { ok: true, json: { data: { id: 'ses_a', title: 'active work' } } };
-    if (verb === 'post') return { ok: true, json: { data: { id: 'msg_sent', sessionID: 'ses_a' } } };
-    return { ok: true, json: { data: [{ id: 'msg_idle', type: 'idle', time: { created: 6000 } }] } };
+    if (verb === 'post') {
+      posted = true;
+      return { ok: true, json: { data: { id: 'msg_sent', sessionID: 'ses_a' } } };
+    }
+    // Before the send the session already sits at a boundary; after it, a new one.
+    return { ok: true, json: { data: [{ id: posted ? 'msg_new_idle' : 'msg_prev_idle', type: 'idle', time: { created: 6000 } }] } };
   });
   const { ctx, added } = host();
   await mod.default.setup(ctx);
@@ -321,6 +327,26 @@ test('talk_send is fire-and-forget by default and reports timedOut only when ask
   assert.equal(waited.timedOut, false);
   assert.ok(typeof waited.waitedMs === 'number');
   assert.deepEqual(waited.messages.map((m) => m.role), ['idle']);
+});
+
+test('a turn boundary that predates the send never counts as completion', async () => {
+  const mod = await load();
+  mod.setApiRunner(async (args) => {
+    const [verb, target] = args;
+    if (verb === 'session.get') return { ok: true, json: { data: { id: 'ses_a', title: 'active work' } } };
+    if (verb === 'post' && String(target).endsWith('/prompt')) {
+      return { ok: true, json: { data: { id: 'msg_sent', sessionID: 'ses_a' } } };
+    }
+    // The session's previous boundary marker, and nothing newer: the queued
+    // message has not been acted on, so this is not completion.
+    return { ok: true, json: { data: [{ id: 'msg_prev_idle', type: 'idle', time: { created: 1 } }] } };
+  });
+  const { ctx, added } = host();
+  await mod.default.setup(ctx);
+  const out = JSON.parse((await added.find((t) => t.name === 'talk_send').execute({ session: 'ses_a', text: 'hi', wait: 0.3 }, CALLER)).content);
+  assert.equal(out.delivered, true);
+  assert.equal(out.timedOut, true, 'an idle marker older than the send is not the turn ending');
+  assert.ok(typeof out.waitedMs === 'number' && out.waitedMs >= 0);
 });
 
 test('a peer that never reaches a turn boundary reports timedOut:true, never success', async () => {
@@ -391,12 +417,22 @@ test('talk_inbox filters with since, forwards type and pages with a cursor', asy
   assert.ok(read.includes('type=assistant'));
   assert.ok(read.includes('limit=5'));
 
-  // An opaque cursor goes to the server verbatim, alone.
+  // An opaque cursor goes to the server verbatim, alone, with the same type filter.
   calls.length = 0;
-  await tool.execute({ session: 'ses_a', since: 'opaque-token' }, CALLER);
+  await tool.execute({ session: 'ses_a', since: 'opaque-token', type: 'assistant' }, CALLER);
   const paged = calls.filter((a) => a[0] === 'session.message.list').pop();
   assert.ok(paged.includes('cursor=opaque-token'));
+  assert.ok(paged.includes('type=assistant'), 'the cursor page keeps the type filter');
   assert.ok(!paged.some((a) => String(a).startsWith('order=')));
+
+  // A message id is a message id: if it is not on the page, that is a typed
+  // failure, never a silent reinterpretation as a cursor.
+  calls.length = 0;
+  const missing = JSON.parse((await tool.execute({ session: 'ses_a', since: 'msg_not_here' }, CALLER)).content);
+  assert.equal(missing.error, 'since_not_on_page');
+  assert.match(missing.reason, /msg_not_here is not in this page/);
+  assert.match(missing.hint, /cursor/);
+  assert.equal(calls.filter((a) => a[0] === 'session.message.list').length, 1, 'a message id never triggers a cursor page');
 });
 
 test('descriptions stay at three sentences or fewer', async () => {
