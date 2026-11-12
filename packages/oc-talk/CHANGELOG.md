@@ -5,19 +5,6 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Added
-
-- `session_ask`: send one question and wait until the peer idles, bounded by `waitMs`, returning only the assistant messages after the accepted `askedMessageID` up to the next user message.
-- `session_wait`: block until a peer idles without sending anything, giving up after `waitMs` with `timedOut: true`.
-- `session_reply`: answer the asker with `text` carrying `re` as `metadata.re`, merged with an optional caller-supplied `metadata` object.
-- `session_thread`: read one exchange as an ordered both-sides view from a `messageID`, stopping before the next user message.
-- `session_broadcast`: ask one question of many peers at once and return one row per target with its answer or its error, never a rejected batch.
-- `parentID` on `session_list`: list only one dispatcher's workers; rows carry `parentID`, empty for a top-level session.
-- `metadata` on `session_send` (and on `session_ask`, `session_reply` and `session_broadcast`): an optional object carried in the prompt body so the peer can see who sent it and which message it answers.
-- `cursor` and `since` on `session_read`: page forward with an opaque cursor or keep only newer messages by id or `created` timestamp; rows now carry `metadata`, `outcome`, `finish` and `completed` where sent, and return `{ messages, cursor }` when either is given.
-
 ## [0.3.0] - 2026-11-13
 
 The surface is two tools. Everything else is gone, and the backend is the local
@@ -36,7 +23,7 @@ service over HTTP instead of one CLI child per call.
 
 ### Removed
 
-- The eleven lifecycle and conversation tools (`session_list`, `session_send`, `session_read`, `session_close`, `session_open`, `session_kick`, `session_park`, `session_kill`, `session_ask`, `session_wait`, `session_reply`, `session_thread`, `session_broadcast`), the `done` title lock and its prefix state machine, and `docs/GUIDE.md`, which documented that surface.
+- The thirteen lifecycle and conversation tools (`session_list`, `session_send`, `session_read`, `session_close`, `session_open`, `session_kick`, `session_park`, `session_kill`, `session_ask`, `session_wait`, `session_reply`, `session_thread`, `session_broadcast`), the `done` title lock and its prefix state machine, and `docs/GUIDE.md`, which documented that surface.
 
 ## [0.1.8] - 2026-11-02
 
