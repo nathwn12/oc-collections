@@ -122,7 +122,7 @@ export default {
         }
       };
 
-      // The three request shapes oc-stacked already proves on this host; a host
+      // The three request shapes this host already proves; a host
       // that rejects one keeps the others because the registration is per hook.
       for (const hook of ['context', 'compaction', 'generate']) {
         try {

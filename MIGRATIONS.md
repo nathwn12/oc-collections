@@ -288,7 +288,7 @@ The four published packages - `@nathwn12/oc-bifrost`, `oc-flight-deck`, `oc-harn
 
 **Where their launcher source lives now.** From 2026-11-10 the launcher is developed here, in `packages/oc-gladius/npm/` and `packages/oc-puppet/npm/`; those two repositories keep the Rust engine and the release lane that builds it. A launcher change therefore has to land here first and be carried to the release repo before that repo's next engine release - otherwise the engine either ships without the fix or with a launcher that no longer matches `engine-manifest.json`. `scripts/check-launchers.mjs` fails the root check when a launcher's version and its engine pin disagree, which is the failure that cost three red release runs on import day.
 
-`nathwn12/oc-stacked` is the only copy that exists. Development moved into `packages/oc-stacked/` on 2026-11-10; the owner retired the package on 2026-11-13 and the monorepo copy was deleted (see the removal record above), so that public repository is what remains of the project, and nothing here develops or releases it. Whether that repository is archived is the owner's call and has not been made.
+`nathwn12/oc-stacked` is the only copy that exists. Development moved into `packages/oc-stacked/` on 2026-11-10; the owner retired the package on 2026-11-13 and the monorepo copy was deleted (see the removal record above), so that public repository is what remains of the project, and nothing here develops or releases it. It is archived on GitHub.
 
 ## Naming decisions - closed, not pending
 
