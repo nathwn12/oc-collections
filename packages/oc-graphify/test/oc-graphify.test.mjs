@@ -39,7 +39,6 @@ const PKG = path.join(HERE, '..');
 const REPO = path.join(HERE, '..', '..', '..');
 const CONFIG = configPath();
 const HOST = path.dirname(CONFIG);
-const INSTALLED = path.join(HOST, 'plugins', 'oc-graphify');
 const VENDOR = path.join(HOST, 'plugins', 'graphify.js');
 const hasHost = fs.existsSync(CONFIG);
 
@@ -399,12 +398,30 @@ test('live: AGENTS.md and graphify.json name the same atlas', { skip: !hasHost |
   assert.ok(agents.includes(config.atlas), `AGENTS.md does not name ${config.atlas}: one of the two records drifted`);
 });
 
-test('live: the installed plugin resolves back to this package', { skip: !fs.existsSync(INSTALLED) }, () => {
-  assert.equal(
-    fs.realpathSync(INSTALLED).toLowerCase(),
-    fs.realpathSync(PKG).toLowerCase(),
-    `${INSTALLED} does not resolve to ${PKG}; a copy shadows the repository`,
-  );
+test('install: the host layout resolves back to this package', () => {
+  // The host derives the install path from the config file it reads, and a
+  // junction there must land on this package. A fixture reproduces that shape,
+  // so this asserts the resolution rule on a clean runner that has no host.
+  const host = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-graphify-host-'));
+  const config = configPath({ OC_GRAPHIFY_CONFIG: path.join(host, 'graphify.json') });
+  const installed = path.join(path.dirname(config), 'plugins', 'oc-graphify');
+  fs.mkdirSync(path.dirname(installed), { recursive: true });
+  fs.symlinkSync(PKG, installed, 'junction');
+  try {
+    assert.equal(
+      fs.realpathSync(installed).toLowerCase(),
+      fs.realpathSync(PKG).toLowerCase(),
+      `${installed} does not resolve to ${PKG}; a copy shadows the repository`,
+    );
+  } finally {
+    // rmdirSync drops a junction itself; recursive remove would walk into PKG.
+    try {
+      fs.rmdirSync(installed);
+    } catch {
+      /* already gone */
+    }
+    fs.rmSync(host, { recursive: true, force: true });
+  }
 });
 
 test('live: the vendor reminder plugin is not installed beside this one', { skip: !hasHost }, () => {
