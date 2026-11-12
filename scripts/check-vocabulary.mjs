@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // check-vocabulary.mjs - the one definition of the index's internal-vocabulary guard.
 //
-// CI and `npm run check` both run this file, so the local gate and the PR gate
+// CI and `bun run check` both run this file, so the local gate and the PR gate
 // cannot disagree about which names are retired. The two pattern classes and the
 // excluded path are the ones the workflow carried inline; bracketed classes keep
 // the retired names out of this file's own text.

@@ -8,7 +8,7 @@
  * the derivation says so. The commit range is `<base>..HEAD`, scoped to the
  * paths that package owns:
  *
- *   git log --no-merges -z --format='%H%x09%s%x09%b' <base>..HEAD -- <dir> package-lock.json
+ *   git log --no-merges -z --format='%H%x09%s%x09%b' <base>..HEAD -- <dir> bun.lock
  *
  * `-z` terminates each record with NUL so a multi-line body cannot be confused
  * with the next commit; the format string is otherwise the one the lane names.
@@ -128,7 +128,7 @@ function git(args, root = ROOT) {
 
 // The root lockfile is the one path outside a package directory that can carry
 // a package's version, so it is the one extra pathspec a package's range names.
-const LOCKFILE = "package-lock.json"
+const LOCKFILE = "bun.lock"
 
 function refusal(code, message) {
   return { code, message }
@@ -177,6 +177,64 @@ export function readCommits(baseRef, paths = null, root = ROOT) {
   return { range, paths: paths ?? [], commits }
 }
 
+/**
+ * The text of one `workspaces` entry in bun.lock, brace-matched from its key so
+ * a brace inside a value cannot end it early. bun.lock is JSONC - bun writes
+ * trailing commas - so the cell is read and written as text: re-serialising the
+ * whole tree would rewrite 900 lines to move one version.
+ */
+function workspaceEntry(text, dir) {
+  const section = text.indexOf('"workspaces"')
+  if (section < 0) return null
+  const key = `"${dir}":`
+  const at = text.indexOf(key, section)
+  if (at < 0) return null
+  const open = text.indexOf("{", at + key.length)
+  if (open < 0) return null
+  let depth = 0
+  let inString = false
+  for (let i = open; i < text.length; i++) {
+    const ch = text[i]
+    if (inString) {
+      if (ch === "\\") i += 1
+      else if (ch === '"') inString = false
+      continue
+    }
+    if (ch === '"') inString = true
+    else if (ch === "{") depth += 1
+    else if (ch === "}") {
+      depth -= 1
+      if (depth === 0) return { start: open, end: i + 1, text: text.slice(open, i + 1) }
+    }
+  }
+  return null
+}
+
+/** The version cell a bun.lock workspace entry carries, or null when the
+ *  lockfile is not there, does not name that directory, or names no version. */
+export function lockVersion(text, dir) {
+  const entry = workspaceEntry(text, dir)
+  if (!entry) return null
+  const cell = entry.text.match(/"version"\s*:\s*"([^"]+)"/)
+  return cell ? cell[1] : null
+}
+
+/**
+ * Rewrite one bun.lock workspace entry's version cell, byte-identical
+ * everywhere else. A missing entry or cell throws: a lockfile the lane cannot
+ * read is a refusal, never a silent skip.
+ */
+export function setLockVersion(text, dir, version) {
+  if (!VERSION_RE.test(String(version))) throw new Error(`"${version}" is not X.Y.Z`)
+  const entry = workspaceEntry(text, dir)
+  if (!entry) throw new Error(`bun.lock has no workspaces["${dir}"] entry`)
+  const cell = entry.text.match(/"version"\s*:\s*"[^"]+"/)
+  if (!cell) throw new Error(`bun.lock workspaces["${dir}"] carries no version cell`)
+  const updated = entry.text.replace(cell[0], `"version": "${version}"`)
+  if (updated === entry.text) return text
+  return text.slice(0, entry.start) + updated + text.slice(entry.end)
+}
+
 /** The lockfile's version cell for one package directory in one commit, or null
  *  when the commit has no lockfile or no entry for that directory. */
 function lockCellVersion(ref, dir, root) {
@@ -187,8 +245,7 @@ function lockCellVersion(ref, dir, root) {
     return null
   }
   try {
-    const cell = JSON.parse(raw).packages?.[dir]?.version
-    return typeof cell === "string" ? cell : null
+    return lockVersion(raw, dir)
   } catch {
     return null
   }
@@ -601,14 +658,13 @@ export function writeCells(name, version) {
     changes.push("README.md")
   }
 
-  const lockPath = path.join(ROOT, "package-lock.json")
-  const lock = JSON.parse(fs.readFileSync(lockPath, "utf8"))
-  const locked = lock.packages?.[dir]
-  if (!locked) throw new Error(`package-lock.json has no packages["${dir}"] entry`)
-  if (locked.version !== version) {
-    locked.version = version
-    fs.writeFileSync(lockPath, JSON.stringify(lock, null, 2) + "\n")
-    changes.push("package-lock.json")
+  const lockPath = path.join(ROOT, LOCKFILE)
+  const lock = fs.readFileSync(lockPath, "utf8")
+  const locked = lockVersion(lock, dir)
+  if (locked === null) throw new Error(`bun.lock has no workspaces["${dir}"].version cell`)
+  if (locked !== version) {
+    fs.writeFileSync(lockPath, setLockVersion(lock, dir, version))
+    changes.push(LOCKFILE)
   }
 
   return { name, version, dir, changes }
@@ -638,10 +694,9 @@ export function assertCells(name, version) {
     if (cell !== version) problems.push(`README.md ${label} version cell ${cell} != ${version}`)
   }
 
-  const lock = JSON.parse(fs.readFileSync(path.join(ROOT, "package-lock.json"), "utf8"))
-  const locked = lock.packages?.[dir]?.version ?? null
-  cells.push({ cell: "lockfile", path: `package-lock.json packages["${dir}"].version`, value: locked })
-  if (locked !== version) problems.push(`package-lock.json packages["${dir}"].version ${locked} != ${version}`)
+  const locked = lockVersion(fs.readFileSync(path.join(ROOT, LOCKFILE), "utf8"), dir)
+  cells.push({ cell: "lockfile", path: `${LOCKFILE} workspaces["${dir}"].version`, value: locked })
+  if (locked !== version) problems.push(`${LOCKFILE} workspaces["${dir}"].version ${locked} != ${version}`)
 
   return { name, version, cells, problems, ok: problems.length === 0 }
 }
@@ -1084,12 +1139,13 @@ const FIXTURE_PACKAGES = [
   { dir: "rea-shim", name: "rea-shim", scoped: false },
 ]
 const FIXTURE_LOCK = {
-  name: "fixture-root",
-  lockfileVersion: 3,
-  packages: Object.fromEntries([
+  lockfileVersion: 2,
+  configVersion: 0,
+  workspaces: Object.fromEntries([
     ["", { name: "fixture-root" }],
     ...FIXTURE_PACKAGES.map((pkg) => [`packages/${pkg.dir}`, { name: pkg.name, version: FIXTURE_BASE }]),
   ]),
+  packages: Object.fromEntries(FIXTURE_PACKAGES.map((pkg) => [pkg.name, [`${pkg.name}@workspace:packages/${pkg.dir}`]])),
 }
 
 /** The fixture lockfile with one deliberate edit, as the bytes a commit carries. */
@@ -1164,7 +1220,7 @@ const GIT_CASES = [
         subject: "fix(janua): sync the lockfile",
         files: {
           [LOCKFILE]: fixtureLock((lock) => {
-            lock.packages["packages/janua"].version = "0.1.1"
+            lock.workspaces["packages/janua"].version = "0.1.1"
           }),
         },
       },
@@ -1178,7 +1234,7 @@ const GIT_CASES = [
         subject: "fix(rea-shim): add a dependency",
         files: {
           [LOCKFILE]: fixtureLock((lock) => {
-            lock.packages["packages/rea-shim"].dependencies = { "left-pad": "^1.0.0" }
+            lock.workspaces["packages/rea-shim"].dependencies = { "left-pad": "^1.0.0" }
           }),
         },
       },

@@ -27,13 +27,19 @@ The registry half is the post-publish check (`--registry`): it verifies every li
 Check the packages from the repo root:
 
 ```sh
-npm install
-npm run check
+bun install --frozen-lockfile
+bun run check
 ```
 
-`npm run check` runs every package's own check (typecheck, compile, tests) and exits `0` only when every package is green.
+`bun run check` runs every package's own check (typecheck, compile, tests) and exits `0` only when every package is green. One workspace runs on its own with `bun run --cwd packages/<name> <script>`.
 
-A repeat run reuses `.cache/checks` keyed on exact inputs; through npm disable with `OC_CHECK_CACHE=0` — the npm `--no-cache` spellings are consumed by npm and must not be used.
+A repeat run reuses `.cache/checks` keyed on exact inputs; set `OC_CHECK_CACHE=0` to disable it.
+
+Updating from npm: delete the npm lockfile and `node_modules`, then install with bun.
+```sh
+rm -f package-lock.json && rm -rf node_modules
+bun install
+```
 
 ## Layout
 

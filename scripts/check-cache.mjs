@@ -2,7 +2,7 @@
 /**
  * Green-check cache for `node scripts/workspace-run.mjs check`.
  *
- * A repeat `npm run check` on an unchanged tree should cost seconds. Each
+ * A repeat `bun run check` on an unchanged tree should cost seconds. Each
  * workspace's entry lives at `.cache/checks/<workspace>.json` and holds the
  * key of the last green run. The key is a sha256 over, in a stable order:
  * every file path plus its bytes under the package (skipping `node_modules`,

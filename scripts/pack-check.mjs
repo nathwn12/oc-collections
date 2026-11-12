@@ -8,7 +8,7 @@
  *   - every declared entry point (main, bin, exports targets) is present,
  *   - every `files` entry exists in the tarball (catches a dist-less pack).
  *
- * The sanctioned path is `npm run pack:check`, which runs check + build first;
+ * The sanctioned path is `bun run pack:check`, which runs check + build first;
  * a bare `npm pack` can still produce a dist-less tarball (this guard only
  * reports it, it cannot intercept a direct npm invocation). A release leg
  * verifies one package: `node scripts/pack-check.mjs --package <name>`.
