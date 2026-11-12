@@ -1,7 +1,7 @@
 {
   "name": "oc-talk",
-  "version": "0.2.2",
-  "description": "Cross-session talk for any OpenCode harness: list live sessions, send one message to a peer, and read its reply back.",
+  "version": "0.3.0",
+  "description": "Cross-session talk for any OpenCode harness: send one message into a peer session and read what it said.",
   "keywords": [
     "opencode",
     "opencode-plugin",
@@ -39,7 +39,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "check": "node --check src/index.js",
+    "check": "node --check src/transport.mjs && node --check src/index.js",
     "test": "node --test \"test/**/*.test.js\"",
     "prepublishOnly": "bun run check && bun run test"
   },
