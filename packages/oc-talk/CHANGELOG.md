@@ -5,6 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-11-13
+
+The registry's `0.4.0` is the build before the correction; this release carries the correction.
+
+### Fixed
+
+- `0.4.0` shipped the delivery classifier with a trigger set that fired on bare words, so ordinary handoffs — "don't forget the changelog", "use pnpm instead of npm here" — were steered into a peer's running turn. That trigger set is replaced by two tight tiers and a veto list that beats both: a short message that opens with a halt command, or one that carries an unambiguous correction phrase anywhere, steers; deferring, temporal and substitutional phrasing vetoes both tiers and always queues.
+- Marker stripping is correct on a Markdown link: `[queue](https://example.com)` is delivered byte for byte, because a marker is routing only when it is followed by whitespace or the end of the text.
+- A body that is only a marker is a typed `bad_request` naming the real problem — there is nothing to deliver — instead of admitting an empty message into the peer.
+- A positive `wait` always queues, even with an explicit `delivery: "steer"` or a `[steer]` marker, so the wait reads the boundary after the queued message rather than a boundary reached before a steered message was ever processed.
+
 ## [0.4.0] - 2026-11-13
 
 The lane is chosen, not fixed: a correction reaches the peer inside its turn, and a handoff still waits for the next one.

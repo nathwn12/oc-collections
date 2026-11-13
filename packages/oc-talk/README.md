@@ -7,7 +7,7 @@ Gives an agent two tools to talk across sessions: put a message into another ses
 The package is published on npm as `oc-talk`, and OpenCode installs it from the registry: add it to the `plugins` array in your `opencode.jsonc`.
 
 ```json
-{ "plugins": ["oc-talk@0.4.0"] }
+{ "plugins": ["oc-talk@0.4.1"] }
 ```
 
 Restart OpenCode. The plugin registers both tools when the session starts, and reaches the server OpenCode is already running over loopback HTTP.
