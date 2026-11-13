@@ -20,121 +20,35 @@ const WAIT_DEFAULT_SECONDS = 0;
 const WAIT_MAX_SECONDS = 600;
 const POLL_INTERVAL_MS = 250;
 
-// Delivery routing. `steer` reaches the target inside its current turn, at its
-// next step boundary; `queue` waits for that turn to end. `auto` is the default
-// and is the only value that has to be decided. A false steer interrupts a peer
-// mid-task and corrupts its turn; a false queue only costs latency, so the
-// classifier is precise rather than eager: it steers on a high-confidence
-// correction and lets everything else queue. Two ways to say one thing is
-// duplicate state, so `auto` has no alias and no config.
-const DELIVERY_DEFAULT = 'auto';
-const DELIVERY_VALUES = ['auto', 'steer', 'queue'];
-// A long brief is never steered, however many stop words it contains. Length is
-// the false-positive guard that keeps the scorer from reading a task as a halt.
-const STEER_MAX_CHARS = 400;
-// Tier 1, a sentence-initial imperative halt: the message opens with the command.
-// `cancel` is the one opener that also fronts ordinary work ("cancel the pending
-// release note draft"), so it is handled apart, below.
-const HALT_OPENERS = ['stop', 'halt', 'abort', 'revert', 'undo', 'roll back', 'hold off', "don't", 'do not', 'never mind', 'leave it', 'discard'];
-// Tier 2, a correction phrase whose intent is unambiguous wherever it appears.
-// Deliberately short: one bare trigger word is how a task became an interruption.
-const CORRECTION_PHRASES = [
-  "that's wrong",
-  'that is wrong',
-  'is wrong about',
-  'not what i asked',
-  'not what i wanted',
-  'wrong branch',
-  'wrong file',
-  'wrong repo',
-  'revert that',
-  'revert it',
-  'roll back that',
-  'undo that',
-  'undo it',
-  'emergency',
-  'asap',
-  'urgent',
-  'immediately',
-  'credentials are exposed',
-  'credentials leaked',
-  'secret is exposed',
-  'stop the deploy',
-  'kill the job',
-];
-// The veto list: deferring, temporal or substitutional phrasing, which is not a
-// course correction however much it looks like one. A veto beats both tiers.
-const DEFERRING_PHRASES = [
-  "don't forget",
-  'do not forget',
-  'wait for',
-  'when you are done',
-  'when you finish',
-  'instead of',
-  'no longer needed',
-  'no longer used',
-  'if you have time',
-];
+// Delivery. There is one lane: `steer` puts the message into the target's
+// current turn at its next step boundary, which is where a correction or a new
+// instruction belongs when the peer is mid-task. `queue` is gone: a message that
+// waits for a turn to end is a message the sender did not need yet, and the
+// server's own queue is not this plugin's to schedule. The field is kept so a
+// caller written against 0.4 can be told plainly that the lane was removed.
+const DELIVERY = 'steer';
+const DELIVERY_VALUES = [DELIVERY];
+// A leading `[steer]` or `STEER:` in any case, with its surrounding whitespace.
+// The marker is stripped from whatever is delivered, because a model that writes
+// it means it as routing and not as content. It counts only when whitespace or
+// the end of the text follows the token, so a Markdown link like
+// `[steer](https://example.com)` stays content and arrives intact. `[queue]` is
+// not a marker any more: it is ordinary text and is delivered as written.
+const MARKER_RE = /^\s*(?:\[steer\]|steer\s*:)(?=\s|$)\s*/i;
 
-// A phrase list as one word-bounded, case-insensitive pattern. Apostrophes are
-// accepted in either spelling, so a typographic quote still matches.
-function phrasePattern(phrase) {
-  return phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/'/g, "['\u2019]");
-}
-
-function phraseRe(phrases) {
-  return new RegExp('\\b(?:' + phrases.map(phrasePattern).join('|') + ')\\b', 'i');
-}
-
-const CORRECTION_RE = phraseRe(CORRECTION_PHRASES);
-const DEFERRING_RE = phraseRe(DEFERRING_PHRASES);
-// Tier 1 is anchored at the start, allowing one leading word before the halt: an
-// interjection or the peer's name ("No — stop", "Actually, revert that",
-// "Nova, stop the build"). Nothing later in the message can open it.
-const LEAD_IN = '^\\s*(?:[^\\s,;:—–-]+\\s*[,;:—–-]\\s*)?';
-const HALT_RE = new RegExp(LEAD_IN + '(?:' + HALT_OPENERS.map(phrasePattern).join('|') + ')\\b', 'i');
-// `cancel` halts only when its object is the work in flight ("cancel that",
-// "cancel it", "cancel everything") or it stands alone: "cancel the pending
-// release note draft" names a deliverable, so it is work, not a stop.
-const CANCEL_HALT_RE = new RegExp(LEAD_IN + 'cancel\\s*(?:[.!]|$|(?:that|this|it|those|these|everything|all)\\b)', 'i');
-// A leading `[steer]`, `[queue]`, `STEER:` or `QUEUE:` in any case, with its
-// surrounding whitespace. The marker is routing, not content: it is stripped from
-// whatever is delivered, even when an explicit argument already settled the lane.
-// It counts only when whitespace or the end of the text follows the token, so a
-// Markdown link like `[queue](https://example.com)` stays content and arrives
-// intact instead of being read as routing and delivered mangled.
-const MARKER_RE = /^\s*(?:\[(steer|queue)\]|(steer|queue)\s*:)(?=\s|$)\s*/i;
-
-// True when a message is a correction worth interrupting the peer's turn for: a
-// halt that opens it, or an unambiguous correction phrase, with the deferring
-// phrasing vetoing both. The length guard comes first and always wins.
-function isCorrection(body) {
-  if (body.length > STEER_MAX_CHARS) return false;
-  if (DEFERRING_RE.test(body)) return false;
-  if (HALT_RE.test(body) || CANCEL_HALT_RE.test(body)) return true;
-  return CORRECTION_RE.test(body);
-}
-
-// Pure routing for one send: no I/O, no clock, exported so the precedence is
-// proved offline. `waitSeconds` is the parsed wait (0 when absent) and `delivery`
-// is the caller's argument, already validated as one of DELIVERY_VALUES. Returns
-// the lane, the reason it was chosen, and the text to deliver — the marker, when
-// there is one, is removed here and nowhere else.
-//
-// `wait` is the one rule with no exception: blocking for the peer's next turn
-// boundary is the definition of a queued message, so an explicit steer or a
-// marker cannot override it. Collapsing it to a single rule avoids a precedence
-// puzzle, and avoids a wait landing on a boundary reached before a steered
-// message was ever processed.
-function classifyDelivery(text, waitSeconds, delivery) {
+// Pure routing for one send: no I/O, no clock, exported so the contract is proved
+// offline. It no longer picks a lane — there is only one — so it has two jobs
+// left: strip a leading marker, and report why the lane was what it was.
+// `delivery` is the caller's argument, already validated as the one lane or
+// absent. A `wait` is not a parameter: it is a poll that runs after the send and
+// cannot change what was sent.
+function classifyDelivery(text, delivery) {
   const raw = typeof text === 'string' ? text : '';
   const marker = MARKER_RE.exec(raw);
   const body = marker ? raw.slice(marker[0].length) : raw;
-  if (typeof waitSeconds === 'number' && waitSeconds > 0) return { delivery: 'queue', reason: 'wait', text: body };
-  if (delivery === 'steer' || delivery === 'queue') return { delivery, reason: 'explicit', text: body };
-  if (marker) return { delivery: (marker[1] || marker[2]).toLowerCase(), reason: 'marker', text: body };
-  if (isCorrection(body)) return { delivery: 'steer', reason: 'urgent', text: body };
-  return { delivery: 'queue', reason: 'handoff', text: body };
+  if (delivery === DELIVERY) return { delivery: DELIVERY, reason: 'explicit', text: body };
+  if (marker) return { delivery: DELIVERY, reason: 'marker', text: body };
+  return { delivery: DELIVERY, reason: 'default', text: body };
 }
 
 // One live tool-transform registration per host location, keyed by location.
@@ -444,16 +358,16 @@ async function ensureTools(ctx) {
     tools.add({
       name: 'talk_send',
       description:
-        'Deliver one text message into another session by id (ses_...) or unambiguous title substring; it is admitted in milliseconds rather than answered, and `delivery` defaults to `auto`: a short correction or stop steers into the target\'s current turn, a work handoff queues to its next turn, and `wait` always queues. ' +
-        'Fire to hand work or a correction to a peer: `delivery` or an inline [steer]/[queue]/STEER:/QUEUE: marker overrides `auto` but never `wait`, and `wait` seconds block until that session reaches a turn boundary and return what it said. ' +
+        'Deliver one text message into another session by id (ses_...) or unambiguous title substring; every send steers into the target\'s current turn at its next step boundary, and a leading `[steer]` or `STEER:` marker is stripped before delivery. ' +
+        'Fire to hand work or correct a peer mid-turn: the call is admitted in milliseconds rather than answered, and an optional `wait` seconds only polls afterwards for the target\'s next turn boundary and returns what it said. ' +
         'Never guesses: an unknown or ambiguous title returns the candidate list as data.',
       input: {
         type: 'object',
         properties: {
           session: { type: 'string', description: 'Session id (ses_...) or exact title substring' },
-          text: { type: 'string', description: 'Message text; a leading [steer] or [queue] marker is stripped before delivery' },
-          delivery: { type: 'string', enum: DELIVERY_VALUES, description: 'auto (default) routes by urgency, steer reaches the target\'s current turn at its next step, queue waits for its next turn' },
-          wait: { type: 'number', description: 'Seconds to block after sending until the target reaches a turn boundary; a positive wait always queues; default 0 (never block)' },
+          text: { type: 'string', description: 'Message text; a leading [steer] or STEER: marker is stripped before delivery' },
+          delivery: { type: 'string', enum: DELIVERY_VALUES, description: 'Always steer: the message reaches the target\'s current turn at its next step boundary; queue delivery is removed' },
+          wait: { type: 'number', description: 'Seconds to poll after sending for the target\'s next turn boundary; the lane is unchanged; default 0 (never block)' },
         },
         required: ['session', 'text'],
         additionalProperties: false,
@@ -465,11 +379,15 @@ async function ensureTools(ctx) {
           return fail('bad_request', 'text must be a non-empty string');
         }
         if (args.delivery !== undefined && (typeof args.delivery !== 'string' || !DELIVERY_VALUES.includes(args.delivery))) {
-          return fail('bad_request', 'delivery must be auto, steer, or queue');
+          // The removed lane is refused in its own words. Steering a caller who
+          // asked to queue would change the meaning of what they wrote, so the
+          // request fails instead of being quietly reinterpreted.
+          if (args.delivery === 'queue') return fail('bad_request', 'queue removed; oc-talk is steer-only');
+          return fail('bad_request', 'delivery must be steer; queue removed, oc-talk is steer-only');
         }
         const w = parseWait(args.wait, WAIT_DEFAULT_SECONDS);
         if (!w.ok) return fail(w.error, w.reason);
-        const route = classifyDelivery(args.text, w.value, args.delivery === undefined ? DELIVERY_DEFAULT : args.delivery);
+        const route = classifyDelivery(args.text, args.delivery);
         // A marker is routing, so a message that is only a marker leaves nothing
         // to deliver: fail here, before any backend call, instead of admitting an
         // empty body into the peer.
@@ -477,7 +395,7 @@ async function ensureTools(ctx) {
         const t = await resolveTarget(args.session);
         if (!t.ok) return fail(t.error, t.reason, t.candidates, t.truncated);
         // The baseline is read before the send: the turn boundary this call waits
-        // for must be a message that did not exist when the message was queued.
+        // for must be a message that did not exist when the message was sent.
         let baseline = '';
         if (w.value > 0) {
           const before = await newestMessageID(t.id);
@@ -498,7 +416,8 @@ async function ensureTools(ctx) {
         }
         const d = r.json.data || {};
         // The lane and the reason for it are reported, not assumed: a reader has
-        // to be able to see which turn the message landed in, and why.
+        // to be able to see that the message steered, and why the text was what
+        // it was. `deliveryReason` is `explicit`, `marker` or `default`.
         const out = { id: d.id || '', sessionID: d.sessionID || t.id, title: t.title || '', delivered: true, delivery: route.delivery, deliveryReason: route.reason };
         if (w.value > 0) {
           const waited = await waitForIdle(t.id, w.value * 1000, baseline);
@@ -624,15 +543,11 @@ async function ensureTools(ctx) {
 export {
   classifyDelivery,
   collectMessages,
-  CORRECTION_PHRASES,
-  DEFERRING_PHRASES,
   ensureTools,
-  HALT_OPENERS,
   listSessions,
   messageRow,
   resolveTarget,
   setApiRunner,
-  STEER_MAX_CHARS,
   waitForIdle,
 };
 

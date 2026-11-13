@@ -5,6 +5,23 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-11-13
+
+Queue delivery is removed. Every send steers, and the lane is no longer decided
+for the caller.
+
+### Removed
+
+- `delivery: "queue"` and `delivery: "auto"`. `steer` is the only lane: a request naming either removed value is a typed `bad_request` — `queue removed; oc-talk is steer-only` — rather than a silent steer, because changing a caller's lane changes the meaning of what they wrote.
+- The urgency classifier, with its halt, correction and deferring phrase tables and the length guard that existed only to keep a long brief from being steered. No wording routes a message any more.
+- The `[queue]` and `QUEUE:` delivery markers. They are ordinary text now and are delivered as written.
+
+### Changed
+
+- `wait` is a post-send idle poll, not a lane. It runs after the message was admitted, reads the target's next turn boundary, and cannot change what was sent: a steered message with `wait` is still steered, and a bounded wait that gives up still reports `timedOut: true`.
+- `deliveryReason` is one of `explicit`, `marker` or `default`.
+- The transport's fallback lane is `steer`, so the wire never carries `queue`.
+
 ## [0.4.1] - 2026-11-13
 
 The registry's `0.4.0` is the build before the correction; this release carries the correction.

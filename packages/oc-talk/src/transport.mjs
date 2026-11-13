@@ -200,9 +200,9 @@ function scrub(result) {
 
 // Durable admission of one input, 200 in milliseconds. `id` is client-chosen and
 // idempotent, so a retried send returns the original admission instead of
-// running the prompt hooks twice. The target acts on it at its next turn.
+// running the prompt hooks twice. The target acts on it at its next step.
 function prompt(sessionID, opts) {
-  const body = { text: opts.text, delivery: opts.delivery || 'queue' };
+  const body = { text: opts.text, delivery: opts.delivery || 'steer' };
   if (opts.id) body.id = opts.id;
   if (opts.metadata !== undefined) body.metadata = opts.metadata;
   return request('POST', '/api/session/' + encodeURIComponent(sessionID) + '/prompt', { body, signal: opts.signal });

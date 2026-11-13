@@ -7,7 +7,7 @@ Gives an agent two tools to talk across sessions: put a message into another ses
 The package is published on npm as `oc-talk`, and OpenCode installs it from the registry: add it to the `plugins` array in your `opencode.jsonc`.
 
 ```json
-{ "plugins": ["oc-talk@0.4.1"] }
+{ "plugins": ["oc-talk@0.5.0"] }
 ```
 
 Restart OpenCode. The plugin registers both tools when the session starts, and reaches the server OpenCode is already running over loopback HTTP.
@@ -41,27 +41,22 @@ Restart OpenCode either way.
 
 | Tool | What it does for you |
 | --- | --- |
-| `talk_send` | Delivers one message into a session by id or unique title. A short correction steers into the target's current turn, a work handoff queues to its next one; returns the admission, the lane and the reason in milliseconds. |
+| `talk_send` | Delivers one message into a session by id or unique title. Every send steers into the target's current turn; returns the admission, the lane and the reason in milliseconds, and an optional `wait` polls afterwards for the next turn boundary. |
 | `talk_inbox` | Reads one session's messages as `{id, role, text, tools, time}`; defaults to the calling session, pages with `cursor`, filters with `since` and `type`, and blocks with `wait`. |
 
 Every failure is a typed JSON payload (`session_not_found`, `ambiguous_session`, `bad_request`, `backend_unavailable`, `timeout`, `backend_error`), never a throw. An unknown or ambiguous title comes back with the candidate list as data, so a caller never guesses.
 
 ## Delivery
 
-`talk_send` takes `delivery`: `auto` (default), `steer` or `queue`. `steer` reaches the target inside its current turn, at its next step boundary; `queue` waits for that turn to end.
+Every send steers: the message is admitted into the target's current turn at its next step boundary. There is one lane and no field that chooses it.
 
-Steering is precise, not eager: a false steer interrupts a peer mid-task and corrupts its turn, while a false queue only costs a little latency, so `auto` steers only on a high-confidence correction and queues everything else. The order:
+A request that still names a lane fails instead of being reinterpreted. `delivery: "queue"` is a typed `bad_request` — `queue removed; oc-talk is steer-only` — because steering a caller who asked to queue would change the meaning of what they wrote; any other value, including the old `auto`, is refused the same way. `delivery: "steer"` is accepted and changes nothing.
 
-- a positive `wait` queues, always: an explicit `delivery` or a marker cannot override it, because blocking for the peer's next turn boundary is the definition of a queued message;
-- an explicit `delivery: "steer"` or `"queue"` then wins;
-- a leading `[steer]`, `[queue]`, `STEER:` or `QUEUE:` then wins over the classifier and is removed from what is delivered. The token counts only when whitespace or the end of the message follows it, so `[queue](https://example.com)` stays a Markdown link and arrives untouched, and a message that is only a marker is a typed `bad_request` — there is nothing to deliver;
-- a message of 400 characters or fewer that *opens* with a halt steers: `stop`, `halt`, `abort`, `revert`, `undo`, `roll back`, `hold off`, `don't`, `do not`, `never mind`, `leave it`, `discard`, or `cancel` aimed at the work in flight (`cancel that`, `cancel it`). One leading word may precede it — an interjection or the peer's name — as in `No — stop`, `Actually, revert that`, `Nova, stop the build`. `cancel the pending release note draft` names a deliverable, so it queues;
-- or carries an unambiguous correction phrase anywhere: `that's wrong`, `that is wrong`, `is wrong about`, `not what i asked`, `not what i wanted`, `wrong branch`, `wrong file`, `wrong repo`, `revert that`, `revert it`, `roll back that`, `undo that`, `undo it`, `emergency`, `asap`, `urgent`, `immediately`, `credentials are exposed`, `credentials leaked`, `secret is exposed`, `stop the deploy`, `kill the job`;
-- everything else queues.
+A leading `[steer]` or `STEER:` is stripped before delivery: a model that writes the token means it as routing, not as content. It counts only when whitespace or the end of the message follows it, so `[steer](https://example.com)` stays a Markdown link and arrives untouched, and a message that is only a marker is a typed `bad_request` — there is nothing to deliver. `[queue]` and `QUEUE:` are ordinary text now: they are delivered as written.
 
-Deferring, temporal or substitutional phrasing vetoes both tiers and queues even when one matched: `don't forget`, `do not forget`, `wait for`, `when you are done`, `when you finish`, `instead of`, `no longer needed`, `no longer used`, `if you have time`. A bare `wrong`, `failed`, `red`, `critical`, `blocker`, `wait` or `instead` steers nothing on its own.
+`wait` is a poll, not a lane. It runs after the send — never instead of it — and takes seconds to block until the target reaches its next turn boundary, then returns the messages it produced with `timedOut` and `waitedMs`. It cannot change what was sent, so a steered message with `wait` is still steered, and a bounded wait that gives up reports `timedOut: true` rather than claiming a completion that never happened.
 
-The reply reports both fields: `delivery` is the lane used, and `deliveryReason` is one of `explicit`, `marker`, `wait`, `urgent`, `handoff`. Steer is for a correction the target should not finish its turn without; queue is for work that starts a new turn.
+The reply reports both fields: `delivery` is always `steer`, and `deliveryReason` is `explicit` when the caller passed `delivery: "steer"`, `marker` when a `[steer]` token was stripped, and `default` otherwise.
 
 ## One session hands work to another
 
@@ -70,15 +65,15 @@ A dispatcher hands a build lane its next task, then reads what came back:
 ```json
 talk_send { "session": "build lane", "text": "Run the test suite and report failures." }
 → { "id": "msg_0f3c…", "sessionID": "ses_9a1…", "title": "active build lane", "delivered": true,
-    "delivery": "queue", "deliveryReason": "handoff" }
+    "delivery": "steer", "deliveryReason": "default" }
 ```
 
-The call returns at once: the message is admitted, not answered. To wait for the lane to finish the turn it was already in, ask for a bounded block — it returns the messages plus the outcome of the wait:
+The call returns at once: the message is admitted, not answered. To poll until the lane reaches its next turn boundary, ask for a bounded wait — it returns the messages plus the outcome of the poll:
 
 ```json
 talk_send { "session": "build lane", "text": "Summarize the failures.", "wait": 90 }
 → { "id": "msg_…", "sessionID": "ses_9a1…", "title": "active build lane", "delivered": true,
-    "delivery": "queue", "deliveryReason": "wait",
+    "delivery": "steer", "deliveryReason": "default",
     "timedOut": false, "waitedMs": 41230, "messages": [ … ] }
 ```
 
@@ -98,7 +93,7 @@ talk_inbox { "limit": 20 }
 
 ## How it talks
 
-`src/transport.mjs` is the only file that touches the wire. It reads the running service's published state once, rewrites the wildcard bind to loopback, and dials the routes the host actually serves: `POST /api/session/{id}/prompt` to admit a message (with the chosen delivery, and a client id so a retry is idempotent), `GET /api/session/{id}/message` to read, and `GET /api/session?search=` to turn a title into an id. No `opencode` child process per call, no shell, no dependency beyond the plugin SDK.
+`src/transport.mjs` is the only file that touches the wire. It reads the running service's published state once, rewrites the wildcard bind to loopback, and dials the routes the host actually serves: `POST /api/session/{id}/prompt` to admit a message (with `steer` as the delivery, and a client id so a retry is idempotent), `GET /api/session/{id}/message` to read, and `GET /api/session?search=` to turn a title into an id. No `opencode` child process per call, no shell, no dependency beyond the plugin SDK.
 
 ## Requirements
 
