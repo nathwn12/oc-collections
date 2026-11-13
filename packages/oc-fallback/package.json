@@ -1,0 +1,40 @@
+{
+  "name": "oc-fallback",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Let an agent seat step down its own model fallback ladder when its model fails: one `switch_model` tool, one automatic failover, and every rule in one config file.",
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "plugin",
+    "model",
+    "fallback",
+    "failover",
+    "agent"
+  ],
+  "license": "MIT",
+  "author": "nathwn12",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nathwn12/oc-collections.git",
+    "directory": "packages/oc-fallback"
+  },
+  "homepage": "https://github.com/nathwn12/oc-collections/tree/main/packages/oc-fallback",
+  "bugs": "https://github.com/nathwn12/oc-collections/issues",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "check": "node --check src/config.mjs && node --check src/log.mjs && node --check src/benchmarks.mjs && node --check src/ladder.mjs && node --check src/index.js && node --test \"test/**/*.test.js\"",
+    "test": "node --test \"test/**/*.test.js\""
+  }
+}
