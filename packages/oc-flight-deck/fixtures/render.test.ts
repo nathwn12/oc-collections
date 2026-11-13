@@ -843,7 +843,7 @@ test("reads rt as the session's own realtime estimate", async () => {
   expect(frame).not.toContain("1100 tok/s");
 });
 
-test("reads the settled-turn average by default while the root idles and a child streams", async () => {
+test("reads the settled-turn average when explicitly selected", async () => {
   // The shipped default (`sidebar.tps.display` absent means `"avg"`): the
   // numerator sums generation tokens over settled turns in the family scope,
   // and the denominator is the union of their streaming spans — concurrent
@@ -865,7 +865,7 @@ test("reads the settled-turn average by default while the root idles and a child
     ],
   };
   const { context, claims } = harness(
-    { sidebar: { rows: ["tps"], persist: false } },
+    { sidebar: { rows: ["tps"], persist: false, tps: { display: "avg" } } },
     workspace(),
     { time: { created: now - 600_000 }, tokens: { output: 30_000, reasoning: 30_000 } },
     {
@@ -943,7 +943,7 @@ test("the average excludes the in-flight turn's tokens and time together", async
   // fold its tokens over its open span and read past 2,400.
   const now = Date.now();
   const { context, claims } = harness(
-    { sidebar: { rows: ["tps"], persist: false } },
+    { sidebar: { rows: ["tps"], persist: false, tps: { display: "avg" } } },
     workspace(),
     { time: { created: now - 600_000 }, tokens: { output: 0 } },
     {
@@ -1124,7 +1124,7 @@ test("the average ends a turn at streamed while the realtime figure needs no sta
     ],
   };
   const { context, claims, emit } = harness(
-    { sidebar: { rows: ["tps"], persist: false } },
+    { sidebar: { rows: ["tps"], persist: false, tps: { display: "avg" } } },
     workspace(),
     { time: { created: now - 600_000 }, tokens: { output: 0 } },
     { messagesBySession },
@@ -1215,7 +1215,7 @@ test("counts a stamped turn that produced no tokens in the denominator", async (
     { type: "assistant", time: { created: now - 2_000, streamed: now }, tokens: { output: 0 } },
   ];
   const { context, claims } = harness(
-    { sidebar: { rows: ["tps"], persist: false } },
+    { sidebar: { rows: ["tps"], persist: false, tps: { display: "avg" } } },
     workspace(),
     { time: { created: now - 600_000 }, tokens: { output: 0 } },
     { messages },
@@ -1596,12 +1596,11 @@ test("renders zero skeletons through the real panel when the host has no data", 
   const { sidebar } = railClaims(claims);
   const frame = await frameOf(sidebar!.render, 40, 8);
   // Live-shaped zeroes, not dashes: each is byte-identical to a real zero.
-  expect(frame).toContain("tps       0 tok/s");
+  expect(frame).toContain("tps       —");
   expect(frame).toContain("elapsed   0s");
   expect(frame).toContain("cost      $0.000");
   expect(frame).toContain("tokens    0 in · 0 out");
   expect(frame).toContain("cache     0 read");
-  expect(frame).not.toContain("—");
 });
 
 test("keeps caution absent under persist when there is nothing to say", async () => {
@@ -1632,7 +1631,7 @@ test("reads 0 tok/s on an idle session through the real panel", async () => {
   flightDeck.setup(context);
   const { sidebar } = railClaims(claims);
   // Persist is on: the idle zero draws its skeleton instead of hiding.
-  expect(await frameOf(sidebar!.render, 40, 6)).toContain("tps       0 tok/s");
+  expect(await frameOf(sidebar!.render, 40, 6)).toContain("tps       —");
 });
 
 test("rolls the family tokens and cache reads up to the token rows", async () => {
@@ -1656,6 +1655,3 @@ test("rolls the family tokens and cache reads up to the token rows", async () =>
   expect(frame).toContain("cache     71% hit · 10k read");
   expect(frame).not.toContain("1k in · 2k out");
 });
-
-
-

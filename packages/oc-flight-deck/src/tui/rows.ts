@@ -486,20 +486,23 @@ export function statLine(
       // `ttft` the mean time to first token in seconds — all unknown at this
       // boundary, so all re-coerced like every other field. Which one draws
       // is `layout.tpsDisplay` (the row's view of `sidebar.tps.display`,
-      // default `"avg"`); presentation.ts feeds it from the resolved config.
+      // default `"rt"`); presentation.ts feeds it from the resolved config.
       const pair = asRecord(source.tps);
       const rt = asCount(pair?.["rt"]);
       const avg = asCount(pair?.["avg"]);
       const ttft = asCount(pair?.["ttft"]);
-      const display = layout.tpsDisplay ?? "avg";
+      const display = layout.tpsDisplay ?? "rt";
       if (display === "rt") {
         // Whole tokens/second, honestly rounded — the value is already an
         // EWMA over estimated delta samples, so a decimal would fake a
         // precision the samples never had. Anything below half a
         // token/second hides rather than printing "0 tok/s".
         const rounded = rt === undefined ? undefined : Math.round(rt);
-        if (rounded === undefined || rounded <= 0) return undefined;
-        return row("tps", `${rounded} tok/s`);
+        if (rounded === undefined || rounded <= 0) {
+          return ttft === undefined ? undefined : row("tps", `${ttft.toFixed(1)}s ttft`);
+        }
+        const rate = `${rounded} tok/s`;
+        return row("tps", ttft === undefined ? rate : `${rate} · ${ttft.toFixed(1)}s ttft`);
       }
       if (display === "both") {
         // Both figures on one line when the average stands — the realtime

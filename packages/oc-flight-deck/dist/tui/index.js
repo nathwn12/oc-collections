@@ -766,7 +766,7 @@ function skeletonValue(field, layout) {
     case "elapsed":
       return formatDuration(0, layout.durationStyle);
     case "tps":
-      return layout.tpsDisplay === "both" ? "0 rt \xB7 0 avg" : "0 tok/s";
+      return;
     case "spark":
       return "\u2581".repeat(Math.max(0, Math.floor(layout.sparkWidth ?? DEFAULT_SPARK_WIDTH)));
     case "reasoning":
@@ -1046,12 +1046,14 @@ function statLine(field, source, layout = {}) {
       const rt = asCount2(pair?.["rt"]);
       const avg = asCount2(pair?.["avg"]);
       const ttft = asCount2(pair?.["ttft"]);
-      const display = layout.tpsDisplay ?? "avg";
+      const display = layout.tpsDisplay ?? "rt";
       if (display === "rt") {
         const rounded = rt === undefined ? undefined : Math.round(rt);
-        if (rounded === undefined || rounded <= 0)
-          return;
-        return row("tps", `${rounded} tok/s`);
+        if (rounded === undefined || rounded <= 0) {
+          return ttft === undefined ? undefined : row("tps", `${ttft.toFixed(1)}s ttft`);
+        }
+        const rate = `${rounded} tok/s`;
+        return row("tps", ttft === undefined ? rate : `${rate} \xB7 ${ttft.toFixed(1)}s ttft`);
       }
       if (display === "both") {
         if (avg !== undefined) {
@@ -1574,7 +1576,7 @@ var DEFAULT_GO_PANEL_LOOK = {
   blinkMs: 700
 };
 var DEFAULT_TPS_SCOPE = "family";
-var DEFAULT_TPS_DISPLAY = "avg";
+var DEFAULT_TPS_DISPLAY = "rt";
 function cautionThresholds(config) {
   return {
     toolWatchMs: config.toolWatchSeconds * 1000,
@@ -1844,7 +1846,7 @@ function readTpsDisplay(value, issues) {
     return DEFAULT_TPS_DISPLAY;
   if (value === "avg" || value === "rt" || value === "both")
     return value;
-  issues.push(`sidebar.tps.display must be "avg", "rt" or "both"; using "avg"`);
+  issues.push(`sidebar.tps.display must be "avg", "rt" or "both"; using "${DEFAULT_TPS_DISPLAY}"`);
   return DEFAULT_TPS_DISPLAY;
 }
 function readTps(section, issues) {

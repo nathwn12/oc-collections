@@ -181,11 +181,8 @@
     //
     // Every named row renders persistently, so the rail keeps a stable shape:
     // a row with no data yet draws a real-looking zero — `$0.000` for money
-    // rows, `0 in · 0 out` for tokens, `0 tok/s` for tps — in the same label
-    // column as a live row, never a placeholder symbol. Two rows are the
-    // exceptions: `caution` stays silent until it has something to say, and
-    // `updated` draws `sidebar.placeholder` (`—`) until the host records an
-    // action, because there is no honest zero timestamp.
+    // rows and `0 in · 0 out` for tokens. `caution` stays silent; `tps` and
+    // `updated` draw `sidebar.placeholder` (`—`) when data is unavailable.
     // The fixed lines and live rows share the maxLines budget below, and
     // anything past it is dropped.
     "rows": [
@@ -218,33 +215,32 @@
     // while it is idle even when a child is still running). An unknown value
     // falls back to `"family"` and is reported.
     //
-    // `"display"` is what draws. `"avg"` (the default) is the settled-turn
+    // `"display"` is what draws. `"avg"` is the settled-turn
     // average: generation tokens over assistant turns that recorded
     // `streamed`, divided by the union of their `streamed - created` spans —
     // in-flight turns excluded, idle gaps never billed. `"rt"` is the
-    // realtime estimate from the host's streaming delta events, reading
-    // `0 tok/s` whenever the scope is not generating (idle, between turns,
-    // or before the first delta). `"both"` draws both on one line
+    // realtime estimate (the default) from the host's streaming delta events.
+    // Without a rate, observed TTFT remains visible. `"both"` draws both on one line
     // (`106 rt · 41 avg`), plus the mean time to first token over settled
     // steps (`83 rt · 38 avg · 1.2s ttft`): per step, the earliest
     // text/reasoning delta's event time minus the step's `started` dispatch
     // stamp (request dispatch time, before waiting for provider output),
     // pushed into the scope's ring when the step ends. The mean covers the
     // most recent finalized steps observed while the plugin ran — in-memory,
-    // so a restart forgets them. An unknown value falls back to `"avg"` and
+    // so a restart forgets them. `rt` also shows TTFT when available.
+    // An unknown value falls back to `"rt"` and
     // is reported.
-    "tps": { "scope": "family", "display": "avg" },
+    "tps": { "scope": "family", "display": "rt" },
 
     // Every named row renders persistently: with no data yet it draws its
-    // zero skeleton (a real-looking zero, never a placeholder symbol), in the
+    // zero skeleton or placeholder, in the
     // same label column as a live row. Set to false to omit rows with no data
     // instead.
     "persist": true,
 
     // Fallback for a persistent row with no data that has no skeleton. Any
     // non-empty string. `caution` never draws it (its silence is the design),
-    // and `updated` draws it until the host records an action: there is no
-    // honest zero timestamp, so this dash is reachable for that one row.
+    // and `tps` and `updated` draw it until data is available.
     "placeholder": "—",
 
     // Maximum total height, including fixed lines and live rows. Defaults to 24.

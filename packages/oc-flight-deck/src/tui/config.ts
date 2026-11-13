@@ -153,16 +153,9 @@ export type TpsDisplay = "avg" | "rt" | "both";
 export const DEFAULT_TPS_SCOPE: TpsScope = "family";
 
 /**
- * The shipped `tps` figure: `"avg"`.
- *
- * The one default for this knob, so flipping the shipped behaviour is one
- * line here. The average ships because it answers the question the row is
- * really asked — how fast is this session producing — instead of what the
- * decoder is doing in this exact poll: an idle gap between turns reads as a
- * steady figure rather than as zero, while `rt` stays one edit away for
- * the moment-to-moment view.
+ * The shipped `tps` figure: `"rt"`, an estimate of current throughput.
  */
-export const DEFAULT_TPS_DISPLAY: TpsDisplay = "avg";
+export const DEFAULT_TPS_DISPLAY: TpsDisplay = "rt";
 
 interface TpsConfig {
   /** Which sessions the `tps` row paces. Default `DEFAULT_TPS_SCOPE`. */
@@ -821,7 +814,7 @@ function readTpsScope(value: unknown, issues: string[]): TpsScope {
 function readTpsDisplay(value: unknown, issues: string[]): TpsDisplay {
   if (value === undefined) return DEFAULT_TPS_DISPLAY;
   if (value === "avg" || value === "rt" || value === "both") return value;
-  issues.push(`sidebar.tps.display must be "avg", "rt" or "both"; using "avg"`);
+  issues.push(`sidebar.tps.display must be "avg", "rt" or "both"; using "${DEFAULT_TPS_DISPLAY}"`);
   return DEFAULT_TPS_DISPLAY;
 }
 

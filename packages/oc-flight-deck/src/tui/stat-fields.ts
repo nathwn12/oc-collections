@@ -201,8 +201,8 @@ export interface LayoutHint {
    */
   readonly labels?: Readonly<Record<string, string>>;
   /**
-   * Which figure the `tps` row draws: the settled-turn average (`"avg"`, the
-   * default), the realtime estimate from the host's streaming delta events
+   * Which figure the `tps` row draws: the settled-turn average (`"avg"`),
+   * the default realtime estimate from the host's streaming delta events
    * (`"rt"`), or both on one line (`"both"`). Carried here rather than read
    * from config directly so the row stays a pure function of its inputs,
    * exactly like `labels` above.
@@ -268,10 +268,8 @@ export function skeletonValue(field: string, layout: LayoutHint): string | undef
     case "elapsed":
       return formatDuration(0, layout.durationStyle);
     case "tps":
-      // The skeleton follows the display mode: `both` draws both figures on
-      // one line, the single-figure modes draw the one shape either would
-      // read as a zero.
-      return layout.tpsDisplay === "both" ? "0 rt · 0 avg" : "0 tok/s";
+      // An absent rate is not a measured zero.
+      return undefined;
     case "spark":
       return "▁".repeat(Math.max(0, Math.floor(layout.sparkWidth ?? DEFAULT_SPARK_WIDTH)));
     case "reasoning":
@@ -294,4 +292,3 @@ export function skeletonValue(field: string, layout: LayoutHint): string | undef
       return undefined;
   }
 }
-

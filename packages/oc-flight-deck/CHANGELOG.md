@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The TPS row defaults to the realtime estimate and includes observed time to first token when available. The settled-turn average remains opt-in.
+- Missing TPS uses the configured placeholder instead of a misleading zero; observed TTFT remains visible between streams.
+
 ## [0.22.0] - 2026-11-10
 
 ### Changed
