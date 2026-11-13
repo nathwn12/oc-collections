@@ -12,12 +12,21 @@ The lane is chosen, not fixed: a correction reaches the peer inside its turn, an
 ### Added
 
 - `talk_send` takes `delivery`: `auto` (default), `steer` or `queue`. `steer` is admitted into the target's current turn at its next step boundary; `queue` waits for the next turn. Any other value is a typed `bad_request`, and nothing is sent.
-- Under `auto` the lane is resolved in this order: an explicit `delivery`; a leading `[steer]`, `[queue]`, `STEER:` or `QUEUE:` marker, stripped from the delivered text; a positive `wait`, which means a handoff; a message of 400 characters or fewer carrying a halt or correction phrase, which steers; everything else queues.
+- Under `auto` the lane is resolved in this order: a positive `wait`, which always queues; an explicit `delivery`; a leading `[steer]`, `[queue]`, `STEER:` or `QUEUE:` marker, stripped from the delivered text; then two tight correction tiers — a message of 400 characters or fewer that opens with a halt command (`stop`, `halt`, `abort`, `cancel that`, `revert`, `undo`, `roll back`, `hold off`, `don't`, `do not`, `never mind`, `leave it`, `discard`, after at most one leading interjection or the peer's name), or that carries an unambiguous correction phrase anywhere (`that's wrong`, `not what i asked`, `wrong branch`, `wrong file`, `revert that`, `undo it`, `emergency`, `asap`, `urgent`, `immediately`, `credentials are exposed`, `stop the deploy`, …); everything else queues.
+- Deferring, temporal and substitutional phrasing vetoes both tiers and always queues, because a false steer interrupts a peer mid-task while a false queue only costs latency: `don't forget`, `do not forget`, `wait for`, `when you are done`, `when you finish`, `instead of`, `no longer needed`, `no longer used`, `if you have time`.
 - The reply carries `delivery` and `deliveryReason` (`explicit`, `marker`, `wait`, `urgent`, `handoff`) beside `{id, sessionID, title, delivered}`.
 
 ### Changed
 
-- `talk_send` no longer hardcodes `queue`: a short "stop, that's wrong" reaches the peer's current turn instead of waiting a full turn to be read. A long brief still queues, however many stop words it contains.
+- `talk_send` no longer hardcodes `queue`: a short "Stop — the migration is wrong, revert it." reaches the peer's current turn instead of waiting a full turn to be read. A long brief still queues, however many stop words it contains.
+
+### Fixed
+
+- The lane classifier steers only on a real correction. A single context-free token (`wrong`, `failed`, `red`, `critical`, `blocker`, `wait`, `instead`) no longer interrupts a peer: "don't forget to update the changelog", "wait for the build to finish", "the failed test is in the auth file", "cancel the pending release note draft" and "tests are red on main" all queue.
+- A marker is routing only when `[steer]`, `[queue]`, `STEER:` or `QUEUE:` is followed by whitespace or the end of the text, so a Markdown link such as `[queue](https://example.com)` arrives byte for byte instead of being delivered mangled.
+- A message that is only a marker is a typed `bad_request` naming the real problem — there is nothing to deliver — instead of admitting an empty body into the peer.
+- A positive `wait` always queues, even with an explicit `delivery: "steer"` or a `[steer]` marker. The wait then always reads the boundary after the queued message, rather than a boundary reached before a steered message was ever processed.
+- The tool description states the rule a calling model needs: `delivery` defaults to `auto`, a short correction or stop steers, a handoff queues, `wait` always queues, and `delivery` or an inline marker overrides `auto` but never `wait`.
 
 ## [0.3.0] - 2026-11-13
 

@@ -30,8 +30,8 @@ const TOOLS = ['talk_send', 'talk_inbox'];
 
 const DESCRIPTIONS = {
   talk_send:
-    'Deliver one text message into another session by id (ses_...) or unambiguous title substring; it is admitted in milliseconds rather than answered, and `delivery` defaults to `auto`: a short correction or stop steers into the target\'s current turn, a work handoff queues to its next turn, and an explicit steer or queue overrides. ' +
-    'Fire to hand work or a correction to a peer, put a leading [steer] or [queue] in the text to choose without the argument, or pass `wait` seconds to block until that session reaches a turn boundary and return what it said. ' +
+    'Deliver one text message into another session by id (ses_...) or unambiguous title substring; it is admitted in milliseconds rather than answered, and `delivery` defaults to `auto`: a short correction or stop steers into the target\'s current turn, a work handoff queues to its next turn, and `wait` always queues. ' +
+    'Fire to hand work or a correction to a peer: `delivery` or an inline [steer]/[queue]/STEER:/QUEUE: marker overrides `auto` but never `wait`, and `wait` seconds block until that session reaches a turn boundary and return what it said. ' +
     'Never guesses: an unknown or ambiguous title returns the candidate list as data.',
   talk_inbox:
     'Read one session\'s messages as id, role, text, tools and time, newest first, default 20; `session` defaults to the session that called this tool, `since` keeps only what is newer, and `cursor` pages. ' +
@@ -281,12 +281,64 @@ function promptBody(calls) {
 
 const CALLER = { sessionID: 'ses_caller', signal: undefined };
 
+// A backend whose session is already at a turn boundary and produces a fresh one
+// right after the send, so a blocking call returns at once instead of sleeping.
+async function waitingTool() {
+  const mod = await load();
+  const calls = [];
+  let posted = false;
+  mod.setApiRunner(async (args) => {
+    calls.push(args);
+    const [verb, target] = args;
+    if (verb === 'session.get') return { ok: true, json: { data: { id: 'ses_a', title: 'active work' } } };
+    if (verb === 'post' && String(target).endsWith('/prompt')) {
+      posted = true;
+      return { ok: true, json: { data: { id: 'msg_sent', sessionID: 'ses_a' } } };
+    }
+    return { ok: true, json: { data: [{ id: posted ? 'msg_new_idle' : 'msg_prev_idle', type: 'idle', time: { created: 1 } }] } };
+  });
+  const { ctx, added } = host();
+  await mod.default.setup(ctx);
+  return { tool: added.find((t) => t.name === 'talk_send'), calls };
+}
+
 // A long, neutral brief: far past the length guard, and carrying `red` and `now`
 // inside real instructions, where they are context and not a stop signal.
 const LONG_HANDOFF =
   'Take the parser lane from red to green: read the failure output, find the input that breaks it, fix the smallest thing that explains it, add a regression case, and run the full suite before reporting. '.repeat(
     4,
   ) + 'Do that now.';
+
+// The precision table: the whole routing contract as realistic messages. Every
+// row is something a caller might actually type. A false steer interrupts a peer
+// mid-task and a false queue only costs latency, so the table is deliberately
+// biased to queue: only a high-confidence correction may steer.
+const LANE_TABLE = [
+  // Deferring, temporal or substitutional phrasing: these arrived as one-word
+  // triggers once, and every one of them interrupted a peer that was working.
+  ['queue', 'handoff', "don't forget to update the changelog when you are done"],
+  ['queue', 'handoff', 'wait for the build to finish before you push'],
+  ['queue', 'handoff', 'that file is no longer needed, delete it in your current task'],
+  ['queue', 'handoff', 'use pnpm instead of npm here'],
+  ['queue', 'handoff', 'the failed test is in the auth file, please fix it'],
+  ['queue', 'handoff', 'critical path: review the schema before merge'],
+  ['queue', 'handoff', 'blocker cleared, you can continue'],
+  ['queue', 'handoff', 'cancel the pending release note draft'],
+  ['queue', 'handoff', 'tests are red on main'],
+  ['queue', 'handoff', 'Please investigate the failed tests and report back'],
+  ['queue', 'handoff', 'Use the red logo in the next mockup'],
+  ['queue', 'handoff', 'Build the parser instead of the renderer'],
+  // A real correction: a halt that opens the message, or an unambiguous phrase.
+  ['steer', 'urgent', 'Stop — the migration is wrong, revert it.'],
+  ['steer', 'urgent', 'Actually, revert that last commit.'],
+  ['steer', 'urgent', 'Emergency: the production key is in the log file.'],
+  ['steer', 'urgent', 'Do not merge that branch.'],
+  ['steer', 'urgent', 'asap: the client is on the call'],
+  ['steer', 'urgent', 'No — hold off until the suite is green.'],
+  ['steer', 'urgent', 'Nova, stop the build.'],
+  // A marker is an explicit instruction, and it beats the classifier.
+  ['steer', 'marker', '[steer] the build is using the wrong lockfile'],
+];
 
 test('talk_send queues a handoff by default, carries a client id, and returns the admission', async () => {
   const { tool, calls } = await toolWith('talk_send');
@@ -391,6 +443,70 @@ test('wait implies a handoff: an urgent line under auto still queues when the ca
   assert.equal(JSON.parse(posts.at(-1)[3]).delivery, 'queue');
 });
 
+test('the lane table: a real correction steers and everything else queues', async () => {
+  const { classifyDelivery } = await load();
+  assert.ok(LANE_TABLE.length >= 16, 'the table is the contract: ' + LANE_TABLE.length + ' rows');
+  for (const [lane, reason, text] of LANE_TABLE) {
+    const route = classifyDelivery(text, 0, 'auto');
+    assert.equal(route.delivery, lane, 'wrong lane for: ' + JSON.stringify(text));
+    assert.equal(route.reason, reason, 'wrong reason for: ' + JSON.stringify(text));
+  }
+});
+
+test('the lane table reaches the wire: every row posts its own lane and text', async () => {
+  const { tool, calls } = await toolWith('talk_send');
+  for (const [lane, , text] of LANE_TABLE) {
+    calls.length = 0;
+    const out = JSON.parse((await tool.execute({ session: 'ses_a', text }, CALLER)).content);
+    assert.equal(out.error, undefined, 'send failed for: ' + JSON.stringify(text) + ' ' + JSON.stringify(out));
+    assert.equal(out.delivery, lane, 'reply lane for: ' + JSON.stringify(text));
+    const body = promptBody(calls);
+    assert.equal(body.delivery, lane, 'posted lane for: ' + JSON.stringify(text));
+    // A marker is routing, so only it is stripped from what the peer receives.
+    assert.equal(body.text, text.replace(/^\s*\[steer\]\s*/i, ''), 'delivered text for: ' + JSON.stringify(text));
+  }
+});
+
+test('a Markdown link shaped like a marker is content, not routing', async () => {
+  const { tool, calls } = await toolWith('talk_send');
+  const text = '[queue](https://example.com) is the doc';
+  const out = JSON.parse((await tool.execute({ session: 'ses_a', text }, CALLER)).content);
+  assert.equal(out.delivery, 'queue');
+  assert.equal(out.deliveryReason, 'handoff', 'a link is not a routing marker');
+  assert.equal(promptBody(calls).text, text, 'the link survives byte for byte');
+});
+
+test('a message that is only a marker fails as bad_request and sends nothing', async () => {
+  const { tool, calls } = await toolWith('talk_send');
+  for (const text of ['[steer]', '[queue]', '  STEER:  ']) {
+    const out = JSON.parse((await tool.execute({ session: 'ses_a', text }, CALLER)).content);
+    assert.equal(out.error, 'bad_request', 'marker-only text must not be admitted: ' + JSON.stringify(text));
+    assert.match(out.reason, /nothing to deliver/, 'the reason names the real problem: ' + JSON.stringify(out));
+  }
+  assert.equal(calls.length, 0, 'the refusal happens before any backend call');
+});
+
+test('wait always queues: an explicit steer cannot override it', async () => {
+  const { tool, calls } = await waitingTool();
+  const out = JSON.parse(
+    (await tool.execute({ session: 'ses_a', text: 'Stop — that is the wrong branch.', delivery: 'steer', wait: 30 }, CALLER)).content,
+  );
+  assert.equal(out.error, undefined, 'the send itself still succeeds: ' + JSON.stringify(out));
+  assert.equal(out.delivery, 'queue', 'a blocking send waits for the next turn, by definition');
+  assert.equal(out.deliveryReason, 'wait');
+  assert.equal(promptBody(calls).delivery, 'queue', 'the server must receive the lane the caller got back');
+});
+
+test('wait always queues: a [steer] marker cannot override it', async () => {
+  const { tool, calls } = await waitingTool();
+  const out = JSON.parse((await tool.execute({ session: 'ses_a', text: '[steer] Stop — that is the wrong branch.', wait: 30 }, CALLER)).content);
+  assert.equal(out.error, undefined, 'the send itself still succeeds: ' + JSON.stringify(out));
+  assert.equal(out.delivery, 'queue');
+  assert.equal(out.deliveryReason, 'wait');
+  assert.equal(promptBody(calls).delivery, 'queue');
+  assert.equal(promptBody(calls).text, 'Stop — that is the wrong branch.', 'the marker is still stripped');
+});
+
 test('an invalid delivery is a typed bad_request and sends nothing', async () => {
   const { tool, calls } = await toolWith('talk_send');
   const out = await tool.execute({ session: 'ses_a', text: 'hi', delivery: 'now' }, CALLER);
@@ -403,8 +519,10 @@ test('an invalid delivery is a typed bad_request and sends nothing', async () =>
 });
 
 test('classifyDelivery is pure: marker strip, precedence, and the length boundary', async () => {
-  const { classifyDelivery, STEER_SIGNALS, STEER_MAX_CHARS } = await load();
-  assert.ok(Array.isArray(STEER_SIGNALS) && STEER_SIGNALS.includes('stop'), 'the signals are quotable data');
+  const { classifyDelivery, HALT_OPENERS, CORRECTION_PHRASES, DEFERRING_PHRASES, STEER_MAX_CHARS } = await load();
+  assert.ok(Array.isArray(HALT_OPENERS) && HALT_OPENERS.includes('stop'), 'the halt openings are quotable data');
+  assert.ok(CORRECTION_PHRASES.includes('revert it'), 'the correction phrases are quotable data');
+  assert.ok(DEFERRING_PHRASES.includes("don't forget"), 'the vetoes are quotable data');
   assert.equal(STEER_MAX_CHARS, 400);
 
   assert.deepEqual(classifyDelivery('  [STEER]   Stop it.', 0, 'auto'), { delivery: 'steer', reason: 'marker', text: 'Stop it.' });
@@ -412,6 +530,18 @@ test('classifyDelivery is pure: marker strip, precedence, and the length boundar
   assert.equal(classifyDelivery('Stop it.', 0, 'queue').reason, 'explicit');
   assert.equal(classifyDelivery('Stop it.', 30, 'auto').reason, 'wait');
   assert.equal(classifyDelivery('run the tests', 0, 'auto').reason, 'handoff');
+
+  // `wait` is the rule with no exception: neither an explicit lane nor a marker
+  // overrides it, because blocking for the next turn boundary is a queued send.
+  assert.deepEqual(classifyDelivery('Stop it.', 30, 'steer'), { delivery: 'queue', reason: 'wait', text: 'Stop it.' });
+  assert.deepEqual(classifyDelivery('[steer] Stop it.', 30, 'auto'), { delivery: 'queue', reason: 'wait', text: 'Stop it.' });
+
+  // A marker needs whitespace or the end of the text after it: a link is content.
+  assert.deepEqual(classifyDelivery('[queue](https://example.com) go', 0, 'auto'), {
+    delivery: 'queue',
+    reason: 'handoff',
+    text: '[queue](https://example.com) go',
+  });
 
   // The guard is a length rule, exactly at its boundary.
   const atLimit = 'stop ' + 'x'.repeat(STEER_MAX_CHARS - 5);

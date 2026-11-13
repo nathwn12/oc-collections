@@ -50,13 +50,16 @@ Every failure is a typed JSON payload (`session_not_found`, `ambiguous_session`,
 
 `talk_send` takes `delivery`: `auto` (default), `steer` or `queue`. `steer` reaches the target inside its current turn, at its next step boundary; `queue` waits for that turn to end.
 
-Under `auto` the lane is resolved in this order:
+Steering is precise, not eager: a false steer interrupts a peer mid-task and corrupts its turn, while a false queue only costs a little latency, so `auto` steers only on a high-confidence correction and queues everything else. The order:
 
-- an explicit `delivery` wins;
-- a leading `[steer]`, `[queue]`, `STEER:` or `QUEUE:` in the text wins over the scorer, and is removed from what is delivered;
-- a positive `wait` means a handoff, so it queues;
-- a message of 400 characters or fewer carrying a halt or correction phrase (`stop`, `wrong`, `revert`, `failing`, …) steers;
+- a positive `wait` queues, always: an explicit `delivery` or a marker cannot override it, because blocking for the peer's next turn boundary is the definition of a queued message;
+- an explicit `delivery: "steer"` or `"queue"` then wins;
+- a leading `[steer]`, `[queue]`, `STEER:` or `QUEUE:` then wins over the classifier and is removed from what is delivered. The token counts only when whitespace or the end of the message follows it, so `[queue](https://example.com)` stays a Markdown link and arrives untouched, and a message that is only a marker is a typed `bad_request` — there is nothing to deliver;
+- a message of 400 characters or fewer that *opens* with a halt steers: `stop`, `halt`, `abort`, `revert`, `undo`, `roll back`, `hold off`, `don't`, `do not`, `never mind`, `leave it`, `discard`, or `cancel` aimed at the work in flight (`cancel that`, `cancel it`). One leading word may precede it — an interjection or the peer's name — as in `No — stop`, `Actually, revert that`, `Nova, stop the build`. `cancel the pending release note draft` names a deliverable, so it queues;
+- or carries an unambiguous correction phrase anywhere: `that's wrong`, `that is wrong`, `is wrong about`, `not what i asked`, `not what i wanted`, `wrong branch`, `wrong file`, `wrong repo`, `revert that`, `revert it`, `roll back that`, `undo that`, `undo it`, `emergency`, `asap`, `urgent`, `immediately`, `credentials are exposed`, `credentials leaked`, `secret is exposed`, `stop the deploy`, `kill the job`;
 - everything else queues.
+
+Deferring, temporal or substitutional phrasing vetoes both tiers and queues even when one matched: `don't forget`, `do not forget`, `wait for`, `when you are done`, `when you finish`, `instead of`, `no longer needed`, `no longer used`, `if you have time`. A bare `wrong`, `failed`, `red`, `critical`, `blocker`, `wait` or `instead` steers nothing on its own.
 
 The reply reports both fields: `delivery` is the lane used, and `deliveryReason` is one of `explicit`, `marker`, `wait`, `urgent`, `handoff`. Steer is for a correction the target should not finish its turn without; queue is for work that starts a new turn.
 
