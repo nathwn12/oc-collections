@@ -10,11 +10,11 @@ opencode plugin add oc-plugin-view
 
 Restart OpenCode. The plugin loads on the next start.
 
-List this package before any other sidebar TUI plugin such as `oc-flight-deck` to keep its Plugins section above other sidebar rows:
+List this package before any other sidebar TUI plugin to keep its Plugins section above other sidebar rows:
 
 ```jsonc
 {
-  "plugins": ["oc-plugin-view", "oc-flight-deck@0.21.3"]
+  "plugins": ["oc-plugin-view", "another-plugin@1.0.0"]
 }
 ```
 

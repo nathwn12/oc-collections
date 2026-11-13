@@ -1,6 +1,6 @@
 # oc-fallback
 
-Lets an agent seat step down its own model ladder when its model fails: one `switch_model` tool, one config file, and an automatic failover that ships off until a real provider failure proves it.
+Lets an agent seat step down its own model ladder when its model fails: one `switch_model` tool, one config file, no other package required.
 
 ## Not published
 
@@ -12,6 +12,12 @@ This package is `private: true` and is loaded from this repository, by path. It 
 
 Restart OpenCode. `oc-fallback` then registers the tool and the hook when a session starts.
 
+## It stands alone
+
+Nothing outside this package is required to use it. The ladders live in the config below, the model ids are whatever your provider catalog offers, and the published-benchmark check reads a public website. It does not import, read, or depend on another OpenCode package, and it does not care which harness or agent definitions you run — an agent is a string, and a ladder is a list of model ids.
+
+If you also run something that writes a `harness.json`-style record of which model serves which seat, you can point this package at that file instead of keeping the list here. That is an option, not a requirement, and the next section documents it without assuming you have it.
+
 ## Configuration
 
 Everything is one file: `~/.config/opencode/oc-fallback.json`, or the file named by `OC_FALLBACK_CONFIG`. `OC_FALLBACK=off` disables the plugin without touching either.
@@ -20,7 +26,17 @@ Everything is one file: `~/.config/opencode/oc-fallback.json`, or the file named
 {
   "enabled": true,
   "provider": "opencode-go",
-  "ladders": { "file": "Q:\\PROJECTS\\PERSONAL\\oc-superpowers\\harness.json", "key": "fallbacks" },
+  "ladders": {
+    "implementer": [
+      "opencode-go/deepseek-v4.1-flash",
+      "opencode-go/muse-spark-1.3-contributor",
+      "opencode-go/mimo-v2.6-flash"
+    ],
+    "reviewer": [
+      "opencode-go/deepseek-v4.1-flash",
+      "opencode-go/glm-5.3-flash"
+    ]
+  },
   "rules": {
     "autoFailover": false,
     "excludeFree": true,
@@ -52,21 +68,21 @@ Every key is optional; each one falls back to the default shown above. A file th
 
 ### Ladders, inline or by pointer
 
-Inline, the ladders live in this file:
+Inline — the default, and the only form that needs nothing else. The map is `{ "<agent>": ["provider/model", ...] }`, best first, rung 0 being that seat's current model:
 
 ```json
 { "ladders": { "implementer": ["opencode-go/deepseek-v4.1-flash", "opencode-go/muse-spark-1.3-contributor"] } }
 ```
 
-By pointer, they live somewhere else and this package only reads them:
+By pointer — opt in only if something else already keeps a ladder map in a JSON file. The file is read at setup and never copied, merged, or written back:
 
 ```json
-{ "ladders": { "file": "Q:\\PROJECTS\\PERSONAL\\oc-superpowers\\harness.json", "key": "fallbacks" } }
+{ "ladders": { "file": "C:/path/to/any-file.json", "key": "fallbacks" } }
 ```
 
-`key` defaults to `fallbacks`, and the value there is `{ "<agent>": ["provider/model", ...] }`, best first. The pointer form exists so one file stays the only record of which model serves which seat: the file is read at setup, never copied, never merged, never written back.
+`key` defaults to `fallbacks`. A missing file, a wrong key, or an empty map is not an error: the package registers nothing and says so in one log line, because a ladder that cannot be read is not a ladder.
 
-Rung 0 is the seat's pinned model. A seat with no pin inherits the session model, which the owner selects in the TUI; that seat is TUI-agnostic, so it carries **no ladder** and `switch_model` answers `no-ladder` for it. That is deliberate, not a gap.
+A seat with no entry in `ladders` gets no fallback: `switch_model` answers `no-ladder` for it. That is deliberate — a seat whose model is chosen elsewhere should not have one pinned here.
 
 ## What you get
 
