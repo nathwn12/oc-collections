@@ -41,6 +41,14 @@ describe("Codex limits", () => {
     expect(statSegments("dex", { dex: flagged }, { nowMs: 0 })?.filter(s => s.tone === "error").map(s => s.text).join("")).toContain("95");
     expect(statSegments("dex", { dex: flagged }, { nowMs: 0 })?.find(s => s.text.includes("40"))?.tone).toBeUndefined();
   });
+  test("Go and Codex use identical per-window indicators, with three versus two windows", () => {
+    const usage = quota(limits, account)!;
+    expect(statSegments("go", { go: usage }, { nowMs: 0 })?.slice(1))
+      .toEqual(statSegments("dex", { dex: usage }, { nowMs: 0 })?.slice(1));
+    const three = { windows: [...usage.windows, { id: "1m" as const, ratio: 0 }] };
+    expect(statLine("go", { go: three }, { nowMs: 0 })).toBe("go        \u25d4 20 \u25d1 40 \u25cb 0");
+    expect(statLine("dex", { dex: three }, { nowMs: 0 })).toBe("dex       \u25d4 20 \u25d1 40");
+  });
   test("executable resolution ignores empty and relative PATH directories", () => {
     const directory = mkdtempSync(join(import.meta.dir, "dex-path-"));
     try {
