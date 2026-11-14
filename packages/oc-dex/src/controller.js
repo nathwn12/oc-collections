@@ -43,7 +43,7 @@ const ENV_ALLOW = ["PATH", "Path", "SystemRoot", "WINDIR", "COMSPEC", "PATHEXT",
 
 function childEnv(home, apiKey, extra) {
   const env = Object.fromEntries(ENV_ALLOW.filter(k => process.env[k] !== undefined).map(k => [k, process.env[k]]));
-  Object.assign(env, { CODEX_HOME: home, [KEY_ENV]: apiKey }, extra);
+  Object.assign(env, { CODEX_HOME: home }, ...(apiKey ? [{ [KEY_ENV]: apiKey }] : []), extra);
   return env;
 }
 
@@ -52,8 +52,37 @@ function sandboxPolicy(run, cwd) {
   return { type: "readOnly", networkAccess: false };
 }
 
+export async function terminateChild(child, exited, { platform = process.platform, graceMs = KILL_GRACE_MS, spawnProcess = spawn } = {}) {
+  child.stdin.end();
+  let killer;
+  let killerPromise = Promise.resolve(true);
+  if (child.pid) {
+    if (platform === "win32") {
+      try {
+        killer = spawnProcess("taskkill.exe", ["/pid", String(child.pid), "/t", "/f"], { windowsHide: true, stdio: "ignore" });
+        killerPromise = new Promise(resolve => {
+          killer.on("error", () => resolve(false));
+          killer.on("exit", (_code, signal) => resolve(!signal));
+        });
+      } catch {
+        killerPromise = Promise.resolve(false);
+      }
+    } else child.kill("SIGKILL");
+  }
+
+  let timer;
+  const didExit = await Promise.race([
+    Promise.all([exited.then(() => true), killerPromise]).then(([childExited]) => childExited),
+    new Promise(resolve => { timer = setTimeout(() => resolve(false), graceMs); }),
+  ]);
+  clearTimeout(timer);
+  if (killer && didExit === false) killer.kill();
+  return didExit;
+}
+
 export async function runCodex(input, progress = () => {}, options = defaultOptions()) {
   const run = validateRun(input, options);
+  if (run.providerID !== PROVIDER) throw new Error(`provider unavailable: ${run.providerID} transport is not configured`);
   if (!input.cwd || !input.apiKey) throw new Error("Workspace and OpenCode Go credential are required");
   const cwd = resolve(input.cwd);
   const home = input.codexHome ?? options.codexHome ?? join(process.env.LOCALAPPDATA || tmpdir(), "oc-dex", "codex-home");
@@ -77,7 +106,7 @@ export async function runCodex(input, progress = () => {}, options = defaultOpti
   child.stderr.on("data", chunk => { stderr = (stderr + chunk).slice(-STDERR_LIMIT); });
 
   let settled = false;
-  let tearingDown = false;
+  let teardownPromise;
   let threadId = run.threadId;
   let turnId;
   let text = "";
@@ -95,23 +124,9 @@ export async function runCodex(input, progress = () => {}, options = defaultOpti
     child.stdin.write(JSON.stringify({ id, method: "turn/interrupt", params: { threadId, turnId } }) + "\n", () => {});
   });
 
-  // Kill the whole process tree and wait until the child is really gone. Resolves only after
-  // 'exit' fires or the grace window closes, so a caller can never observe a live orphan.
-  const teardown = async () => {
-    if (tearingDown) return exited;
-    tearingDown = true;
-    child.stdin.end();
-    if (child.pid) {
-      if (process.platform === "win32") {
-        await new Promise(done => {
-          const killer = spawn("taskkill.exe", ["/pid", String(child.pid), "/t", "/f"], { windowsHide: true, stdio: "ignore" });
-          killer.on("error", done);
-          killer.on("exit", done);
-        });
-      } else child.kill("SIGKILL");
-    }
-    await Promise.race([exited, new Promise(done => setTimeout(done, KILL_GRACE_MS))]);
-    return exited;
+  const teardown = () => {
+    teardownPromise ??= terminateChild(child, exited);
+    return teardownPromise;
   };
 
   const finish = async (status, error, extra = {}) => {
@@ -122,9 +137,17 @@ export async function runCodex(input, progress = () => {}, options = defaultOpti
     for (const entry of pending.values()) entry.reject(new Error("Codex process ended"));
     pending.clear();
     if (status === "timeout" || status === "cancelled") await interrupt();
-    await teardown();
+    const processExited = await teardown();
     const detail = error ? redact(error) : undefined;
-    resolveFinished({ status, threadId, text, deniedApprovals: denied, ...(detail ? { error: detail } : {}), ...extra });
+    resolveFinished({
+      status,
+      threadId,
+      text,
+      deniedApprovals: denied,
+      processExit: processExited ? "confirmed" : "unconfirmed",
+      ...(detail ? { error: detail } : {}),
+      ...extra,
+    });
   };
 
   const abort = () => { void finish("cancelled"); };
@@ -207,9 +230,10 @@ export async function runCodex(input, progress = () => {}, options = defaultOpti
           if (run.mode === "workspace-write") return void (await finish("failed", `Cannot verify the Windows sandbox; refusing workspace-write: ${error.message}`));
         }
       }
-      const params = { model: run.model, modelProvider: PROVIDER, cwd, approvalPolicy: "never", sandbox: run.mode };
+      const params = { model: run.modelID, modelProvider: PROVIDER, cwd, approvalPolicy: "never", sandbox: run.mode };
       const started = await (threadId ? send("thread/resume", { ...params, threadId }) : send("thread/start", params));
       threadId = started.thread.id;
+      await input.bindThread?.(threadId, { providerID: run.providerID, modelID: run.modelID });
       emit({ type: "thread", threadId });
       // `effort` is the documented per-turn reasoning override ("for this turn and subsequent
       // turns"); thread/start and thread/resume have no such field, so nothing is sent there.

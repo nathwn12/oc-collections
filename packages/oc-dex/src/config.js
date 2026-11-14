@@ -36,13 +36,14 @@ export const GO_MODELS = new Set([
 ]);
 
 import { PROGRESS_MODES } from "./progress.js";
+import { splitModelID } from "./models.js";
 
 const CHEAP_MODELS = ["deepseek-v4.1-flash", "muse-spark-1.3-contributor"];
 // Reasoning effort values Codex advertises (codex 0.169.0 string tables list
 // minimal/low/medium/high/xhigh; the Responses API rejects max/ultra-style extras on some
 // providers, so anything outside this set fails here instead of at the provider).
 export const REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh"];
-const OPTION_KEYS = new Set(["models", "defaultModel", "allowWorkspaceWrite", "maxTimeoutSeconds", "codexHome", "reasoningEffort", "progress", "heartbeatSeconds"]);
+const OPTION_KEYS = new Set(["models", "defaultModel", "allowWorkspaceWrite", "maxTimeoutSeconds", "codexHome", "reasoningEffort", "progress", "heartbeatSeconds", "delegationGuidance"]);
 
 export function defaultOptions() {
   return {
@@ -53,10 +54,17 @@ export function defaultOptions() {
     reasoningEffort: undefined,
     progress: "concise",
     heartbeatSeconds: 10,
+    delegationGuidance: true,
   };
 }
 
 function modelID(value, where) {
+  if (typeof value === "string" && value.includes("/")) {
+    const model = splitModelID(value);
+    if (model.providerID !== "opencode-go") throw new Error(`${where} must use an OpenCode Go model`);
+    if (!GO_MODELS.has(model.modelID)) throw new Error(`${where} is not an OpenCode Go model: ${model.modelID}`);
+    return model.id;
+  }
   if (typeof value !== "string" || !/^[a-z0-9][a-z0-9.-]*$/.test(value)) throw new Error(`${where} must be an OpenCode Go model ID without a provider prefix`);
   if (!GO_MODELS.has(value)) throw new Error(`${where} is not an OpenCode Go model: ${value}`);
   return value;
@@ -73,8 +81,10 @@ export function loadOptions(input) {
   if (input === null || typeof input !== "object" || Array.isArray(input)) throw new Error("oc-dex options must be an object");
   for (const key of Object.keys(input)) if (!OPTION_KEYS.has(key)) throw new Error(`unknown option: ${key}`);
   if (input.models !== undefined) {
-    if (!Array.isArray(input.models) || input.models.length === 0) throw new Error("models must contain at least one OpenCode Go model");
-    options.models = [...new Set(input.models.map(value => modelID(value, "models entry")))];
+    if (!Array.isArray(input.models) || input.models.length === 0) throw new Error("models must contain at least one model");
+    options.models = input.models.map(value => modelID(value, "models entry"));
+    const normalizedIDs = options.models.map(value => value.includes("/") ? value : `opencode-go/${value}`);
+    if (new Set(normalizedIDs).size !== normalizedIDs.length) throw new Error("models contains duplicate IDs after provider qualification");
     if (!options.models.includes(options.defaultModel)) options.defaultModel = options.models[0];
   }
   if (input.defaultModel !== undefined) {
@@ -106,14 +116,20 @@ export function loadOptions(input) {
     if (!Number.isInteger(input.heartbeatSeconds) || input.heartbeatSeconds < 1 || input.heartbeatSeconds > 300) throw new Error("heartbeatSeconds must be an integer from 1 to 300");
     options.heartbeatSeconds = input.heartbeatSeconds;
   }
+  if (input.delegationGuidance !== undefined) {
+    if (typeof input.delegationGuidance !== "boolean") throw new Error("delegationGuidance must be a boolean");
+    options.delegationGuidance = input.delegationGuidance;
+  }
   return options;
 }
 
 export function validateRun(input, options = defaultOptions()) {
   if (input === null || typeof input !== "object") throw new Error("A task prompt is required");
   if (typeof input.prompt !== "string" || !input.prompt.trim()) throw new Error("A task prompt is required");
-  const model = input.model === undefined ? options.defaultModel : modelID(input.model, "model");
-  if (!options.models.includes(model)) throw new Error(`model is not in the configured allowlist: ${model}`);
+  const rawModel = input.model === undefined ? options.defaultModel : input.model;
+  const model = typeof rawModel === "string" && !rawModel.includes("/") ? `opencode-go/${modelID(rawModel, "model")}` : modelID(rawModel, "model");
+  const configured = options.models.map(value => value.includes("/") ? value : `opencode-go/${value}`);
+  if (!configured.includes(model)) throw new Error(`model is not in the configured allowlist: ${model}`);
   const timeoutSeconds = input.timeoutSeconds === undefined ? Math.min(300, options.maxTimeoutSeconds) : input.timeoutSeconds;
   if (!Number.isInteger(timeoutSeconds) || timeoutSeconds < 1 || timeoutSeconds > options.maxTimeoutSeconds) throw new Error(`timeoutSeconds must be an integer from 1 to ${options.maxTimeoutSeconds}`);
   const mode = input.mode === undefined ? "read-only" : input.mode;
@@ -122,5 +138,5 @@ export function validateRun(input, options = defaultOptions()) {
   if (input.threadId !== undefined && (typeof input.threadId !== "string" || !/^[a-zA-Z0-9_-]{1,128}$/.test(input.threadId))) throw new Error("Invalid thread ID");
   // A per-call effort wins over the operator default; undefined on both sides stays unset.
   const reasoningEffort = input.reasoningEffort === undefined ? options.reasoningEffort : effort(input.reasoningEffort, "reasoningEffort");
-  return { prompt: input.prompt, model, timeoutSeconds, mode, threadId: input.threadId, reasoningEffort };
+  return { prompt: input.prompt, model, providerID: model.slice(0, model.indexOf("/")), modelID: model.slice(model.indexOf("/") + 1), timeoutSeconds, mode, threadId: input.threadId, reasoningEffort };
 }

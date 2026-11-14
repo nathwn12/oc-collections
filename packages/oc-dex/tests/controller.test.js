@@ -1,7 +1,7 @@
 import { afterAll, test, expect } from "bun:test";
 import { readFileSync, rmSync, existsSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { runCodex } from "../src/controller.js";
+import { runCodex, terminateChild } from "../src/controller.js";
 import { loadOptions } from "../src/config.js";
 
 const fixture = resolve(import.meta.dir, "fixtures/server.js");
@@ -65,6 +65,29 @@ test("starts a thread against the Go provider in the requested sandbox", async (
   expect(start.params.approvalPolicy).toBe("never");
 });
 
+test("refuses OpenAI before creating CODEX_HOME or launching the fixture", async () => {
+  expect(() => loadOptions({ models: ["openai/gpt-6.1-sol"] })).toThrow(/OpenCode Go/);
+});
+
+test("binds a new thread before starting its turn", async () => {
+  const { input, log } = wire();
+  let binding;
+  await runCodex({ ...input, bindThread: async (threadId, model) => { binding = { threadId, model }; } });
+  expect(binding).toEqual({
+    threadId: "test-thread",
+    model: { providerID: "opencode-go", modelID: "deepseek-v4.1-flash" },
+  });
+  const methods = frames(log).map(frame => frame.method);
+  expect(methods.indexOf("thread/start")).toBeLessThan(methods.indexOf("turn/start"));
+});
+
+test("does not start a turn when durable thread binding fails", async () => {
+  const { input, log } = wire();
+  const result = await runCodex({ ...input, bindThread: async () => { throw new Error("storage unavailable"); } });
+  expect(result.status).toBe("failed");
+  expect(frames(log).some(frame => frame.method === "turn/start")).toBe(false);
+});
+
 test("pins every turn to an explicit bounded sandbox policy", async () => {
   const readOnly = wire();
   await runCodex(readOnly.input);
@@ -106,6 +129,7 @@ test("times out, interrupts the turn, and leaves no child process behind", async
   const { input, pid } = wire("hang");
   const result = await runCodex({ ...input, timeoutSeconds: 1 });
   expect(result.status).toBe("timeout");
+  expect(result.processExit).toBe("confirmed");
   const child = Number(readFileSync(pid, "utf8"));
   expect(alive(child)).toBe(false);
 });
@@ -116,8 +140,28 @@ test("cancels its child on abort and leaves no child process behind", async () =
   setTimeout(() => abort.abort(), 250);
   const result = await runCodex({ ...input, signal: abort.signal });
   expect(result.status).toBe("cancelled");
+  expect(result.processExit).toBe("confirmed");
   const child = Number(readFileSync(pid, "utf8"));
   expect(alive(child)).toBe(false);
+});
+
+test("returns an unconfirmed bounded outcome when termination never exits", async () => {
+  let killer;
+  const child = {
+    pid: 123,
+    stdin: { end() {} },
+    kill() {},
+  };
+  const termination = await terminateChild(child, new Promise(() => {}), {
+    platform: "win32",
+    graceMs: 10,
+    spawnProcess: () => {
+      killer = { on(event, callback) { if (event === "exit") this.exit = callback; }, kill() {} };
+      return killer;
+    },
+  });
+  expect(termination).toBe(false);
+  expect(killer).toBeDefined();
 });
 
 test("surfaces stderr in the failure message without leaking the key", async () => {

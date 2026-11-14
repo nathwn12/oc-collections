@@ -22,7 +22,7 @@ Per call beats operator default beats built-in. The operator default is `oc-dex.
 
 | Key | Default | What it decides |
 | --- | --- | --- |
-| `models` | `["deepseek-v4.1-flash", "muse-spark-1.3-contributor"]` | The allowlist. A per-call model outside it is refused before anything is spawned. |
+| `models` | `["deepseek-v4.1-flash", "muse-spark-1.3-contributor"]` | The allowlist. Use OpenCode Go model IDs; `opencode-go/` prefixes are also accepted. IDs must exist in the built-in Go model list. |
 | `defaultModel` | The first entry of `models` | The model a call runs on when it names none. |
 | `allowWorkspaceWrite` | `false` | `true` admits the `workspace-write` sandbox mode; `false` leaves every run read-only. |
 | `maxTimeoutSeconds` | `900` | The ceiling a per-call `timeoutSeconds` may not cross. |
@@ -30,6 +30,7 @@ Per call beats operator default beats built-in. The operator default is `oc-dex.
 | `reasoningEffort` | unset | The per-turn effort override (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`). Unset omits it and the server default applies. |
 | `progress` | `"concise"` | How the running row renders (`concise`, `full`, or `off`). |
 | `heartbeatSeconds` | `10` | How often the running row redraws while the child is quiet. |
+| `delegationGuidance` | `true` | Adds concise request-local guidance for eligible primary agents when `oc_dex` is available. Set `false` to opt out. Guidance encourages discretionary delegation; it does not guarantee a worker call. |
 
 A bad value fails at setup (operator default) or at call time (per-call argument), never mid-run. The exact rules live in `src/config.js`.
 
@@ -37,10 +38,10 @@ A bad value fails at setup (operator default) or at call time (per-call argument
 
 | | |
 | --- | --- |
-| `oc_dex` | `prompt` (required) runs a bounded task and returns its text plus the thread id. `model` must be on the allowlist. `mode` is `read-only` unless `workspace-write` is enabled above. `timeoutSeconds` caps the run. `threadId` resumes a previous run. `reasoningEffort` overrides the operator default for one call. |
+| `oc_dex` | `prompt` (required) runs a bounded task and returns its text plus the thread id. `model` must be on the allowlist. `mode` is `read-only` unless `workspace-write` is enabled above. `timeoutSeconds` caps the run. `threadId` resumes a previously bound thread; an unbound thread fails closed. `reasoningEffort` overrides the operator default for one call. |
 
 Every approval the child requests is declined, and its sandbox always denies network access. The credential travels in the child's environment only — never in its argv — and every line the tool returns has it redacted.
 
 ## Requirements
 
-OpenCode V2, with Node 22 or newer, a `codex` CLI on PATH (`codex.exe` on Windows), and an active OpenCode Go API key connection in the host.
+OpenCode V2, with Node 22 or newer and a `codex` CLI on PATH (`codex.exe` on Windows). OpenCode Go requires an active API-key connection in the host. OpenCode Go is the only supported provider.

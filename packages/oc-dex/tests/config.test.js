@@ -6,23 +6,35 @@ test("ships the two cheap Go models as the default allowlist", () => {
   expect(options.models).toEqual(["deepseek-v4.1-flash", "muse-spark-1.3-contributor"]);
   expect(options.defaultModel).toBe("deepseek-v4.1-flash");
   expect(options.allowWorkspaceWrite).toBe(false);
-  expect(validateRun({ prompt: "inspect" }, options).model).toBe("deepseek-v4.1-flash");
+  expect(options.delegationGuidance).toBe(true);
+  expect(validateRun({ prompt: "inspect" }, options).model).toBe("opencode-go/deepseek-v4.1-flash");
 });
 
 test("accepts a configured Go model with default reasoning and bounded workspace", () => {
   const options = loadOptions({ models: ["muse-spark-1.3-contributor"], defaultModel: "muse-spark-1.3-contributor" });
   const run = validateRun({ prompt: "inspect" }, options);
-  expect(run.model).toBe("muse-spark-1.3-contributor");
+  expect(run.model).toBe("opencode-go/muse-spark-1.3-contributor");
   expect(run.timeoutSeconds).toBe(300);
   expect(run.mode).toBe("read-only");
 });
 
-test("refuses anything that is not a Go model", () => {
+test("qualifies legacy Go IDs and refuses models outside the configured allowlist", () => {
   const options = defaultOptions();
-  expect(() => validateRun({ prompt: "x", model: "openai/gpt-6.1-sol" }, options)).toThrow(/Go model/);
+  expect(() => validateRun({ prompt: "x", model: "openai/gpt-6.1-sol" }, options)).toThrow(/OpenCode Go/);
   expect(() => validateRun({ prompt: "x", model: "gpt-6.1-sol" }, options)).toThrow(/Go model/);
   expect(GO_MODELS.has("deepseek-v4.1-flash")).toBe(true);
   expect(GO_MODELS.has("gpt-6.1-sol")).toBe(false);
+});
+
+test("accepts qualified Go IDs and rejects non-Go providers", () => {
+  const options = loadOptions({ models: ["opencode-go/glm-5.3"], defaultModel: "opencode-go/glm-5.3" });
+  expect(validateRun({ prompt: "inspect" }, options).model).toBe("opencode-go/glm-5.3");
+  expect(() => loadOptions({ models: ["opencode/gpt-6.1-sol"] })).toThrow(/OpenCode Go/);
+});
+
+test("rejects models from every provider except OpenCode Go", () => {
+  expect(() => loadOptions({ models: ["openai/gpt-6.1-sol"] })).toThrow(/OpenCode Go/);
+  expect(() => loadOptions({ models: ["other/model"] })).toThrow(/OpenCode Go/);
 });
 
 test("fails closed on a real Go model that is outside the configured allowlist", () => {
@@ -50,6 +62,10 @@ test("loadOptions rejects a model that is not in the Go catalog", () => {
   expect(() => loadOptions({ models: [] })).toThrow(/at least one/);
 });
 
+test("rejects duplicate IDs after mapping legacy Go IDs to provider-qualified IDs", () => {
+  expect(() => loadOptions({ models: ["deepseek-v4.1-flash", "opencode-go/deepseek-v4.1-flash"] })).toThrow(/duplicate/i);
+});
+
 test("loadOptions rejects a default that is not in the allowlist", () => {
   expect(() => loadOptions({ models: ["muse-spark-1.3-contributor"], defaultModel: "glm-5.3" })).toThrow(/defaultModel/);
   expect(loadOptions({ models: ["muse-spark-1.3-contributor"] }).defaultModel).toBe("muse-spark-1.3-contributor");
@@ -69,6 +85,11 @@ test("defaults the progress display to concise and a heartbeat that keeps it mov
   const options = defaultOptions();
   expect(options.progress).toBe("concise");
   expect(options.heartbeatSeconds).toBe(10);
+});
+
+test("allows request-local delegation guidance to be disabled explicitly", () => {
+  expect(loadOptions({ delegationGuidance: false }).delegationGuidance).toBe(false);
+  expect(() => loadOptions({ delegationGuidance: "yes" })).toThrow(/delegationGuidance/);
 });
 
 test("accepts a progress mode and a heartbeat inside the movement floor", () => {
