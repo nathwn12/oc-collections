@@ -1,0 +1,14 @@
+{
+  "name": "oc-dex",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.4.4",
+  "exports": { ".": "./src/index.js" },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "scripts": { "test": "bun test" },
+  "peerDependencies": { "@opencode/plugin": "2.3.0" }
+}

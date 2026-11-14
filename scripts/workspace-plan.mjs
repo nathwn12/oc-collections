@@ -19,6 +19,7 @@ export const PLAN = {
   check: {
     "janua": [["script", "check"], ["script", "test"], ["pack", "--dry-run"]],
     "oc-bifrost": [["script", "check"]],
+    "oc-dex": [["script", "test"]],
     "oc-fallback": [["script", "check"]],
     "oc-flight-deck": [["script", "check"]],
     "oc-gladius": [["node", "--check", "npm/bin/gladius-mcp.js"]],
@@ -33,6 +34,7 @@ export const PLAN = {
   build: {
     "janua": [],
     "oc-bifrost": [["script", "compile"]],
+    "oc-dex": [],
     "oc-fallback": [],
     "oc-flight-deck": [["script", "compile"]],
     "oc-gladius": [],
@@ -47,6 +49,7 @@ export const PLAN = {
   test: {
     "janua": [["script", "test"]],
     "oc-bifrost": [["script", "test"]],
+    "oc-dex": [["script", "test"]],
     "oc-fallback": [["script", "test"]],
     "oc-flight-deck": [["script", "test"]],
     "oc-gladius": [],

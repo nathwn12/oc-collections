@@ -2,6 +2,16 @@
 
 This repo is an npm-workspaces monorepo: the index stays at the root, and each family package moves into `packages/<name>`, keeping its own npm name, version line, and release cadence. This file records every move. Archiving the source repos was the owner's call, recorded in Retired repositories at the end of this file; no source repo was changed by the migration.
 
+## 2026-11-14 — moved: `oc-dex` into `packages/oc-dex/`
+
+Owner-directed: the standalone `oc-dex` plugin directory at `Q:\PROJECTS\PERSONAL\oc-dex` (15 files — `src/`, `tests/`, `docs/`, `package.json` — never a git repository, so no source branch or HEAD to record) moved into `packages/oc-dex/`. Name and version unchanged (`oc-dex@0.0.1`, `private: true`, never published); every moved file verified byte-identical to the pre-move tree by sha256.
+
+| Moved path | What it is | Why |
+| --- | --- | --- |
+| `packages/oc-dex/` | the `oc_dex` headless-Codex plugin | one directory per family package; the local plugins junction now points here |
+
+Rewired with it: the root workspace plan (`scripts/workspace-plan.mjs` — all three purposes run the package's own `test`; it has no build step), the structural index check's omission list (`scripts/check-index.ps1`, `$Omitted`: private, junction-installed, no table row), the root lockfile (`bun.lock`: workspace entries), a package `.gitignore` for the beside-the-plugin operator file (`oc-dex.config.json`), a standalone package README, and the local plugins junction (`oc-dex` now targets `packages/oc-dex`). Not admitted to the release allowlist, the dispatch choice list, the index-registry scope table, or the doc checker's front-door map: private packages are never released. The original directory was removed only after the copy verified hash-identical and green; the pushed branch is the durable copy.
+
 ## 2026-11-10 - three imports, two renames
 
 Three repos moved in on the same day, by owner instruction. Two of them were **renamed on the way in**, which the rule below otherwise forbids:
