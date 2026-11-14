@@ -1111,6 +1111,8 @@ function statLine(field, source, layout = {}) {
     case "dex": {
       const name = canonicalField(field);
       const value = goValueSegments(source, layout, name);
+      if (name === "dex" && value === undefined)
+        return row("dex", "unavailable");
       return value === undefined ? undefined : row(name, value.map((segment) => segment.text).join(""));
     }
     default:
@@ -3688,8 +3690,10 @@ function quota(limits, account) {
   }
   return windows.length ? { windows } : undefined;
 }
-function executable() {
-  for (const directory of (process.env.PATH ?? "").split(process.platform === "win32" ? ";" : ":")) {
+function executable(pathValue = process.env.PATH ?? "") {
+  for (const directory of pathValue.split(process.platform === "win32" ? ";" : ":")) {
+    if (!isAbsolute2(directory))
+      continue;
     const path = join5(directory, process.platform === "win32" ? "codex.exe" : "codex");
     if (!existsSync4(path))
       continue;
