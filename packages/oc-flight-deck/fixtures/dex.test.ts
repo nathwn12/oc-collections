@@ -33,7 +33,8 @@ describe("Codex limits", () => {
   test("uses the Go row's dials, fixed window order and spacing with a distinct label", () => {
     const usage = quota(limits, account);
     expect(statLine("dex", { dex: usage }, { nowMs: 0 })).toBe("dex       \u25d4 20 \u25d1 40");
-    expect(statLine("dex", { dex: usage }, { nowMs: 2000000000000 })).toBeUndefined();
+    expect(statLine("dex", { dex: usage }, { nowMs: 2000000000000 })).toBe("dex       unavailable");
+    expect(statLine("dex", {}, { persist: false })).toBe("dex       unavailable");
     expect(resolveConfig({ sidebar: { rows: ["dex"] } }).config.sidebar.rows).toEqual(["dex"]);
     expect(statLine("dex", { dex: { windows: [usage!.windows[1]] } }, { nowMs: 0 })).toBe("dex       \u2014 \u25d1 40");
     const flagged = { windows: [{ id: "5h", ratio: 0.95, resetAtMs: 2000000000000 }, usage!.windows[1]] };

@@ -585,6 +585,7 @@ export function statLine(
       // string view (tests, `sidebarTextLines`) and the JSX view agree
       // character-for-character.
       const value = goValueSegments(source, layout, name);
+      if (name === "dex" && value === undefined) return row("dex", "unavailable");
       return value === undefined ? undefined : row(name, value.map((segment) => segment.text).join(""));
     }
     default:
