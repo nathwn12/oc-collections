@@ -1642,7 +1642,7 @@ var DEFAULT_CONFIG = {
   sidebar: {
     enabled: true,
     lines: DEFAULT_SIDEBAR_LINES,
-    footer: { lines: DEFAULT_SIDEBAR_FOOTER_LINES, go: false },
+    footer: { lines: DEFAULT_SIDEBAR_FOOTER_LINES, go: false, dex: false },
     rows: DEFAULT_SIDEBAR_ROWS,
     tps: { scope: DEFAULT_TPS_SCOPE, display: DEFAULT_TPS_DISPLAY },
     persist: true,
@@ -1801,6 +1801,16 @@ function readFooterGo(value, issues) {
     blink: readBoolean(value["blink"], DEFAULT_GO_PANEL_LOOK.blink, "sidebar.footer.go.blink", issues),
     blinkMs: readNumber(value["blinkMs"], DEFAULT_GO_PANEL_LOOK.blinkMs, "sidebar.footer.go.blinkMs", issues, 200, 5000)
   };
+}
+function readFooterDex(value, issues) {
+  if (value === undefined || value === false)
+    return false;
+  if (value === true)
+    return true;
+  if (isRecord(value))
+    return { label: readGoLabel(value.label, "dex", "sidebar.footer.dex.label", issues) };
+  issues.push("sidebar.footer.dex must be true, false or an object; using false");
+  return false;
 }
 function readRows(value, issues, maxLines) {
   if (value === undefined)
@@ -2291,7 +2301,8 @@ function resolveConfig(options) {
         lines,
         footer: {
           lines: footerLines,
-          go: readFooterGo(sidebarFooter.go, issues)
+          go: readFooterGo(sidebarFooter.go, issues),
+          dex: readFooterDex(sidebarFooter.dex, issues)
         },
         rows,
         tps: readTps(sidebar, issues),
@@ -3522,6 +3533,13 @@ function startGoBridge(host, deps, intervalMs = GO_POLL_MS) {
   };
 }
 
+// src/tui/dex-panel.ts
+function dexPanelLines(usage, now, label = "dex") {
+  const header = { field: "go", text: label, segments: [{ text: label, tone: "subdued" }] };
+  const fresh = usage && { windows: usage.windows.filter((window) => window.resetAtMs === undefined || window.resetAtMs > now) };
+  return [header, ...goPanelLines(fresh, now, { labels: { rolling: "5h", weekly: "1w" } }, 0, !fresh?.windows.length ? "unavailable" : undefined).slice(0, 2)];
+}
+
 // src/tui/ticker.ts
 var TICKER_KEY = "flight-deck.frame";
 var IDLE_REFRESH_MS = 1000;
@@ -4356,7 +4374,9 @@ var tui_default = Plugin.define({
     };
     const goOption = config.sidebar.footer.go;
     const goPanelEnabled = goOption === true || typeof goOption === "object" && goOption !== null;
-    const animated = config.sidebar.enabled && (goPanelEnabled || config.sidebar.rows.some((name) => ANIMATED_FIELDS.some((field) => field === name)));
+    const dexOption = config.sidebar.footer.dex;
+    const dexEnabled = dexOption !== false;
+    const animated = config.sidebar.enabled && (goPanelEnabled || dexEnabled || config.sidebar.rows.some((name) => ANIMATED_FIELDS.some((field) => field === name)));
     let spinnerNeeded = false;
     const ticker = startTicker(context, animated ? config.refresh : 0, () => spinnerNeeded);
     const wantGuard = config.sidebar.enabled && config.sidebar.rows.includes("guard");
@@ -4457,7 +4477,7 @@ var tui_default = Plugin.define({
         }
       }));
     }
-    if (config.sidebar.enabled && (config.sidebar.footer.lines.length > 0 || goPanelEnabled)) {
+    if (config.sidebar.enabled && (config.sidebar.footer.lines.length > 0 || goPanelEnabled || dexEnabled)) {
       releases.push(context.ui.slot({
         prepend: "sidebar.footer",
         render: () => {
@@ -4465,11 +4485,13 @@ var tui_default = Plugin.define({
           const goUsage = goBridge?.usage;
           const goReason = goBridge === undefined ? "no-bridge" : goBridge.reason ?? (goUsage === undefined ? "pending" : undefined);
           const panel = goPanelEnabled ? goPanelLines(goUsage, Date.now(), goLook.current(), ticker?.frame ?? 0, goReason) : [];
+          const dexPanel = dexEnabled ? dexPanelLines(undefined, Date.now(), typeof dexOption === "object" ? dexOption.label : "dex") : [];
           return /* @__PURE__ */ jsxs("box", {
             flexDirection: "column",
             children: [
               config.sidebar.footer.lines.map((text) => themedLine({ text })),
-              panel.map((line) => themedLine(line))
+              panel.map((line) => themedLine(line)),
+              dexPanel.map((line) => themedLine(line))
             ]
           });
         }

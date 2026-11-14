@@ -19,6 +19,7 @@ import { ANIMATED_FIELDS, type StatSource } from "./stats.js";
 import { attributeMask, themeColor } from "./style.js";
 import { startGuardBridge } from "./guard.js";
 import { startGoBridge } from "./go.js";
+import { dexPanelLines } from "./dex-panel.js";
 import { startTicker } from "./ticker.js";
 import { asCount, asRecord, type SessionLike } from "./coerce.js";
 import { createProjectTotals } from "./project-totals.js";
@@ -220,9 +221,11 @@ export default Plugin.define({
     // frame only when the look opts in; by default the bar is static).
     const goOption = config.sidebar.footer.go;
     const goPanelEnabled = goOption === true || (typeof goOption === "object" && goOption !== null);
+    const dexOption = config.sidebar.footer.dex;
+    const dexEnabled = dexOption !== false;
     const animated =
       config.sidebar.enabled &&
-      (goPanelEnabled ||
+      (goPanelEnabled || dexEnabled ||
         config.sidebar.rows.some((name) => ANIMATED_FIELDS.some((field) => field === name)));
     let spinnerNeeded = false;
     const ticker = startTicker(context, animated ? config.refresh : 0, () => spinnerNeeded);
@@ -243,6 +246,8 @@ export default Plugin.define({
     const wantGo =
       config.sidebar.enabled && (config.sidebar.rows.includes("go") || goPanelEnabled);
     const goBridge = wantGo ? startGoBridge(context) : undefined;
+    // Parked: a parent-PID tree walk cannot reliably reap a reparented Windows
+    // descendant. Never start the quota subprocess until ownership is robust.
 
     // The footer panel's look, re-resolved live from the config file: the
     // reader cheap-stats the file each render (mtime + size) and re-reads +
@@ -427,7 +432,7 @@ export default Plugin.define({
       );
     }
 
-    if (config.sidebar.enabled && (config.sidebar.footer.lines.length > 0 || goPanelEnabled)) {
+    if (config.sidebar.enabled && (config.sidebar.footer.lines.length > 0 || goPanelEnabled || dexEnabled)) {
       releases.push(
         context.ui.slot({
           // The sidebar footer: a separate host slot below the rows. The
@@ -465,10 +470,14 @@ export default Plugin.define({
             const panel = goPanelEnabled
               ? goPanelLines(goUsage, Date.now(), goLook.current(), ticker?.frame ?? 0, goReason)
               : [];
+            const dexPanel = dexEnabled
+              ? dexPanelLines(undefined, Date.now(), typeof dexOption === "object" ? dexOption.label : "dex")
+              : [];
             return (
               <box flexDirection="column">
                 {config.sidebar.footer.lines.map((text) => themedLine({ text }))}
                 {panel.map((line) => themedLine(line))}
+                {dexPanel.map((line) => themedLine(line))}
               </box>
             );
           },

@@ -271,7 +271,7 @@ describe("the sidebar footer", () => {
     expect(resolution.config.sidebar.footer.lines).toEqual([]);
     expect(DEFAULT_CONFIG.sidebar.footer.lines).toEqual(DEFAULT_SIDEBAR_FOOTER_LINES);
     // The whole footer shape, so a new key cannot arrive without a default.
-    expect(DEFAULT_CONFIG.sidebar.footer).toEqual({ lines: [], go: false });
+    expect(DEFAULT_CONFIG.sidebar.footer).toEqual({ lines: [], go: false, dex: false });
   });
 
   test("reads the footer's go panel flag, off by default", () => {

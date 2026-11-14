@@ -190,6 +190,7 @@ interface SidebarFooterConfig {
    * first poll lands - never a blank slot.
    */
   readonly go: boolean | GoPanelLook;
+  readonly dex: boolean | { readonly label: string };
 }
 
 interface FooterConfig {
@@ -508,7 +509,7 @@ export const DEFAULT_CONFIG: FlightDeckConfig = {
   sidebar: {
     enabled: true,
     lines: DEFAULT_SIDEBAR_LINES,
-    footer: { lines: DEFAULT_SIDEBAR_FOOTER_LINES, go: false },
+    footer: { lines: DEFAULT_SIDEBAR_FOOTER_LINES, go: false, dex: false },
     rows: DEFAULT_SIDEBAR_ROWS,
     tps: { scope: DEFAULT_TPS_SCOPE, display: DEFAULT_TPS_DISPLAY },
     persist: true,
@@ -743,6 +744,14 @@ function readFooterGo(value: unknown, issues: string[]): boolean | GoPanelLook {
       5000,
     ),
   };
+}
+
+function readFooterDex(value: unknown, issues: string[]): boolean | { readonly label: string } {
+  if (value === undefined || value === false) return false;
+  if (value === true) return true;
+  if (isRecord(value)) return { label: readGoLabel(value.label, "dex", "sidebar.footer.dex.label", issues) };
+  issues.push("sidebar.footer.dex must be true, false or an object; using false");
+  return false;
 }
 
 /**
@@ -1500,6 +1509,7 @@ export function resolveConfig(options: unknown): ConfigResolution {
           // `true` enables with the default look; an object enables with a
           // custom one.
           go: readFooterGo(sidebarFooter.go, issues),
+          dex: readFooterDex(sidebarFooter.dex, issues),
         },
         rows,
         tps: readTps(sidebar, issues),

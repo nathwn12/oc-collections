@@ -266,3 +266,8 @@ The shipped `flight-deck.example.jsonc` is a complete starting file, and `flight
 <p align="center">
   <sub>Built by <a href="https://github.com/nathwn12">nathwn12</a> · <a href="https://github.com/nathwn12?tab=repositories">All projects</a></sub>
 </p>
+# Codex quota footer
+
+The experimental `sidebar.footer.dex` section is parked: it displays
+unavailable and never starts Codex. Safe process ownership must be resolved
+before it can show quota data.

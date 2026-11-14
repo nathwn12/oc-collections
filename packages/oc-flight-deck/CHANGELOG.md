@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Park the experimental Codex quota footer pending safe process ownership.
+
 ### Changed
 
 - The TPS row defaults to the realtime estimate and includes observed time to first token when available. The settled-turn average remains opt-in.

@@ -48,6 +48,14 @@
               "maxItems": 24,
               "description": "The footer's fixed lines, in order. Empty by default since 0.8.1 - set the documented `▸ FLIGHT DECK` pairing here to re-enable it. Independent of `sidebar.lines`, so setting your own top lines does not turn the footer on. An explicit empty array removes the fixed lines (and never registers the slot on its own; `go` can still claim it)."
             },
+            "dex": {
+              "default": false,
+              "description": "Parked experimental footer: always unavailable; no Codex process starts. true uses the label dex; an object enables a custom label.",
+              "anyOf": [
+                { "type": "boolean" },
+                { "type": "object", "additionalProperties": false, "properties": { "label": { "type": "string" } } }
+              ]
+            },
             "go": {
               "default": false,
               "description": "Draw the live Go usage panel under the footer's fixed lines: three fixed-width lines - rolling (5h), weekly (1w), monthly (1m) - each with a bar, a right-aligned percent and a right-aligned reset countdown, read from the active opencode-go credential in OpenCode's own credential store (there is no env var). true enables with the default look (no header, 10-cell bar, labels at least 6 wide, both columns, breathing mark on, static meter); an object with header, barWidth, labelWidth, percent, reset, align, sweep, labels, blink and blinkMs enables with a custom look. A window at 90% or more, or reporting a non-ok status, turns its bar and number red. Off by default; turning it on starts the same account-wide poll the `go` row uses and claims the sidebar footer slot even when `lines` is empty. The panel renders first inside the footer slot, directly above the host's own location row.",

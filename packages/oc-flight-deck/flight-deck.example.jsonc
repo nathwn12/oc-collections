@@ -103,7 +103,9 @@
       // the column auto-widens past `labelWidth` to hold the longest rename.
       // `blink` draws the slow breathing mark on the first line (on by
       // default); `blinkMs` (200-5000) sets the milliseconds per breath step.
-      "go": false
+      "go": false,
+      // Experimental and parked: displays unavailable; no Codex process starts.
+      "dex": false
     },
 
     // The live rows, top to bottom. Every value is read from the open session,

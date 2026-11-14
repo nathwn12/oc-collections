@@ -21,7 +21,7 @@ Add the entry to the `plugins` array in your `opencode.jsonc`, then restart Open
 | Elapsed time | Counts active turn time, recomputed from the turn spans the host recorded, so it survives a restart and never steps backwards. |
 | Speed | Reports a settled-turn average, a realtime estimate, or both plus time to first token. |
 | Caution annunciator | An opt-in watchdog row that stays silent until a tool or a turn stops moving, then reports what it observed without killing anything. |
-| Quota and session rows | Draws the Go usage dials, and a session id row that copies the full id on click. |
+| Quota and session rows | Draws Go usage dials and a session id row that copies the full id on click. |
 | One config file | Keeps every setting in one global file, and nothing per project. |
 
 ## Requirements
