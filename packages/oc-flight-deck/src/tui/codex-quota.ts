@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { createInterface } from "node:readline";
 import type { GoUsage, GoWindow } from "./go-usage.js";
+import { ownedProcess } from "./owned-process.js";
 
 const record = (v: unknown): Record<string, unknown> =>
   v !== null && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : {};
@@ -45,9 +46,9 @@ function executable(): string | undefined {
 }
 
 /**
- * Connect ONLY to an already-running Codex daemon. Never start an app-server,
- * read OAuth files, create threads, or kill a PID tree. The native proxy owns
- * no workers; EOF closes its transport. Resolve only after its process closes.
+ * Windows uses a private stdio server enclosed in an owned Job Object.
+ * Other platforms connect to the existing daemon. Never read OAuth files,
+ * create threads, or kill a PID tree. Resolve only after the owned process closes.
  */
 export function readCodex(signal?: AbortSignal, options: {
   command?: string; args?: string[]; timeoutMs?: number;
@@ -55,8 +56,13 @@ export function readCodex(signal?: AbortSignal, options: {
   if (signal?.aborted) return Promise.resolve(undefined);
   const command = options.command ?? executable();
   if (!command) return Promise.resolve(undefined);
+  const launch = options.command
+    ? { command, args: options.args ?? ["app-server", "proxy"] }
+    : process.platform === "win32"
+      ? ownedProcess(command, ["app-server", "--stdio"])
+      : { command, args: ["app-server", "proxy"] };
   return new Promise(resolve => {
-    const child = spawn(command, options.args ?? ["app-server", "proxy"], {
+    const child = spawn(launch.command, launch.args, {
       windowsHide: true, stdio: ["pipe", "pipe", "ignore"],
     });
     let finishing = false, bytes = 0, limits: unknown, account: unknown;

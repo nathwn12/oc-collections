@@ -201,7 +201,7 @@
       "elapsed",
       "tps"
       // ,"go"        Zen Go account usage (needs the active opencode-go credential)
-      // ,"dex"       Codex CLI account's 5h/1w dials (requires its authenticated app-server daemon)
+      // ,"dex"       Codex CLI account's 5h/1w dials (private Job-owned server on Windows)
       // ,"caution"   — the annunciator
       // ,"branch"    — current git branch
       // ,"updated"   — absolute timestamp of the newest recorded action

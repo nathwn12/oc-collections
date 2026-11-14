@@ -25,18 +25,23 @@ spacing and error/reset indicators, under its own `dex` label.
 These are Codex/ChatGPT plan limits, not OpenCode Go usage or the selected
 OpenCode model's allowance. The account is the one authenticated in Codex.
 
-Requires a native Codex CLI with `app-server proxy` support and a running,
-authenticated app-server daemon. Start it separately with
-`codex app-server daemon start`; stop it with `codex app-server daemon stop`
-when you no longer need it. Flight Deck never starts or stops that daemon.
+Requires an authenticated native Codex CLI. On Windows, Flight Deck starts a
+private `codex app-server --stdio` inside an owned Job Object. It does not
+start a shared daemon or change privileges. On other platforms, a running
+authenticated daemon with `app-server proxy` support is required; start it
+separately with `codex app-server daemon start`. Flight Deck never starts or
+stops that shared daemon.
 No new account, paid service or API key is required beyond your existing
 Codex/ChatGPT plan. Codex manages its own authentication.
 
-The plugin polls once per minute through a short-lived native proxy. It reads
+The plugin polls once per minute through a short-lived private connection. It reads
 only account metadata and rate limits, never OAuth files or thread history.
-Each proxy closes stdin after its response; a hung proxy is terminated through
-its owned child handle, and completion waits for process closure. Scoop shims
-are bypassed so the child handle belongs to the proxy, not its launcher.
+On Windows, the native server is created suspended, assigned to a kill-on-close
+job, then resumed. A hidden built-in PowerShell helper holds the job and the
+owner's process identity handle. Success closes stdin; timeout or cancellation
+terminates only that helper. Helper exit/crash or owner death closes the job
+and reaps all server descendants, including detached children. Scoop shims are
+bypassed so the native server, not a launcher, is contained before it can run.
 Missing daemon, API-key authentication, invalid windows, expired resets and
 data older than 90 seconds show unavailable rather than fabricated zero usage.
 
@@ -185,7 +190,7 @@ Every name `sidebar.rows` accepts, what its number means, and whether it draws b
 | `turns` | Prompts sent this session. | opt-in |
 | `guard` | Harness status when a guard bridge supplies it (breaches, orphans, findings, or ok). Without the bridge the row has no data. | opt-in |
 | `go` | Zen Go usage: three dials (`○ ◔ ◑ ◕ ●`) plus percent for 5h, 1w, 1m, read from OpenCode's own active opencode-go credential store; no env var. A window at 90% or more, or non-ok, turns red; only the worst flagged window carries a reset countdown. | opt-in |
-| `dex` | Codex CLI account usage: the same compact dials for 5h then 1w. Requires an existing authenticated Codex app-server daemon. Missing or stale data says unavailable, never zero; a missing individual window shows a dash in its original position. | opt-in |
+| `dex` | Codex CLI account usage: the same compact dials for 5h then 1w. Uses a private Job-owned stdio server on Windows, or an existing Codex daemon elsewhere. Missing or stale data says unavailable, never zero; a missing individual window shows a dash in its original position. | opt-in |
 | `ses` | Clipped 18-cell preview of the session id (less when the label column is narrow, floored at 8), labelled `session`. Click copies the full id. A verified copy is silent: the host write reports `written`, or an exact clipboard read-back confirms an OSC52 dispatch. An unconfirmed dispatch is an advisory warning (paste to verify). Gate the failure toast with `notifications.copy`. | opt-in |
 | `session` | Alias for `ses`; accepted in `sidebar.rows` and folded to it. | opt-in |
 

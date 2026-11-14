@@ -1,5 +1,5 @@
 const readline = require("node:readline");
-if (process.argv[3]) require("node:fs").writeFileSync(process.argv[3], String(process.pid));
+if (process.argv[2] === "hang" && process.argv[3]) require("node:fs").writeFileSync(process.argv[3], String(process.pid));
 if (process.argv[2] === "hang") {
   setInterval(() => {}, 1000);
 } else {

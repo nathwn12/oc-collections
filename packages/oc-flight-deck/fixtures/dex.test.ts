@@ -14,6 +14,12 @@ const account = { type: "chatgpt", planType: "plus" };
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 describe("Codex limits", () => {
+  test.skipIf(process.env.FLIGHT_DECK_LIVE_CODEX !== "1")("reads real Codex quota through its private owned server", async () => {
+    const result = await readCodex();
+    const usage = quota(result?.limits, result?.account);
+    expect(usage?.windows.map(w => w.id)).toEqual(["5h", "1w"]);
+    console.log("live Codex quota:", JSON.stringify(usage));
+  }, 25000);
   test("maps only the authenticated Codex bucket, never Go or API-key usage", () => {
     expect(quota(limits, account)?.windows).toEqual([
       { id: "5h", ratio: 0.2, resetAtMs: 2000000000000 },
