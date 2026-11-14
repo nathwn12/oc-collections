@@ -731,6 +731,7 @@ var STAT_FIELDS = [
   "turns",
   "guard",
   "go",
+  "dex",
   "ses"
 ];
 var ANIMATED_FIELDS = ["caution", "status", "elapsed", "tps"];
@@ -775,6 +776,8 @@ function skeletonValue(field, layout) {
       return "0";
     case "go":
       return "\u25CB 0 \u25CB 0 \u25CB 0";
+    case "dex":
+      return "unavailable";
     case "status":
       return "\u25CB idle";
     case "agent":
@@ -851,11 +854,15 @@ function asGoWindows(value) {
   windows.sort((a, b) => GO_ORDER.indexOf(a.id) - GO_ORDER.indexOf(b.id));
   return windows;
 }
-function goValueSegments(source, layout) {
-  const windows = asGoWindows(source.go);
+function goValueSegments(source, layout, name = "go") {
+  let windows = asGoWindows(source[name]);
+  const nowMs = layout.nowMs ?? Date.now();
+  if (name === "dex")
+    windows = windows.filter((w) => w.id !== "1m" && w.resetAtMs !== undefined && w.resetAtMs > nowMs);
   if (windows.length === 0)
     return;
-  const nowMs = layout.nowMs ?? Date.now();
+  if (name === "dex")
+    windows = ["5h", "1w"].map((id) => windows.find((w) => w.id === id) ?? { id });
   let flagged = -1;
   let flaggedRatio = Number.NEGATIVE_INFINITY;
   for (const [index, window] of windows.entries()) {
@@ -869,6 +876,10 @@ function goValueSegments(source, layout) {
   }
   const chunks = [];
   for (const [index, window] of windows.entries()) {
+    if (window.ratio === undefined) {
+      chunks.push([{ text: "\u2014" }]);
+      continue;
+    }
     const percent = Math.round((window.ratio ?? 0) * 100);
     const tone = goTone(window) === "error" ? "error" : undefined;
     const chunk = [{ text: `${dialGlyph(percent)} ${percent}`, tone }];
@@ -1096,9 +1107,11 @@ function statLine(field, source, layout = {}) {
       const budget = Math.max(8, SES_PREVIEW_WIDTH - Math.max(0, labelPrefix(fieldLabel("ses", layout.labels), labelWidth).length - labelPrefix("ses", labelWidth).length));
       return id === undefined ? undefined : row("ses", clip(id, budget));
     }
-    case "go": {
-      const value = goValueSegments(source, layout);
-      return value === undefined ? undefined : row("go", value.map((segment) => segment.text).join(""));
+    case "go":
+    case "dex": {
+      const name = canonicalField(field);
+      const value = goValueSegments(source, layout, name);
+      return value === undefined ? undefined : row(name, value.map((segment) => segment.text).join(""));
     }
     default:
       return;
@@ -1115,12 +1128,12 @@ function statSegments(field, source, layout = {}) {
       ...value
     ];
   }
-  if (name !== "go")
+  if (name !== "go" && name !== "dex")
     return;
-  const value = goValueSegments(source, layout);
+  const value = goValueSegments(source, layout, name);
   if (value === undefined)
     return;
-  return [{ text: labelPrefix(fieldLabel("go", layout.labels), layout.labelWidth ?? DEFAULT_LABEL_WIDTH) }, ...value];
+  return [{ text: labelPrefix(fieldLabel(name, layout.labels), layout.labelWidth ?? DEFAULT_LABEL_WIDTH) }, ...value];
 }
 function statRows(fields, source, layout = {}) {
   const hint = { ...layout, hasTotalRow: fields.includes("total") };
@@ -3520,6 +3533,180 @@ function startGoBridge(host, deps, intervalMs = GO_POLL_MS) {
   };
 }
 
+// src/tui/codex-quota.ts
+import { spawn } from "child_process";
+import { existsSync as existsSync4, readFileSync as readFileSync3 } from "fs";
+import { isAbsolute as isAbsolute2, join as join4 } from "path";
+import { createInterface } from "readline";
+var record = (v) => v !== null && typeof v === "object" && !Array.isArray(v) ? v : {};
+function quota(limits, account) {
+  if (record(account).type !== "chatgpt")
+    return;
+  const bucket = record(record(record(limits).rateLimitsByLimitId).codex);
+  if (bucket.limitId !== "codex")
+    return;
+  const source = [record(bucket.primary), record(bucket.secondary)];
+  const windows = [];
+  for (const [minutes, id] of [[300, "5h"], [10080, "1w"]]) {
+    const matches = source.filter((w) => w.windowDurationMins === minutes);
+    if (matches.length !== 1)
+      continue;
+    const { usedPercent: used, resetsAt: reset } = matches[0];
+    if (typeof used !== "number" || !Number.isFinite(used) || used < 0 || used > 100)
+      continue;
+    if (typeof reset !== "number" || !Number.isFinite(reset) || reset * 1000 <= Date.now())
+      continue;
+    windows.push({ id, ratio: used / 100, resetAtMs: reset * 1000 });
+  }
+  return windows.length ? { windows } : undefined;
+}
+function executable() {
+  for (const directory of (process.env.PATH ?? "").split(process.platform === "win32" ? ";" : ":")) {
+    const path = join4(directory, process.platform === "win32" ? "codex.exe" : "codex");
+    if (!existsSync4(path))
+      continue;
+    if (process.platform === "win32") {
+      const shim = path.replace(/\.exe$/i, ".shim");
+      if (existsSync4(shim)) {
+        try {
+          const target = /^path\s*=\s*"([^"\r\n]+)"\s*$/m.exec(readFileSync3(shim, "utf8"))?.[1];
+          if (target && isAbsolute2(target) && /[\\/]codex\.exe$/i.test(target) && existsSync4(target))
+            return target;
+        } catch {}
+        return;
+      }
+    }
+    return path;
+  }
+}
+function readCodex(signal, options = {}) {
+  if (signal?.aborted)
+    return Promise.resolve(undefined);
+  const command = options.command ?? executable();
+  if (!command)
+    return Promise.resolve(undefined);
+  return new Promise((resolve) => {
+    const child = spawn(command, options.args ?? ["app-server", "proxy"], {
+      windowsHide: true,
+      stdio: ["pipe", "pipe", "ignore"]
+    });
+    let finishing = false, bytes = 0, limits, account;
+    let result;
+    let killTimer;
+    const finish = (value) => {
+      if (finishing)
+        return;
+      finishing = true;
+      result = value;
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
+      child.stdin.end();
+      killTimer = setTimeout(() => {
+        result = undefined;
+        child.kill("SIGKILL");
+      }, 500);
+    };
+    const abort = () => finish();
+    const timer = setTimeout(() => finish(), options.timeoutMs ?? 15000);
+    signal?.addEventListener("abort", abort, { once: true });
+    child.on("error", () => finish());
+    child.stdin.on("error", () => finish());
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (killTimer)
+        clearTimeout(killTimer);
+      signal?.removeEventListener("abort", abort);
+      resolve(code === 0 ? result : undefined);
+    });
+    child.stdout.on("data", (chunk) => {
+      bytes += chunk.length;
+      if (bytes > 262144)
+        finish();
+    });
+    const send = (message) => {
+      if (!finishing)
+        child.stdin.write(JSON.stringify(message) + `
+`);
+    };
+    createInterface({ input: child.stdout }).on("line", (line) => {
+      if (finishing)
+        return;
+      try {
+        const message = record(JSON.parse(line));
+        if (message.error)
+          return finish();
+        if (message.id === 0 && message.result) {
+          send({ method: "initialized", params: {} });
+          send({ id: 1, method: "account/rateLimits/read" });
+          send({ id: 2, method: "account/read", params: { refreshToken: false } });
+        }
+        if (message.id === 1)
+          limits = message.result;
+        if (message.id === 2)
+          account = record(message.result).account;
+        if (limits && account)
+          finish({ limits, account });
+      } catch {
+        finish();
+      }
+    });
+    if (signal?.aborted)
+      finish();
+    else
+      send({ id: 0, method: "initialize", params: {
+        clientInfo: { name: "flight_deck", version: "1.0.0" }
+      } });
+  });
+}
+function startCodexQuota(host, deps = {}) {
+  const opened = host.storage?.memory?.("flight-deck.codex-quota", { initial: { value: null, at: 0 } });
+  if (!Array.isArray(opened) || typeof opened[1] !== "function")
+    return;
+  const [state, update] = opened;
+  let disposed = false, running = false, controller;
+  const clear = () => update((draft) => {
+    draft.value = null;
+    draft.at = 0;
+  });
+  clear();
+  const poll = async () => {
+    if (disposed || running)
+      return;
+    running = true;
+    controller = new AbortController;
+    try {
+      const result = await (deps.read ?? readCodex)(controller.signal);
+      if (disposed)
+        return;
+      const value = result ? quota(result.limits, result.account) : undefined;
+      update((draft) => {
+        draft.value = value ?? null;
+        draft.at = value ? Date.now() : 0;
+      });
+    } catch {
+      if (!disposed)
+        clear();
+    } finally {
+      running = false;
+    }
+  };
+  poll();
+  const timer = setInterval(() => {
+    poll();
+  }, deps.intervalMs ?? 60000);
+  return {
+    get value() {
+      return !disposed && Date.now() - state.at <= 90000 ? state.value ?? undefined : undefined;
+    },
+    dispose() {
+      disposed = true;
+      controller?.abort();
+      clearInterval(timer);
+      clear();
+    }
+  };
+}
+
 // src/tui/ticker.ts
 var TICKER_KEY = "flight-deck.frame";
 var IDLE_REFRESH_MS = 1000;
@@ -4354,13 +4541,15 @@ var tui_default = Plugin.define({
     };
     const goOption = config.sidebar.footer.go;
     const goPanelEnabled = goOption === true || typeof goOption === "object" && goOption !== null;
-    const animated = config.sidebar.enabled && (goPanelEnabled || config.sidebar.rows.some((name) => ANIMATED_FIELDS.some((field) => field === name)));
+    const dexEnabled = wants("dex");
+    const animated = config.sidebar.enabled && (goPanelEnabled || dexEnabled || config.sidebar.rows.some((name) => ANIMATED_FIELDS.some((field) => field === name)));
     let spinnerNeeded = false;
     const ticker = startTicker(context, animated ? config.refresh : 0, () => spinnerNeeded);
     const wantGuard = config.sidebar.enabled && config.sidebar.rows.includes("guard");
     const bridge = wantGuard ? startGuardBridge(context) : undefined;
     const wantGo = config.sidebar.enabled && (config.sidebar.rows.includes("go") || goPanelEnabled);
     const goBridge = wantGo ? startGoBridge(context) : undefined;
+    const dexBridge = dexEnabled ? startCodexQuota(context) : undefined;
     const goPanelLayout = goOption === true ? undefined : typeof goOption === "object" && goOption !== null ? goOption : undefined;
     const goLook = createGoLookReader({ hostOptions: context.options, initial: goPanelLayout });
     const announce = (sessionID) => {
@@ -4405,6 +4594,7 @@ var tui_default = Plugin.define({
         turns,
         guard: bridge?.status,
         go: goBridge?.usage,
+        dex: dexBridge?.value,
         sessionId: wants("ses") ? sessionID : undefined,
         frame: ticker?.frame ?? 0
       };
@@ -4490,6 +4680,7 @@ var tui_default = Plugin.define({
       ticker?.dispose();
       bridge?.dispose();
       goBridge?.dispose();
+      dexBridge?.dispose();
       for (const release of releases)
         release();
     };

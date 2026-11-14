@@ -172,11 +172,14 @@ function asGoWindows(value: unknown): readonly GoWindow[] {
  * makes the row read as one panel with a problem rather than as a different
  * kind of line.
  */
-function goValueSegments(source: StatSource, layout: LayoutHint): StatSegment[] | undefined {
-  const windows = asGoWindows(source.go);
-  if (windows.length === 0) return undefined;
-
+function goValueSegments(source: StatSource, layout: LayoutHint, name: "go" | "dex" = "go"): StatSegment[] | undefined {
+  let windows = asGoWindows(source[name]);
   const nowMs = layout.nowMs ?? Date.now();
+  if (name === "dex") windows = windows.filter(w => w.id !== "1m" && w.resetAtMs !== undefined && w.resetAtMs > nowMs);
+  if (windows.length === 0) return undefined;
+  // Preserve the 5h/1w positions even when one window is unavailable.
+  if (name === "dex") windows = (["5h", "1w"] as const).map(id => windows.find(w => w.id === id) ?? { id });
+
   // Only the worst flagged window carries a reset hint. With every window red,
   // three hints overflow the rail (the 38-column budget) for information that is
   // redundant three times over; the fullest window is the one actually in
@@ -196,6 +199,7 @@ function goValueSegments(source: StatSource, layout: LayoutHint): StatSegment[] 
   }
   const chunks: StatSegment[][] = [];
   for (const [index, window] of windows.entries()) {
+    if (window.ratio === undefined) { chunks.push([{ text: "\u2014" }]); continue; }
     const percent = Math.round((window.ratio ?? 0) * 100);
     const tone: StyleColor | undefined = goTone(window) === "error" ? "error" : undefined;
     const chunk: StatSegment[] = [{ text: `${dialGlyph(percent)} ${percent}`, tone }];
@@ -574,12 +578,14 @@ export function statLine(
       );
       return id === undefined ? undefined : row("ses", clip(id, budget));
     }
-    case "go": {
+    case "go":
+    case "dex": {
+      const name = canonicalField(field) as "go" | "dex";
       // The plain string is the exact join of the coloured segments, so the
       // string view (tests, `sidebarTextLines`) and the JSX view agree
       // character-for-character.
-      const value = goValueSegments(source, layout);
-      return value === undefined ? undefined : row("go", value.map((segment) => segment.text).join(""));
+      const value = goValueSegments(source, layout, name);
+      return value === undefined ? undefined : row(name, value.map((segment) => segment.text).join(""));
     }
     default:
       return undefined;
@@ -611,10 +617,10 @@ export function statSegments(
       ...value,
     ];
   }
-  if (name !== "go") return undefined;
-  const value = goValueSegments(source, layout);
+  if (name !== "go" && name !== "dex") return undefined;
+  const value = goValueSegments(source, layout, name);
   if (value === undefined) return undefined;
-  return [{ text: labelPrefix(fieldLabel("go", layout.labels), layout.labelWidth ?? DEFAULT_LABEL_WIDTH) }, ...value];
+  return [{ text: labelPrefix(fieldLabel(name, layout.labels), layout.labelWidth ?? DEFAULT_LABEL_WIDTH) }, ...value];
 }
 
 /** Render every named field, in the given order.

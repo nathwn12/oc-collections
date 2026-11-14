@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Opt-in `dex` sidebar row: compact 5h and 1w Codex account dials match the Go row and read through an existing authenticated Codex app-server daemon, without reading OAuth credential files or owning server workers.
+
 ## [0.22.0] - 2026-11-10
 
 ### Changed
