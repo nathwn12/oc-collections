@@ -27,8 +27,9 @@ export function quota(limits: unknown, account: unknown): GoUsage | undefined {
 }
 
 /** Bypass Scoop's launcher: ownership must refer to the native proxy itself. */
-function executable(): string | undefined {
-  for (const directory of (process.env.PATH ?? "").split(process.platform === "win32" ? ";" : ":")) {
+export function executable(pathValue = process.env.PATH ?? ""): string | undefined {
+  for (const directory of pathValue.split(process.platform === "win32" ? ";" : ":")) {
+    if (!isAbsolute(directory)) continue;
     const path = join(directory, process.platform === "win32" ? "codex.exe" : "codex");
     if (!existsSync(path)) continue;
     if (process.platform === "win32") {

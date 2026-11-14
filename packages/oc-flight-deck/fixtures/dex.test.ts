@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { quota, readCodex, startCodexQuota } from "../src/tui/codex-quota.js";
+import { executable, quota, readCodex, startCodexQuota } from "../src/tui/codex-quota.js";
 import { statLine, statSegments } from "../src/tui/rows.js";
 import { resolveConfig } from "../src/tui/config.js";
-import { join } from "node:path";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { join, relative } from "node:path";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 
 const limits = { rateLimitsByLimitId: { codex: { limitId: "codex",
@@ -40,6 +40,16 @@ describe("Codex limits", () => {
     const flagged = { windows: [{ id: "5h", ratio: 0.95, resetAtMs: 2000000000000 }, usage!.windows[1]] };
     expect(statSegments("dex", { dex: flagged }, { nowMs: 0 })?.filter(s => s.tone === "error").map(s => s.text).join("")).toContain("95");
     expect(statSegments("dex", { dex: flagged }, { nowMs: 0 })?.find(s => s.text.includes("40"))?.tone).toBeUndefined();
+  });
+  test("executable resolution ignores empty and relative PATH directories", () => {
+    const directory = mkdtempSync(join(import.meta.dir, "dex-path-"));
+    try {
+      const path = join(directory, process.platform === "win32" ? "codex.exe" : "codex");
+      writeFileSync(path, "");
+      expect(executable(relative(process.cwd(), directory))).toBeUndefined();
+      expect(executable("")).toBeUndefined();
+      expect(executable(directory)).toBe(path);
+    } finally { rmSync(directory, { recursive: true, force: true }); }
   });
   test("proxy handshake succeeds only after its owned process exits", async () => {
     const value = await readCodex(undefined, { command: process.execPath,
