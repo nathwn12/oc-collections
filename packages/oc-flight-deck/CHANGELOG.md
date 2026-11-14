@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Opt-in `dex` sidebar row: compact 5h and 1w Codex account dials match the Go row. Windows uses a private authenticated stdio server enclosed in an owned Job Object; no shared daemon, OAuth credential-file access or process-tree kills.
+
 ## [0.22.0] - 2026-11-10
 
 ### Changed
