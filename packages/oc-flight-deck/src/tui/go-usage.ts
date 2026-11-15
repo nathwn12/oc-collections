@@ -289,20 +289,27 @@ export function goTone(window: GoWindow): "error" | "normal" {
 }
 
 /**
- * A duration as one short unit: `45s`, `12m`, `2h`, `5d`.
+ * A duration as one or two compact units: `45s`, `12m`, `4h44m`, `26d20h`.
  *
  * Exported because the footer's Go panel (./go-panel.ts) draws a countdown for
  * every known future reset, while {@link goResetSuffix} draws one only under the
- * error tone. Both must read the same way, so both read this.
+ * error tone. Sub-hour waits round up; longer waits truncate smaller units,
+ * matching the panel's compact display.
  */
 export function formatRemaining(ms: number): string {
   const seconds = Math.ceil(ms / 1000);
   if (seconds < 60) return `${seconds}s`;
   const minutes = Math.ceil(ms / 60_000);
   if (minutes < 60) return `${minutes}m`;
-  const hours = Math.ceil(ms / 3_600_000);
-  if (hours < 24) return `${hours}h`;
-  return `${Math.ceil(ms / 86_400_000)}d`;
+  const hours = Math.floor(ms / 3_600_000);
+  if (hours < 24) {
+    if (hours === 0) return `${minutes}m`;
+    const rest = Math.floor((ms - hours * 3_600_000) / 60_000);
+    return rest > 0 ? `${hours}h${rest}m` : `${hours}h`;
+  }
+  const days = Math.floor(ms / 86_400_000);
+  const rest = Math.floor((ms - days * 86_400_000) / 3_600_000);
+  return rest > 0 ? `${days}d${rest}h` : `${days}d`;
 }
 
 /**
