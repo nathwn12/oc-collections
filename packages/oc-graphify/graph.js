@@ -31,8 +31,9 @@ export function readGraph(file) {
     if (!link || typeof link.source !== 'string' || typeof link.target !== 'string') continue
     const out = adjacency.get(link.source)
     const back = adjacency.get(link.target)
-    if (out) out.push({ id: link.target, relation: link.relation ?? null })
-    if (back) back.push({ id: link.source, relation: link.relation ?? null })
+    if (out) out.push({ id: link.target, relation: link.relation ?? null, direction: 'outgoing' })
+    if (graphDirected(data) && back) continue
+    if (back) back.push({ id: link.source, relation: link.relation ?? null, direction: 'incoming' })
   }
 
   const communities = new Set()
@@ -51,6 +52,8 @@ export function readGraph(file) {
     directed: data.directed === true,
   }
 }
+
+const graphDirected = (data) => data.directed === true
 
 /** One line a reader can use without opening the file. */
 export function stats(graph) {
@@ -110,7 +113,7 @@ export function neighbors(graph, id, depth = 1) {
         seen.add(edge.id)
         next.push(edge.id)
         const node = graph.byId.get(edge.id)
-        rows.push({ id: edge.id, label: node?.label ?? edge.id, relation: edge.relation, distance: level })
+        rows.push({ id: edge.id, label: node?.label ?? edge.id, relation: edge.relation, direction: edge.direction, distance: level })
       }
     }
     frontier = next
@@ -119,7 +122,7 @@ export function neighbors(graph, id, depth = 1) {
   return rows
 }
 
-/** Shortest undirected path between two ids, as an ordered list. */
+/** Shortest path from `from` to `to`, respecting directed edges when present. */
 export function shortestPath(graph, from, to) {
   if (!graph.byId.has(from) || !graph.byId.has(to)) return null
   if (from === to) return [from]
@@ -151,7 +154,14 @@ export function shortestPath(graph, from, to) {
  */
 export function godNodes(graph, top = 10) {
   const NOISE = new Set(['file', 'concept', 'json_key', 'json'])
-  const degree = (id) => (graph.adjacency.get(id) ?? []).length
+  const directedDegree = new Map()
+  if (graph.directed) {
+    for (const edge of graph.links) {
+      directedDegree.set(edge.source, (directedDegree.get(edge.source) ?? 0) + 1)
+      directedDegree.set(edge.target, (directedDegree.get(edge.target) ?? 0) + 1)
+    }
+  }
+  const degree = (id) => graph.directed ? (directedDegree.get(id) ?? 0) : (graph.adjacency.get(id) ?? []).length
   const ranked = graph.nodes
     .filter((node) => !NOISE.has(String(node.file_type ?? '').toLowerCase()))
     .map((node) => ({ id: node.id, label: node.label ?? node.id, degree: degree(node.id), community: node.community ?? null }))

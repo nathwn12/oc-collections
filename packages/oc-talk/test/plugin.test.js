@@ -583,6 +583,215 @@ test('a peer that never reaches a turn boundary reports timedOut:true, never suc
   assert.equal(out.timedOut, true, 'a bounded block that gave up must say so');
 });
 
+test('a delivered send reports final reply-read failures without erasing delivery', async () => {
+  const mod = await load();
+  let posted = false;
+  mod.setApiRunner(async (args) => {
+    const [verb, target] = args;
+    if (verb === 'session.get') return { ok: true, json: { data: { id: 'ses_a', title: 'active work' } } };
+    if (verb === 'post' && String(target).endsWith('/prompt')) {
+      posted = true;
+      return { ok: true, json: { data: { id: 'msg_sent', sessionID: 'ses_a' } } };
+    }
+    if (args.includes('limit=1')) return { ok: true, json: { data: [{ id: posted ? 'msg_new_idle' : 'msg_prev_idle', type: 'idle' }] } };
+    return { ok: false, code: 'backend_error', detail: 'reply read unavailable' };
+  });
+  const { ctx, added } = host();
+  await mod.default.setup(ctx);
+  const out = JSON.parse((await added.find((t) => t.name === 'talk_send').execute({ session: 'ses_a', text: 'hi', wait: 1 }, CALLER)).content);
+  assert.equal(out.delivered, true);
+  assert.equal(out.replyReadError.code, 'backend_error');
+  assert.equal(out.messages, undefined);
+});
+
+test('waitForIdle honors an already-aborted signal', async () => {
+  const mod = await load();
+  let calls = 0;
+  mod.setApiRunner(async () => { calls++; return { ok: true, json: { data: [{ id: 'busy', type: 'user' }] } }; });
+  const controller = new AbortController();
+  controller.abort();
+  const out = await mod.waitForIdle('ses_a', 1000, 'old', { signal: controller.signal });
+  assert.equal(out.ok, false);
+  assert.equal(out.code, 'cancelled');
+  assert.equal(calls, 0);
+});
+
+test('waitForIdle cancellation interrupts the poll sleep', async () => {
+  const mod = await load();
+  mod.setApiRunner(async () => ({ ok: true, json: { data: [{ id: 'busy', type: 'user' }] } }));
+  const controller = new AbortController();
+  const started = Date.now();
+  const waiting = mod.waitForIdle('ses_a', 1000, 'old', { signal: controller.signal });
+  setTimeout(() => controller.abort(), 20);
+  const out = await waiting;
+  assert.equal(out.code, 'cancelled');
+  assert.ok(Date.now() - started < 150, 'sleep must wake promptly on cancellation');
+});
+
+test('talk_send cancels target resolution before any message can be sent', async () => {
+  const mod = await load();
+  const calls = [];
+  mod.setApiRunner(async (args, opts) => {
+    calls.push(args);
+    if (opts?.signal) {
+      return new Promise((resolve) => {
+        const abort = () => resolve({ ok: false, code: 'cancelled', detail: 'aborted' });
+        if (opts.signal.aborted) abort();
+        else opts.signal.addEventListener('abort', abort, { once: true });
+      });
+    }
+    return new Promise((resolve) => setTimeout(() => resolve({ ok: true, json: { data: { id: 'ses_a', title: 'active work' } } }), 60));
+  });
+  const { ctx, added } = host();
+  await mod.default.setup(ctx);
+  const controller = new AbortController();
+  const request = added.find((t) => t.name === 'talk_send').execute(
+    { session: 'ses_a', text: 'hi' },
+    { ...CALLER, signal: controller.signal },
+  );
+  setTimeout(() => controller.abort(), 10);
+  const out = JSON.parse((await request).content);
+  assert.equal(out.error, 'cancelled');
+  assert.equal(calls.some((args) => args[0] === 'post'), false, 'a cancelled resolution must never reach the send');
+});
+
+test('talk_send cancellation during the pre-send baseline prevents admission', async () => {
+  const mod = await load();
+  const calls = [];
+  mod.setApiRunner(async (args, opts) => {
+    calls.push(args);
+    if (args[0] === 'session.get') return { ok: true, json: { data: { id: 'ses_a', title: 'active work' } } };
+    return new Promise((resolve) => setTimeout(
+      () => resolve({ ok: true, json: { data: [{ id: 'old', type: 'idle' }] } }),
+      opts?.signal ? 60 : 0,
+    ));
+  });
+  const { ctx, added } = host();
+  await mod.default.setup(ctx);
+  const controller = new AbortController();
+  const request = added.find((t) => t.name === 'talk_send').execute(
+    { session: 'ses_a', text: 'hi', wait: 1 },
+    { ...CALLER, signal: controller.signal },
+  );
+  setTimeout(() => controller.abort(), 10);
+  const out = JSON.parse((await request).content);
+  assert.equal(out.error, 'cancelled');
+  assert.equal(calls.some((args) => args[0] === 'post'), false, 'a cancelled baseline must never reach the send');
+});
+
+test('talk_inbox cancellation covers target lookup and pre-wait baseline', async () => {
+  const mod = await load();
+  const calls = [];
+  mod.setApiRunner(async (args, opts) => {
+    calls.push(args);
+    if (opts?.signal) {
+      return new Promise((resolve) => {
+        const abort = () => resolve({ ok: false, code: 'cancelled', detail: 'aborted' });
+        if (opts.signal.aborted) abort();
+        else opts.signal.addEventListener('abort', abort, { once: true });
+      });
+    }
+    return new Promise((resolve) => setTimeout(() => resolve({ ok: true, json: { data: { id: 'ses_a', title: 'active work' } } }), 60));
+  });
+  const { ctx, added } = host();
+  await mod.default.setup(ctx);
+  const controller = new AbortController();
+  const request = added.find((t) => t.name === 'talk_inbox').execute(
+    { session: 'ses_a', wait: 1 },
+    { ...CALLER, signal: controller.signal },
+  );
+  setTimeout(() => controller.abort(), 10);
+  const out = JSON.parse((await request).content);
+  assert.equal(out.error, 'cancelled');
+  assert.equal(calls.filter((args) => args[0] === 'session.message.list').length, 0);
+});
+
+test('talk_inbox passes cancellation through wait and bounds its final read by the deadline', async () => {
+  const mod = await load();
+  const calls = [];
+  let reads = 0;
+  mod.setApiRunner(async (args, opts) => {
+    calls.push({ args, opts });
+    if (args[0] === 'session.get') return { ok: true, json: { data: { id: 'ses_a', title: 'active work' } } };
+    if (args.includes('limit=1')) {
+      reads++;
+      return { ok: true, json: { data: [{ id: reads === 1 ? 'old' : 'busy', type: 'user' }] } };
+    }
+    return new Promise((resolve) => opts.signal.addEventListener('abort', () => resolve({ ok: false, code: 'timeout', detail: 'aborted' }), { once: true }));
+  });
+  const { ctx, added } = host();
+  await mod.default.setup(ctx);
+  const controller = new AbortController();
+  const started = Date.now();
+  const request = added.find((t) => t.name === 'talk_inbox').execute(
+    { session: 'ses_a', wait: 1 },
+    { ...CALLER, signal: controller.signal },
+  );
+  setTimeout(() => controller.abort(), 30);
+  const out = JSON.parse((await request).content);
+  assert.equal(out.error, 'cancelled');
+  assert.ok(Date.now() - started < 200, 'inbox wait must not run to its wait deadline');
+  assert.ok(calls.filter((c) => c.args[0] === 'session.message.list').length < 3, 'no final read should run after cancellation');
+});
+
+test('talk_inbox final read cannot outlive the wait deadline', async () => {
+  const mod = await load();
+  let newestReads = 0;
+  let finalSignal;
+  mod.setApiRunner(async (args, opts) => {
+    if (args[0] === 'session.get') return { ok: true, json: { data: { id: 'ses_a', title: 'active work' } } };
+    if (args.includes('limit=1')) {
+      newestReads++;
+      return { ok: true, json: { data: [{ id: newestReads === 1 ? 'old' : 'fresh-idle', type: 'idle' }] } };
+    }
+    finalSignal = opts.signal;
+    return new Promise((resolve) => {
+      const finish = () => resolve({ ok: false, code: 'timeout', detail: 'aborted' });
+      if (opts.signal.aborted) finish();
+      else opts.signal.addEventListener('abort', finish, { once: true });
+    });
+  });
+  const { ctx, added } = host();
+  await mod.default.setup(ctx);
+  const started = Date.now();
+  const out = JSON.parse((await added.find((t) => t.name === 'talk_inbox').execute(
+    { session: 'ses_a', wait: 0.05 },
+    CALLER,
+  )).content);
+  assert.equal(out.error, 'timeout');
+  assert.equal(finalSignal.aborted, true);
+  assert.ok(Date.now() - started < 200, 'final read must be interrupted at the wait deadline');
+});
+
+test('waitForIdle bounds an in-flight read by its deadline', async () => {
+  const mod = await load();
+  mod.setApiRunner(async (_args, opts) => new Promise((resolve) => {
+    opts.signal.addEventListener('abort', () => resolve({ ok: false, code: 'timeout', detail: 'aborted' }), { once: true });
+  }));
+  const started = Date.now();
+  const out = await mod.waitForIdle('ses_a', 40, 'old');
+  assert.equal(out.ok, true);
+  assert.equal(out.timedOut, true);
+  assert.ok(Date.now() - started < 250);
+});
+
+test('waitForIdle treats its deadline signal as timeout before the wall clock catches up', async () => {
+  const mod = await load();
+  mod.setApiRunner(async (_args, opts) => new Promise((resolve) => {
+    opts.signal.addEventListener('abort', () => resolve({ ok: false, code: 'timeout', detail: 'aborted' }), { once: true });
+  }));
+  const actualNow = Date.now;
+  const fixedNow = actualNow();
+  Date.now = () => fixedNow;
+  try {
+    const out = await mod.waitForIdle('ses_a', 25, 'old');
+    assert.equal(out.ok, true);
+    assert.equal(out.timedOut, true);
+  } finally {
+    Date.now = actualNow;
+  }
+});
+
 test('an invalid wait is a typed bad_request, never a silent default', async () => {
   const { tool, calls } = await toolWith('talk_send');
   const out = await tool.execute({ session: 'ses_a', text: 'hi', wait: -1 }, CALLER);

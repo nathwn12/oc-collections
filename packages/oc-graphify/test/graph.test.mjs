@@ -45,7 +45,7 @@ test('readGraph: indexes nodes, links, adjacency and communities', () => {
   assert.equal(graph.nodes.length, 6)
   assert.equal(graph.links.length, 5)
   assert.equal(graph.byId.get('hub').label, 'The Hub')
-  assert.equal(graph.adjacency.get('a').length, 3) // hub, c, f
+  assert.equal(graph.adjacency.get('a').length, 1) // directed outgoing edge only
   assert.equal(graph.communityCount, 2)
   assert.equal(graph.version, '9.9.9')
   assert.equal(graph.directed, true)
@@ -88,13 +88,14 @@ test('godNodes: ranks by degree and drops file and concept nodes', () => {
   const rows = godNodes(graph, 10)
   assert.ok(!rows.some((r) => r.id === 'f'), 'file nodes accumulate edges mechanically')
   assert.ok(!rows.some((r) => r.id === 'concept'), 'concept nodes are excluded too')
-  assert.equal(rows[0].id, 'a') // degree 3
+  assert.equal(rows[0].id, 'a') // one incoming plus one outgoing edge
+  assert.equal(rows[0].degree, 3) // hub, gamma and file node
 })
 
 test('search: label tokens, then one hop around each hit', () => {
   const rows = search(graph, 'alpha', 1)
   assert.ok(rows.some((r) => r.id === 'a' && r.score === 1))
-  assert.ok(rows.some((r) => r.id === 'hub'), 'the seed expands one hop')
+  assert.ok(rows.some((r) => r.id === 'c'), 'the seed expands one outgoing hop')
   assert.deepEqual(search(graph, 'zzz', 1), [])
 })
 
@@ -129,3 +130,34 @@ test('tools: a missing graph is a sentence, not an exception', async () => {
   const result = await defs[0].execute({})
   assert.match(result.content, /^error: cannot read nope\.json/)
 })
+
+test('directed edges retain source orientation for adjacency, neighbours and paths', () => {
+  assert.deepEqual(graph.adjacency.get('hub').map((edge) => edge.id), ['a', 'b'])
+  assert.deepEqual(neighbors(graph, 'a', 1).map((row) => row.id), ['c'])
+  assert.equal(shortestPath(graph, 'a', 'hub'), null)
+  assert.deepEqual(shortestPath(graph, 'hub', 'c'), ['hub', 'a', 'c'])
+})
+
+test('undirected graphs expose each edge from either endpoint', () => {
+  const undirected = readGraph(writeFixture({ directed: false, links: [{ source: 'a', target: 'b', relation: 'connects' }] }))
+  assert.deepEqual(neighbors(undirected, 'a').map((row) => row.id), ['b'])
+  assert.deepEqual(neighbors(undirected, 'b').map((row) => row.id), ['a'])
+  assert.deepEqual(shortestPath(undirected, 'b', 'a'), ['b', 'a'])
+})
+
+test('godNodes counts incoming and outgoing edges in directed total degree', () => {
+  const directed = readGraph(writeFixture({
+    directed: true,
+    links: [{ source: 'b', target: 'a', relation: 'points_to' }],
+  }))
+  assert.deepEqual(godNodes(directed, 2).map(({ id, degree }) => ({ id, degree })), [
+    { id: 'a', degree: 1 },
+    { id: 'b', degree: 1 },
+  ])
+})
+
+function writeFixture(value) {
+  const file = path.join(dir, `fixture-${Math.random()}.json`)
+  fs.writeFileSync(file, JSON.stringify({ ...FIXTURE, ...value, nodes: [{ id: 'a' }, { id: 'b' }] }))
+  return file
+}

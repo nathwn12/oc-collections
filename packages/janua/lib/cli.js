@@ -189,7 +189,7 @@ async function runCommand(argv) {
   } finally {
     // A CLI run is one-shot: nothing it spawned can outlive this process, so
     // every session goes whether the run exited, matched, timed out, or failed.
-    manager.killAll();
+    await manager.killAll();
   }
 }
 
@@ -248,20 +248,24 @@ async function startMcp() {
   const { server, manager } = createServer();
 
   let closing = false;
-  function shutdown(code = 0) {
+  async function shutdown(code = 0) {
     if (closing) return;
     closing = true;
-    manager.killAll();
-    process.exit(code);
+    try {
+      await manager.killAll();
+    } finally {
+      process.exit(code);
+    }
   }
 
-  process.on('exit', () => manager.killAll());
-  process.on('SIGINT', () => shutdown(0));
-  process.on('SIGTERM', () => shutdown(0));
+  // `exit` handlers cannot await asynchronous OS cleanup. All controlled
+  // shutdown paths wait for killAll before exiting instead.
+  process.on('SIGINT', () => { void shutdown(0); });
+  process.on('SIGTERM', () => { void shutdown(0); });
   // The client closing stdin is the normal end of a stdio MCP session: without
   // this the PTY handles would keep the process alive after the transport dies.
-  process.stdin.on('end', () => shutdown(0));
-  process.stdin.on('close', () => shutdown(0));
+  process.stdin.on('end', () => { void shutdown(0); });
+  process.stdin.on('close', () => { void shutdown(0); });
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
