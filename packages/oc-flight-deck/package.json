@@ -69,7 +69,7 @@
     "@types/bun": "^1.4.4",
     "solid-js": "1.9.18",
     "string-width": "7.2.0",
-    "typescript": "^5.9.3"
+    "typescript": "^7.0.2"
   },
   "peerDependencies": {
     "@opentui/core": ">=0.8.0",
