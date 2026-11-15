@@ -15,7 +15,7 @@
 //     boundary: spawn and write failures become typed JanuaError codes.
 
 import { randomUUID } from 'node:crypto';
-import { spawn as spawnProcess, spawnSync } from 'node:child_process';
+import { spawn as spawnProcess } from 'node:child_process';
 import { readdirSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { basename, extname, join } from 'node:path';
@@ -362,7 +362,41 @@ function isProcessAlive(pid) {
   }
 }
 
-function terminate(term, signal) {
+const TASKKILL_TIMEOUT_MS = 5_000;
+
+function taskkillTree(pid, { spawn = spawnProcess, timeoutMs = TASKKILL_TIMEOUT_MS } = {}) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+    let child;
+    const timer = setTimeout(() => {
+      try {
+        child?.kill();
+      } catch {
+        // A timed-out helper may already have exited.
+      }
+      finish({ status: null, stdout: '', stderr: 'taskkill timed out' });
+    }, timeoutMs);
+    try {
+      child = spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true });
+      let stdout = '';
+      let stderr = '';
+      child.stdout?.setEncoding('utf8').on('data', (data) => { stdout += data; });
+      child.stderr?.setEncoding('utf8').on('data', (data) => { stderr += data; });
+      child.once('error', (error) => finish({ status: null, stdout, stderr: `${stderr}${error.message}` }));
+      child.once('close', (status) => finish({ status, stdout, stderr }));
+    } catch (error) {
+      finish({ status: null, stdout: '', stderr: error.message });
+    }
+  });
+}
+
+async function terminate(term, signal, killTree = taskkillTree) {
   // node-pty throws "Signals not supported on windows." when a signal argument
   // is passed, so Windows is always killed the only way it supports.
   if (process.platform === 'win32') {
@@ -370,24 +404,25 @@ function terminate(term, signal) {
     // helper, which fails to attach and prints noise on stderr while holding a
     // 5 s timer. The native exit callback still arrives on its own, so a dead
     // pid is left alone.
-    if (!isProcessAlive(term.pid)) return;
+    if (!isProcessAlive(term.pid)) return true;
     // taskkill /T ends the whole tree in one step; node-pty's own Windows kill
     // enumerates console processes through that helper and, from a process with
     // piped stdio (every MCP server), waits out its 5 s timeout first. The PTY
     // exit event still fires from the native callback, so node-pty's kill stays
     // as a fallback for anything taskkill refuses.
-    const result = spawnSync('taskkill', ['/pid', String(term.pid), '/T', '/F'], { encoding: 'utf8' });
-    if (result.status === 0) return;
+    const result = await killTree(term.pid);
+    if (result.status === 0) return true;
     // A pid that is already gone still looks alive to process.kill(pid, 0)
     // while ConPTY holds its handle. That is the one failure that must not fall
     // through: node-pty's own kill would fork its helper and print an
     // AttachConsole error for a child whose exit event is already on its way.
     const output = `${result.stdout ?? ''}${result.stderr ?? ''}`.toLowerCase();
-    if (output.includes('not found') || output.includes('not running')) return;
+    if (output.includes('not found') || output.includes('not running')) return true;
     term.kill();
-    return;
+    return false;
   }
   term.kill(signal ?? 'SIGTERM');
+  return true;
 }
 
 // A pipe session's child is spawned detached on POSIX, so it leads its own
@@ -395,34 +430,36 @@ function terminate(term, signal) {
 // descendants it started. Windows has no equivalent group here and uses
 // taskkill /T. The direct child.kill is the POSIX fallback for a pid that is not
 // a group leader (a group already reaped, or a spawn that ignored detached).
-function killPipe(session, signal) {
+async function killPipe(session, signal, killTree = taskkillTree) {
   const child = session.child;
-  if (!Number.isInteger(child.pid) || child.pid <= 0) return;
+  if (!Number.isInteger(child.pid) || child.pid <= 0) return true;
   if (process.platform === 'win32') {
-    if (!isProcessAlive(child.pid)) return;
-    const result = spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { encoding: 'utf8' });
-    if (result.status === 0) return;
+    if (!isProcessAlive(child.pid)) return true;
+    const result = await killTree(child.pid);
+    if (result.status === 0) return true;
     const output = `${result.stdout ?? ''}${result.stderr ?? ''}`.toLowerCase();
-    if (output.includes('not found') || output.includes('not running')) return;
+    if (output.includes('not found') || output.includes('not running')) return true;
     try {
       child.kill();
     } catch {
       // already gone
     }
-    return;
+    return false;
   }
   try {
     // Negative pid is the group, not the process: a shell's background child
     // dies with it instead of leaking past the run's timeout or match.
     process.kill(-child.pid, signal ?? 'SIGTERM');
-    return;
+    return true;
   } catch {
     // no group to signal: fall back to the direct child
   }
   try {
     child.kill(signal ?? 'SIGTERM');
+    return false;
   } catch {
     // already gone
+    return !isProcessAlive(child.pid);
   }
 }
 
@@ -495,11 +532,14 @@ export class SessionManager {
   #sessions = new Map();
   #maxSessions;
   #maxBufferBytes;
+  #killTree;
 
   constructor(options = {}) {
     this.#maxSessions = options.maxSessions ?? envInt('JANUA_MAX_SESSIONS', DEFAULT_MAX_SESSIONS);
     this.#maxBufferBytes = options.maxBufferBytes
       ?? envInt('JANUA_MAX_BUFFER_BYTES', DEFAULT_MAX_BUFFER_BYTES);
+    this.#killTree = options.killTree
+      ?? ((pid) => taskkillTree(pid, options.taskkill ?? {}));
   }
 
   get maxSessions() {
@@ -1265,8 +1305,9 @@ export class SessionManager {
       return { ok: true, exited: true, exitCode: session.exitCode, pid: session.pid };
     }
     try {
-      if (session.pipe) killPipe(session, signal);
-      else terminate(session.term, signal);
+      session.treeTerminated = session.pipe
+        ? await killPipe(session, signal, this.#killTree)
+        : await terminate(session.term, signal, this.#killTree);
     } catch (err) {
       throw new JanuaError(
         ERROR_CODES.INTERNAL,
@@ -1281,6 +1322,16 @@ export class SessionManager {
       KILL_POLL_MS,
     );
     if (gone) {
+      if (session.treeTerminated === false) {
+        return {
+          ok: false,
+          exited: true,
+          exitCode: session.exitCode,
+          pid: session.pid,
+          error: `${ERROR_CODES.PTY_KILL_FAILED}: process ${session.pid} exited after the fallback, `
+            + 'but termination of its descendant tree could not be confirmed',
+        };
+      }
       return { ok: true, exited: true, exitCode: session.exitCode, pid: session.pid };
     }
     const fallback = process.platform === 'win32'
@@ -1335,16 +1386,12 @@ export class SessionManager {
     return { sessions, total: all.length, nextOffset };
   }
 
-  killAll() {
-    for (const session of this.#sessions.values()) {
-      if (session.exited) continue;
-      try {
-        if (session.pipe) killPipe(session);
-        else terminate(session.term);
-      } catch {
-        // shutting down: a session that refuses to die must not block the rest
-      }
-    }
+  async killAll() {
+    // Once the direct process exits, its pid can be reused. Without a retained
+    // OS process handle or a recorded descendant set, taskkill /T could target
+    // an unrelated process tree, so cleanup is limited to known-live owners.
+    const live = [...this.#sessions.values()].filter((session) => !session.exited);
+    await Promise.allSettled(live.map((session) => this.kill(session.sessionId)));
   }
 
   #get(reference) {

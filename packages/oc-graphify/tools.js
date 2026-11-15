@@ -116,7 +116,7 @@ export function toolDefinitions({ graphFile, load }) {
         return text(
           [
             `${label(match)} - ${rows.length} neighbour(s):`,
-            ...rows.map((row) => `- [${row.distance}] ${row.id}${row.relation ? ` (${row.relation})` : ''}\n  ${row.label}`),
+            ...rows.map((row) => `- [${row.distance}] ${row.id}${row.relation ? ` (${row.relation}${row.direction ? `, ${row.direction}` : ''})` : ''}\n  ${row.label}`),
           ].join('\n'),
         )
       },

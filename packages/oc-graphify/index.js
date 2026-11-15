@@ -23,7 +23,7 @@
  * tool editor all degrade to "less plugin", never to a failed request. Setup
  * never throws, so one bad file can never take down the host's generation.
  */
-import { MARKER, askFreshness, configPath, graphFile, headCommit, readConfig, readGraph, render } from './lib.js';
+import { MARKER, askFreshnessAsync, configPath, graphFile, headCommitAsync, readConfig, readGraph, render } from './lib.js';
 import { readGraph as loadGraph } from './graph.js';
 import { toolDefinitions } from './tools.js';
 
@@ -88,11 +88,24 @@ export default {
         /* the injection still works without tools */
       }
 
-      let cache = null; // { at, graph, head }
+      let cache = { at: 0, graph: readGraph(config.atlas), head: null, fresh: { state: 'unknown' } };
+      let refreshFlight = null;
       const snapshot = () => {
         const now = Date.now();
         if (!cache || now - cache.at > HEAD_TTL_MS) {
-          cache = { at: now, graph: readGraph(config.atlas), head: headCommit(config.atlas), fresh: askFreshness(config.atlas) };
+          if (!refreshFlight) {
+            refreshFlight = Promise.resolve().then(() => {
+              const before = readGraph(config.atlas);
+              return Promise.all([headCommitAsync(config.atlas), askFreshnessAsync(config.atlas)])
+                .then(([head, fresh]) => {
+                  const graph = readGraph(config.atlas);
+                  const changed = before?.fingerprint !== graph?.fingerprint;
+                  return { graph, head, fresh: changed ? { state: 'unknown' } : fresh ?? { state: 'unknown' } };
+                });
+            }).then((next) => { cache = { ...next, at: Date.now() }; }).catch(() => {
+              cache = { ...cache, at: Date.now(), fresh: { state: 'unknown' } };
+            }).finally(() => { refreshFlight = null; });
+          }
         }
         return cache;
       };
