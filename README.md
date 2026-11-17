@@ -1,35 +1,32 @@
-# oc-collections
+<h1 align="center">oc-collections</h1>
 
-OpenCode plugins, MCP servers and tooling by nathwn12.
-
-Each package installs on its own. There is no bundle and no all-in-one — you take one thing, not the set.
+**OpenCode plugins, MCP servers and CLIs that install one at a time, one folder each.**
 
 ## Install
 
-**[Browse `packages/`](https://github.com/nathwn12/oc-collections/tree/main/packages)**
+Open [`packages/`](packages) and pick one. Each folder carries its own README with that package's install step, and nothing here requires the whole repository.
 
-Every package is a folder with its own README. Open the one you want; its README carries the install steps for that package and nothing else. Nothing here requires the whole repo.
-
-## What it does
+## Use it
 
 | Package | Kind | Version | What it does | Install |
 | --- | --- | --- | --- | --- |
-| janua | MCP | `0.5.1` | Persistent interactive terminals: spawn a program, type into it, read live output, resize it, kill it. | `npx -y @nathwn12/janua` (stdio MCP server). |
-| oc-bifrost | plugin | `1.7.1` | Runs older OpenCode plugins on the current runtime. | Add `@nathwn12/oc-bifrost` to your `plugins`. |
-| oc-flight-deck | plugin | `0.22.0` | Live session telemetry in the OpenCode sidebar. | Add `oc-flight-deck` to your `plugins`. |
-| oc-harness-setup | CLI | `1.0.2` | Installs the Windows agent harness. | `npx -y oc-harness-setup setup` |
-| oc-plugin-view | plugin | `0.2.0` | Installed plugin list in the OpenCode sidebar. | Add `oc-plugin-view` to your `plugins`. |
-| oc-talk | plugin | `0.5.0` | Cross-session talk, two tools: send one message into any live session and read what it said back. | Add `oc-talk` to your `plugins`. |
-| rea-shim | MCP | `0.2.3` | Launcher for the rea reverse-engineering server. | `npx -y rea-shim --doctor` |
-| oc-collections | repo | — | This index and npm-workspaces monorepo. | — |
+| janua | MCP | `0.5.1` | Persistent interactive terminals: spawn a program, write to it, read live output, resize it, kill it. | `npx @nathwn12/janua` |
+| oc-bifrost | plugin | `1.7.1` | Runs V1-era OpenCode plugins on OpenCode V2. | Add `@nathwn12/oc-bifrost` to `plugins`. |
+| oc-flight-deck | plugin | `0.22.0` | Live cost, token, cache and context telemetry in the sidebar. | Add `oc-flight-deck` to `plugins`. |
+| oc-harness-setup | CLI | `1.0.2` | Installs a Windows OpenCode starter, behind a doctor gate. | `npx --yes oc-harness-setup setup` |
+| oc-plugin-view | plugin | `0.2.0` | Lists every loaded server plugin in the sidebar. | `opencode plugin add oc-plugin-view` |
+| oc-talk | plugin | `0.5.0` | Sends one message into any live session and reads what it said back. | Add `oc-talk` to `plugins`. |
+| rea-shim | MCP | `0.2.3` | Launches the upstream `rea` reverse-engineering MCP and can bootstrap its JDK and Ghidra. | `npx -y rea-shim@latest --doctor` |
+| oc-collections | repo | — | This index and the npm-workspaces monorepo behind it. | — |
 
-Each package's own README has the full steps, options and requirements. This page only tells you which folder to open.
-
-The `gladius` and `puppet` MCP servers are not in this repo - they live in their own repositories. Their launchers fetch engine binaries from those repositories' release assets on first run.
+An MCP goes into your client's server list, a plugin into `plugins` in your `opencode.jsonc`, and a CLI runs once. The `gladius` and `puppet` MCP servers keep their source here but publish from the repositories that build their engines; `oc-fallback`, `oc-graphify` and `oc-terminal` are private and load by path. None of the five carries a version row.
 
 ## Requirements
 
-Windows only for rea-shim (Windows x64) and oc-harness-setup (Windows 10/11), the two packages whose own requirements name Windows. janua names Windows, Linux and macOS; oc-bifrost and oc-flight-deck say any platform the host runs on; oc-talk and oc-plugin-view state no platform, so this page claims none for them.
+- Node 22 or newer. `janua` and `rea-shim` narrow that to `^22.23.4`, `^24.22.1` or `>=26.12.1`; `oc-flight-deck` and `oc-plugin-view` also run under Bun 1.4 or newer.
+- OpenCode 2 for the plugins and the starter. The floors differ per package: `2.1.1` for `oc-flight-deck`, `2.2.0` for `oc-harness-setup`, `2.2.6` for `oc-bifrost` and `oc-plugin-view`. Each package README states its own.
+- Windows 10 or 11 for `oc-harness-setup`, and Windows x64 plus a JDK and Ghidra, or `--bootstrap`, for `rea-shim`. `janua` runs on Windows, Linux and macOS.
+- An MCP client for `janua` and `rea-shim`.
 
 ## Development
 
@@ -41,20 +38,18 @@ bun run check
 bun run pack:check
 ```
 
-`bun run check` runs the docs checker, its self-test, and every workspace's own check. `pack:check` runs check and build, then verifies each tarball.
+`bun run check` runs the vocabulary and launcher guards, the index check and its self-test, the docs check and its self-test, then every workspace's own check. `bun run pack:check` adds a build and verifies each tarball.
 
-Manual npm commands (`npm login`, `npm publish`, `npm trust github`) are owner-only and 2FA-gated with a passkey. Use `scripts/npm-passkey.mjs` in a visible terminal; the release workflow's OIDC publish does not need it.
-
-Releases use tags of the form `<package>@<version>`. The release workflow publishes over OIDC with provenance and no stored token.
+Releases are cut by [docs/RELEASE.md](docs/RELEASE.md): a merge to `main` derives each package's version from the commits since its tag, then tags it and publishes over OIDC with provenance. Every package keeps its own history in its own CHANGELOG.
 
 ## Status
 
-Experimental and still moving. It works today, but it is not a finished
-product: interfaces may change, features may be improved or removed, and a
-release can break the one before it. This is maintained by one person, not a
-team. If it breaks, open an issue with the command you ran and what you saw.
+**Experimental** — pre-release; interfaces may change.
 
 ## Links
 
+- [Issues](https://github.com/nathwn12/oc-collections/issues)
 - [Releases](https://github.com/nathwn12/oc-collections/releases)
-- [MIT](LICENSE)
+- [Release lane](docs/RELEASE.md)
+- [Changelog](CHANGELOG.md)
+- [MIT licence](LICENSE)
