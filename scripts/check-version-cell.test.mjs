@@ -102,11 +102,14 @@ test("this checker and check-index.ps1 name the same failure for the same cell",
   const probe = spawnSync("pwsh", ["-NoProfile", "-Command", "exit 0"], { encoding: "utf8" })
   if (probe.error || probe.status !== 0) return t.skip("pwsh is not installed")
 
-  const root = fixture({ manifest: "0.3.0", pin: "0.2.2" })
+  const repo = path.resolve(import.meta.dirname, "..")
+  const manifest = JSON.parse(
+    fs.readFileSync(path.join(repo, "packages", "oc-talk", "package.json"), "utf8"),
+  ).version
+  const root = fixture({ manifest, pin: "0.2.2" })
   const mine = checkVersionCells({ root }).failures[0]
 
   // Hand the PowerShell half this repo's own README, with one stale cell in it.
-  const repo = path.resolve(import.meta.dirname, "..")
   const stale = fs
     .readFileSync(path.join(repo, "README.md"), "utf8")
     .replace(/(\| oc-talk \| plugin \| `)[^`]+(`)/, "$10.2.2$2")

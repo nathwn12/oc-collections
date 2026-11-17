@@ -1,5 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 import { SessionManager } from '../lib/sessions.js';
 import { incompleteEscapeStart, stripAnsi } from '../lib/ansi.js';
 
@@ -262,12 +264,78 @@ test('pty_kill reports whether the process is actually gone', async (t) => {
     description: 'child that must really die on kill',
   });
 
+  let eventLoopTicks = 0;
+  const progress = setInterval(() => { eventLoopTicks += 1; }, 5);
   const killed = await manager.kill(spawned.sessionId);
+  clearInterval(progress);
   assert.equal(killed.ok, true);
   assert.equal(killed.exited, true, 'a confirmed kill must say the process exited');
   assert.equal(killed.pid, spawned.pid);
+  assert.ok(eventLoopTicks > 0, 'termination must not block event-loop progress');
 
   const again = await manager.kill(spawned.sessionId);
   assert.equal(again.ok, true, 'killing an exited session stays idempotent');
   assert.equal(again.exited, true);
+});
+
+test('Windows taskkill timeout stays async, bounds the helper, and reports tree fallback honestly', {
+  skip: process.platform !== 'win32',
+}, async (t) => {
+  let helperKilled = false;
+  const manager = new SessionManager({
+    taskkill: {
+      timeoutMs: 25,
+      spawn: () => {
+        const helper = new EventEmitter();
+        helper.stdout = new PassThrough();
+        helper.stderr = new PassThrough();
+        helper.kill = () => { helperKilled = true; };
+        return helper;
+      },
+    },
+  });
+  t.after(() => manager.killAll());
+
+  const spawned = manager.spawn({
+    command: process.execPath,
+    args: ['-e', 'setInterval(() => {}, 1000)'],
+    description: 'child for delayed taskkill timeout',
+  });
+  let ticks = 0;
+  const progress = setInterval(() => { ticks += 1; }, 2);
+  const result = await manager.kill(spawned.sessionId);
+  clearInterval(progress);
+
+  assert.ok(ticks > 0, 'event loop must run while the taskkill timeout is pending');
+  assert.equal(helperKilled, true, 'timed-out taskkill helper must be stopped');
+  assert.equal(result.exited, true, 'the direct process must be confirmed gone after fallback');
+  assert.equal(result.ok, false, 'a direct-child fallback does not prove descendant cleanup');
+  assert.match(result.error, /descendant tree could not be confirmed/);
+  assert.throws(() => process.kill(spawned.pid, 0), 'the real spawned child must not be orphaned');
+});
+
+test('killAll does not target a pid after its owned process has exited', async (t) => {
+  let treeKillAttempts = 0;
+  const manager = new SessionManager({
+    killTree: async () => {
+      treeKillAttempts += 1;
+      return { status: 0, stdout: '', stderr: '' };
+    },
+  });
+  t.after(() => manager.killAll());
+
+  const spawned = manager.spawn({
+    command: process.execPath,
+    args: ['-e', 'setTimeout(() => {}, 5)'],
+    description: 'short-lived child for stale-pid guard',
+  });
+  const deadline = Date.now() + 5_000;
+  while (!manager.list().sessions[0]?.exited && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.equal(manager.list().sessions[0]?.exited, true, 'the owned process must exit first');
+
+  await manager.killAll();
+  assert.equal(treeKillAttempts, 0, 'an exited owner pid is unsafe to use as a tree root');
+  assert.throws(() => process.kill(spawned.pid, 0), 'the direct child must be gone');
 });

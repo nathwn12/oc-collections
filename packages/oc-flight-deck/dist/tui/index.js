@@ -645,10 +645,16 @@ function formatRemaining(ms) {
   const minutes = Math.ceil(ms / 60000);
   if (minutes < 60)
     return `${minutes}m`;
-  const hours = Math.ceil(ms / 3600000);
-  if (hours < 24)
-    return `${hours}h`;
-  return `${Math.ceil(ms / 86400000)}d`;
+  const hours = Math.floor(ms / 3600000);
+  if (hours < 24) {
+    if (hours === 0)
+      return `${minutes}m`;
+    const rest = Math.floor((ms - hours * 3600000) / 60000);
+    return rest > 0 ? `${hours}h${rest}m` : `${hours}h`;
+  }
+  const days = Math.floor(ms / 86400000);
+  const rest = Math.floor((ms - days * 86400000) / 3600000);
+  return rest > 0 ? `${days}d${rest}h` : `${days}d`;
 }
 function goResetSuffix(window, nowMs) {
   if (goTone(window) !== "error")
@@ -2474,7 +2480,6 @@ function railLineSpans(line, style) {
 function footerLine(config) {
   return config.footer.enabled ? config.footer.text : undefined;
 }
-
 // src/tui/go-panel.ts
 var PANEL_WINDOWS = ["5h", "1w", "1m"];
 var PANEL_DEFAULT_LABELS = {
@@ -2613,24 +2618,6 @@ function windowById(usage) {
   }
   return byId;
 }
-function formatCompactRemaining(ms) {
-  const totalSeconds = Math.ceil(ms / 1000);
-  if (totalSeconds < 60)
-    return `${totalSeconds}s`;
-  const totalMinutes = Math.ceil(ms / 60000);
-  if (totalMinutes < 60)
-    return `${totalMinutes}m`;
-  const totalHours = Math.floor(ms / 3600000);
-  if (totalHours < 24) {
-    if (totalHours === 0)
-      return `${totalMinutes}m`;
-    const minutes = Math.floor((ms - totalHours * 3600000) / 60000);
-    return minutes > 0 ? `${totalHours}h${minutes}m` : `${totalHours}h`;
-  }
-  const totalDays = Math.floor(ms / 86400000);
-  const hours = Math.floor((ms - totalDays * 86400000) / 3600000);
-  return hours > 0 ? `${totalDays}d${hours}h` : `${totalDays}d`;
-}
 function resetCountdown(window, nowMs) {
   const resetAtMs = window.resetAtMs;
   if (resetAtMs === undefined || !Number.isFinite(resetAtMs) || !Number.isFinite(nowMs))
@@ -2638,7 +2625,7 @@ function resetCountdown(window, nowMs) {
   const remaining = resetAtMs - nowMs;
   if (remaining <= 0)
     return;
-  return formatCompactRemaining(remaining);
+  return formatRemaining(remaining);
 }
 function panelTone(window) {
   if (goTone(window) === "error")

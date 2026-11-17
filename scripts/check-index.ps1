@@ -86,7 +86,6 @@ $Omitted = @{
     # Private, absent from the registry, and deliberately not in the release
     # allowlist. A row would claim an install target that does not exist.
     'oc-dex' = 'private: true; source-only plugin, installed by junction'
-    'oc-fallback' = 'private: true; source-only plugin, loaded from the repo path'
     'oc-graphify' = 'private: true; source-only plugin, installed by junction'
     'oc-terminal' = 'private: true; source-only spawn guard, installed by junction'
     # Source is imported here; the npm package is released from the repository

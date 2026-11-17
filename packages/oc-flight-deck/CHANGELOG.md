@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The compact Go row shows reset countdowns with the same two-unit precision as the Go panel instead of rounding hours or days up to a single unit.
+
 ## [0.22.0] - 2026-11-10
 
 ### Changed
