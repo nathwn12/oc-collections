@@ -403,7 +403,7 @@ jobs:
 
       - name: Upload the outcome
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-result-${{ strategy.job-index }}
           path: ${{ runner.temp }}/release/result.txt
