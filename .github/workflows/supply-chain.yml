@@ -22,7 +22,11 @@ jobs:
         with:
           bun-version: "1.4.4"
       - run: bun install --frozen-lockfile --ignore-scripts
-      - run: bun audit --audit-level=high
+      # picomatch 4.0.7 is the newest release and the advisory covers <=4.0.7,
+      # so there is no patched version to move to yet (transitive: tinyglobby >
+      # node-gyp > @opencode/util). Scoped to that advisory only; remove this
+      # ignore once picomatch > 4.0.7 ships and the lockfile can take it.
+      - run: bun audit --audit-level=high --ignore=GHSA-fc5q-39xc-vjpf
       - uses: rustsec/audit-check@v2.0.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
