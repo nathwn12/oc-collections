@@ -19,6 +19,7 @@ import { ANIMATED_FIELDS, type StatSource } from "./stats.js";
 import { attributeMask, themeColor } from "./style.js";
 import { startGuardBridge } from "./guard.js";
 import { startGoBridge } from "./go.js";
+import { startCodexQuota } from "./codex-quota.js";
 import { startTicker } from "./ticker.js";
 import { asCount, asRecord, type SessionLike } from "./coerce.js";
 import { createProjectTotals } from "./project-totals.js";
@@ -220,9 +221,10 @@ export default Plugin.define({
     // frame only when the look opts in; by default the bar is static).
     const goOption = config.sidebar.footer.go;
     const goPanelEnabled = goOption === true || (typeof goOption === "object" && goOption !== null);
+    const dexEnabled = wants("dex");
     const animated =
       config.sidebar.enabled &&
-      (goPanelEnabled ||
+      (goPanelEnabled || dexEnabled ||
         config.sidebar.rows.some((name) => ANIMATED_FIELDS.some((field) => field === name)));
     let spinnerNeeded = false;
     const ticker = startTicker(context, animated ? config.refresh : 0, () => spinnerNeeded);
@@ -243,6 +245,7 @@ export default Plugin.define({
     const wantGo =
       config.sidebar.enabled && (config.sidebar.rows.includes("go") || goPanelEnabled);
     const goBridge = wantGo ? startGoBridge(context) : undefined;
+    const dexBridge = dexEnabled ? startCodexQuota(context) : undefined;
 
     // The footer panel's look, re-resolved live from the config file: the
     // reader cheap-stats the file each render (mtime + size) and re-reads +
@@ -336,6 +339,7 @@ export default Plugin.define({
         // Read the go store inside the render too, so a poll re-runs the rail
         // exactly as the guard read does.
         go: goBridge?.usage,
+        dex: dexBridge?.value,
         // The id comes from the slot render props, read fresh on every render
         // rather than cached: the sidebar is not remounted on a session switch,
         // so a signal or module variable here would copy a stale session.
@@ -492,6 +496,7 @@ export default Plugin.define({
       ticker?.dispose();
       bridge?.dispose();
       goBridge?.dispose();
+      dexBridge?.dispose();
       for (const release of releases) release();
     };
   },

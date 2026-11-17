@@ -13,7 +13,9 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 
 /** First line of every injected block; also how a second injection is refused. */
 export const MARKER = '<!-- oc-graphify -->';
@@ -65,8 +67,9 @@ export function summarize(graph) {
 export function readGraph(atlas) {
   const file = graphFile(atlas);
   try {
-    const graph = JSON.parse(fs.readFileSync(file, 'utf8'));
-    return { ...summarize(graph), file, mtime: fs.statSync(file).mtimeMs };
+    const raw = fs.readFileSync(file, 'utf8');
+    const graph = JSON.parse(raw);
+    return { ...summarize(graph), file, mtime: fs.statSync(file).mtimeMs, fingerprint: createHash('sha256').update(raw).digest('hex') };
   } catch {
     return null;
   }
@@ -86,6 +89,17 @@ export function headCommit(atlas, { exec = execFileSync, timeout = 4000 } = {}) 
   } catch {
     return null;
   }
+}
+
+export function headCommitAsync(atlas, { timeout = 4000 } = {}) {
+  return new Promise((resolve) => {
+    execFile('git', ['-C', atlas, 'rev-parse', 'HEAD'], {
+      encoding: 'utf8', timeout, windowsHide: true, maxBuffer: 4096,
+    }, (error, stdout) => {
+      const sha = String(stdout || '').trim();
+      resolve(!error && /^[0-9a-f]{40}$/.test(sha) ? sha : null);
+    });
+  });
 }
 
 export const short = (sha) => (typeof sha === 'string' && sha.length >= 7 ? sha.slice(0, 7) : null);
@@ -152,6 +166,25 @@ export function askFreshness(atlas, { exec = execFileSync, timeout = 8000, runti
     const first = text.split('\n').filter(Boolean)[0] || 'graph is stale';
     return { state: 'stale', detail: first.replace(/^graph-freshness:\s*/, '') };
   }
+}
+
+/** Async counterpart for request hooks: bounded child process, never blocks the caller. */
+export function askFreshnessAsync(atlas, { timeout = 8000, runtime = runtimePath() } = {}) {
+  return new Promise((resolve) => {
+    const tool = path.join(atlas, '.graphify', 'tools', 'graph-freshness.mjs');
+    if (!fs.existsSync(tool) || !isJsRuntime(runtime)) return resolve(null);
+    execFile(runtime, [tool], { encoding: 'utf8', timeout, windowsHide: true, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
+      if (!error) {
+        const line = String(stdout).trim().split('\n').filter(Boolean).pop() || '';
+        return resolve({ state: 'fresh', detail: line.replace(/^graph fresh:\s*/, '') });
+      }
+      if (error.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' || error.killed) return resolve(null);
+      if (error.code !== 1 && error.status !== 1) return resolve(null);
+      const text = `${stdout || ''}\n${stderr || ''}`.trim();
+      const first = text.split('\n').filter(Boolean)[0] || 'graph is stale';
+      resolve({ state: 'stale', detail: first.replace(/^graph-freshness:\s*/, '') });
+    });
+  });
 }
 
 /** fresh | stale | unknown | missing. Commit equality is the fallback only. */

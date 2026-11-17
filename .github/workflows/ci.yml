@@ -23,6 +23,10 @@
 # The previous gate ran on ubuntu-latest and only proved four root files were
 # tracked. janua is cross-platform: the Windows jobs keep the full gate, and
 # the `posix` job proves the POSIX branch that a Windows run cannot reach.
+#
+# A docs-only change (*.md, docs/, LICEN[CS]E) keeps the required check green and runs no build.
+# The `plan` job stays as it is: `check` builds its matrix from `plan`'s output, so
+# an empty plan would turn a docs-only pull request red instead of green.
 name: ci
 
 on:
@@ -48,17 +52,43 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history: the scope step below diffs against the base branch with
+          # `...`, which needs a merge base (and, on a push, the `before` commit).
+          fetch-depth: 0
+
+      - name: Detect a docs-only change
+        id: scope
+        shell: bash
+        run: |
+          docs='^(.*\.md|docs/.*|LICEN[CS]E(\.md)?)$'
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+            changed=$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")
+          elif [ "${{ github.event_name }}" = "push" ] && [ -n "${{ github.event.before }}" ]; then
+            changed=$(git diff --name-only "${{ github.event.before }}" HEAD || true)
+          else
+            changed=$(git ls-files)
+          fi
+          if [ -n "$changed" ] && ! printf '%s\n' "$changed" | grep -qvE "$docs"; then
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - uses: actions/setup-node@v4
+        if: steps.scope.outputs.code == 'true'
         with:
           node-version: 22
 
       # Cheap guard first: a missing licence, README, changelog or signature is
       # a tracked-file fact, answered in about a second with no install.
       - name: Index files present
+        if: steps.scope.outputs.code == 'true'
         run: git ls-files --error-unmatch README.md LICENSE CHANGELOG.md assets/signature.svg
 
       - name: Index structure (offline)
+        if: steps.scope.outputs.code == 'true'
         # The structural half needs no registry: it checks the table names
         # against the repo's package inventory. The self-test proves it can go
         # red without network.
@@ -68,16 +98,23 @@ jobs:
           pwsh -NoProfile -File scripts/check-index.selftest.ps1
 
       - name: No internal vocabulary in the index's own files
+        if: steps.scope.outputs.code == 'true'
         # One definition, shared with `npm run check`: the patterns, the excluded
         # path and the "a grep error is never clean" rule live in the script.
         run: node scripts/check-vocabulary.mjs
 
       - name: Documentation truth (offline)
+        if: steps.scope.outputs.code == 'true'
         # Path claims in maintainer docs, plus the checker's own red/green proof.
         shell: pwsh
         run: |
           node scripts/check-docs.mjs
           node scripts/check-docs.selftest.mjs
+
+      - name: Scope
+        if: always()
+        run: |
+          echo "scope: ${{ steps.scope.outputs.code == 'true' && 'code changed - the full gate ran' || 'docs-only - build skipped, the check stays green' }}"
 
   # One leg per workspace, fanned out from the shared plan. A leg proves only
   # its own package (`--package`), with the content cache off: a gate that
@@ -119,8 +156,32 @@ jobs:
         package: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history: the scope step below diffs against the base branch with
+          # `...`, which needs a merge base (and, on a push, the `before` commit).
+          fetch-depth: 0
+
+      - name: Detect a docs-only change
+        id: scope
+        shell: bash
+        run: |
+          docs='^(.*\.md|docs/.*|LICEN[CS]E(\.md)?)$'
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+            changed=$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")
+          elif [ "${{ github.event_name }}" = "push" ] && [ -n "${{ github.event.before }}" ]; then
+            changed=$(git diff --name-only "${{ github.event.before }}" HEAD || true)
+          else
+            changed=$(git ls-files)
+          fi
+          if [ -n "$changed" ] && ! printf '%s\n' "$changed" | grep -qvE "$docs"; then
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - uses: actions/setup-node@v4
+        if: steps.scope.outputs.code == 'true'
         with:
           node-version: 22
 
@@ -129,10 +190,12 @@ jobs:
       # `bun run typecheck && bun test`. Pinned to the version the root
       # manifest's `packageManager` names.
       - uses: oven-sh/setup-bun@v2
+        if: steps.scope.outputs.code == 'true'
         with:
           bun-version: 1.4.4
 
       - name: Toolchain versions
+        if: steps.scope.outputs.code == 'true'
         # Logged, never asserted: when a leg goes red, the first question is
         # what it ran on, and the answer is in the log, not in a guess.
         run: |
@@ -141,15 +204,22 @@ jobs:
           bun --version
 
       - name: Install workspaces
+        if: steps.scope.outputs.code == 'true'
         # The root manifest declares no dependencies, and each workspace's
         # check resolves its bins through the hoisted root node_modules
         # that `bun install` builds from bun.lock.
         run: bun install --frozen-lockfile
 
       - name: Check ${{ matrix.package }}
+        if: steps.scope.outputs.code == 'true'
         env:
           OC_CHECK_CACHE: 0
         run: node scripts/workspace-run.mjs check --package "${{ matrix.package }}"
+
+      - name: Scope
+        if: always()
+        run: |
+          echo "scope: ${{ steps.scope.outputs.code == 'true' && 'code changed - the full gate ran' || 'docs-only - build skipped, the check stays green' }}"
 
   # janua's pipe path has POSIX-only branches: a detached child leading its own
   # process group, and negative-pid group kills. The Windows matrix legs skip the
@@ -163,20 +233,52 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history: the scope step below diffs against the base branch with
+          # `...`, which needs a merge base (and, on a push, the `before` commit).
+          fetch-depth: 0
+
+      - name: Detect a docs-only change
+        id: scope
+        shell: bash
+        run: |
+          docs='^(.*\.md|docs/.*|LICEN[CS]E(\.md)?)$'
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+            changed=$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")
+          elif [ "${{ github.event_name }}" = "push" ] && [ -n "${{ github.event.before }}" ]; then
+            changed=$(git diff --name-only "${{ github.event.before }}" HEAD || true)
+          else
+            changed=$(git ls-files)
+          fi
+          if [ -n "$changed" ] && ! printf '%s\n' "$changed" | grep -qvE "$docs"; then
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - uses: actions/setup-node@v4
+        if: steps.scope.outputs.code == 'true'
         with:
           node-version: 22
 
       - uses: oven-sh/setup-bun@v2
+        if: steps.scope.outputs.code == 'true'
         with:
           bun-version: 1.4.4
 
       # bun installs the whole workspace; this job still runs only janua's
       # POSIX pipe path, which a Windows run cannot reach.
       - name: Install dependencies
+        if: steps.scope.outputs.code == 'true'
         run: bun install --frozen-lockfile
 
       - name: Run POSIX pipe and upgrade tests
+        if: steps.scope.outputs.code == 'true'
         working-directory: packages/janua
         run: node --test "test/pipe.test.js" "test/upgrade.test.js"
+
+      - name: Scope
+        if: always()
+        run: |
+          echo "scope: ${{ steps.scope.outputs.code == 'true' && 'code changed - the full gate ran' || 'docs-only - build skipped, the check stays green' }}"

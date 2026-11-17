@@ -314,6 +314,19 @@ test("renders the opt-in branding pair when sidebar.footer.lines is set", async 
   expect(footerFrame).toContain("─────────────────");
 });
 
+test("keeps compact Codex unavailable visible when persistence is disabled", async () => {
+  const { context, claims } = harness({ sidebar: { rows: ["go", "dex"], persist: false } }, workspace(), LIVE_SESSION);
+  const dispose = flightDeck.setup(context);
+  try {
+    const { sidebar, sidebarFooter } = railClaims(claims);
+    expect(sidebarFooter).toBeUndefined();
+    const frame = await frameOf(sidebar!.render, 40, 2);
+    expect(frame).toContain("dex");
+    expect(frame).toContain("unavailable");
+    expect(frame.split("\n").filter(line => line.trim()).length).toBe(1);
+  } finally { if (typeof dispose === "function") dispose(); }
+});
+
 test("renders the Go usage panel in the footer slot when sidebar.footer.go is set", async () => {
   const { context, claims } = harness({ sidebar: { footer: { go: true } } }, workspace(), LIVE_SESSION);
   flightDeck.setup(context);
@@ -1656,6 +1669,3 @@ test("rolls the family tokens and cache reads up to the token rows", async () =>
   expect(frame).toContain("cache     71% hit · 10k read");
   expect(frame).not.toContain("1k in · 2k out");
 });
-
-
-

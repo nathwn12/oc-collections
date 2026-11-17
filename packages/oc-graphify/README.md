@@ -62,6 +62,20 @@ again re-adds the file; the check below fails by name when that happens.
 
 `OC_GRAPHIFY_CONFIG` overrides the record path for a second host or a test.
 
+## Graph direction and freshness
+
+Directed Atlas links are traversed from `source` to `target`; paths do not
+reverse them. Neighbour results identify the stored link orientation, and
+`graph_god_nodes` ranks directed nodes by total degree (incoming plus outgoing).
+Undirected graphs remain traversable from either endpoint.
+
+Freshness probes run asynchronously and coalesce while one refresh is in flight.
+The first request, and any request while a refresh is pending, uses the cached
+snapshot; until a verdict is available it says `unverified`. If `graph.json`
+changes during a probe, the new counts are loaded but that probe's verdict is
+discarded as `unknown` rather than being applied to different graph bytes.
+Probe failures are `unverified`, never implicitly `fresh`.
+
 ## Check
 
 ```sh

@@ -2,6 +2,7 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
 import { createRequire } from "node:module"
+import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { registerV1Hooks, V1ToolDefinitionError } from "../dist/hooks.js"
 import { createReporter } from "../dist/report.js"
@@ -154,9 +155,12 @@ test("contract: the vendored V1 types reject an unexecutable tool and a non-nume
   // The compile-time half: `types/v1-contract.assert.ts` carries @ts-expect-error
   // on every shape the contract must refuse. A looser contract makes those
   // directives unused (TS2578), so tsc exits non-zero here.
-  const require = createRequire(import.meta.url)
-  const tsc = require.resolve("typescript/bin/tsc")
   const config = fileURLToPath(new URL("./types/tsconfig.json", import.meta.url))
-  const result = spawnSync(process.execPath, [tsc, "-p", config], { encoding: "utf8" })
+  // TypeScript 7 no longer exports the compiler API or the old bin/tsc
+  // subpath. Resolve the package entry, derive its root, then run its bin
+  // directly; this works with both the TS 5 JS compiler and TS 7 launcher.
+  const tsEntry = createRequire(import.meta.url).resolve("typescript")
+  const tsBin = path.join(path.dirname(path.dirname(tsEntry)), "bin", "tsc")
+  const result = spawnSync(process.execPath, [tsBin, "-p", config], { encoding: "utf8" })
   assert.equal(result.status, 0, `the type contract must fail closed:\n${result.stdout ?? ""}${result.stderr ?? ""}`)
 })

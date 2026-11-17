@@ -26,7 +26,8 @@
 // can never overflow or wrap.
 
 import { asCount, asRecord } from "./coerce.js";
-import { goTone, type GoUsage, type GoWindow } from "./go-usage.js";
+import { formatRemaining as formatCompactRemaining, goTone, type GoUsage, type GoWindow } from "./go-usage.js";
+export { formatRemaining as formatCompactRemaining } from "./go-usage.js";
 import type { RailLine } from "./presentation.js";
 import type { StatSegment } from "./rows.js";
 import { DEFAULT_PLACEHOLDER } from "./stat-fields.js";
@@ -331,38 +332,6 @@ function windowById(usage: GoUsage | undefined): Map<GoWindow["id"], GoWindow> {
     byId.set(id, window);
   }
   return byId;
-}
-
-/**
- * A duration as one or two compact units: `45s`, `12m`, `2h`, `4h44m`, `1d6h`,
- * `30d23h`.
- *
- * Deliberately not ./go-usage.js's `formatRemaining`: that one is the one-line
- * `go` row's hint and stays single-unit. The panel has the columns for the
- * next unit down, and the next unit is what turns "4h" into something an agent
- * can plan against. Seconds are dropped once hours are on the clock - two
- * units is the whole budget - and a unit is omitted when it is zero, so an
- * exact `2h` reads `2h` rather than `2h0m`.
- *
- * The sub-hour branches round up (as the row's hint does), so a countdown
- * never understates the wait: 90s reads `2m`, not `1m30s`.
- */
-export function formatCompactRemaining(ms: number): string {
-  const totalSeconds = Math.ceil(ms / 1_000);
-  if (totalSeconds < 60) return `${totalSeconds}s`;
-  const totalMinutes = Math.ceil(ms / 60_000);
-  if (totalMinutes < 60) return `${totalMinutes}m`;
-  const totalHours = Math.floor(ms / 3_600_000);
-  if (totalHours < 24) {
-    // Just under the hour: `totalMinutes` is 60 and the hours place is empty,
-    // so name the minutes rather than print a hollow `0h59m`.
-    if (totalHours === 0) return `${totalMinutes}m`;
-    const minutes = Math.floor((ms - totalHours * 3_600_000) / 60_000);
-    return minutes > 0 ? `${totalHours}h${minutes}m` : `${totalHours}h`;
-  }
-  const totalDays = Math.floor(ms / 86_400_000);
-  const hours = Math.floor((ms - totalDays * 86_400_000) / 3_600_000);
-  return hours > 0 ? `${totalDays}d${hours}h` : `${totalDays}d`;
 }
 
 /**

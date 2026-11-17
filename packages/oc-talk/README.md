@@ -54,7 +54,7 @@ A request that still names a lane fails instead of being reinterpreted. `deliver
 
 A leading `[steer]` or `STEER:` is stripped before delivery: a model that writes the token means it as routing, not as content. It counts only when whitespace or the end of the message follows it, so `[steer](https://example.com)` stays a Markdown link and arrives untouched, and a message that is only a marker is a typed `bad_request` — there is nothing to deliver. `[queue]` and `QUEUE:` are ordinary text now: they are delivered as written.
 
-`wait` is a poll, not a lane. It runs after the send — never instead of it — and takes seconds to block until the target reaches its next turn boundary, then returns the messages it produced with `timedOut` and `waitedMs`. It cannot change what was sent, so a steered message with `wait` is still steered, and a bounded wait that gives up reports `timedOut: true` rather than claiming a completion that never happened.
+`wait` is a poll, not a lane. It runs after the send — never instead of it — and takes seconds to block until the target reaches its next turn boundary, then returns the messages it produced with `timedOut` and `waitedMs`. Its deadline and caller cancellation apply to both the boundary poll and final message read. Since the message is already admitted, a cancelled/failed wait is reported as `waitError` or `replyReadError` alongside `delivered: true`, never as a failed send. A bounded wait that gives up reports `timedOut: true` rather than claiming a completion that never happened.
 
 The reply reports both fields: `delivery` is always `steer`, and `deliveryReason` is `explicit` when the caller passed `delivery: "steer"`, `marker` when a `[steer]` token was stripped, and `default` otherwise.
 

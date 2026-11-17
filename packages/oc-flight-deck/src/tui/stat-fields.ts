@@ -79,6 +79,8 @@ export interface StatSource {
    * type across the module boundary.
    */
   readonly go?: unknown;
+  /** Authenticated Codex CLI account limits: 5h and 1w, never Go usage. */
+  readonly dex?: unknown;
 }
 
 /** Fields a user may name in `sidebar.rows`, in the order they are documented. */
@@ -103,6 +105,7 @@ export const STAT_FIELDS = [
   "turns",
   "guard",
   "go",
+  "dex",
   "ses",
 ] as const;
 
@@ -280,6 +283,8 @@ export function skeletonValue(field: string, layout: LayoutHint): string | undef
       return "0";
     case "go":
       return "○ 0 ○ 0 ○ 0";
+    case "dex":
+      return "unavailable";
     case "status":
       return "○ idle";
     case "agent":
@@ -294,4 +299,3 @@ export function skeletonValue(field: string, layout: LayoutHint): string | undef
       return undefined;
   }
 }
-

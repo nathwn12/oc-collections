@@ -37,6 +37,8 @@
 ### Changed
 
 - The default session cap is 32 instead of 16 (`JANUA_MAX_SESSIONS` still overrides it).
+- Windows process-tree termination now runs asynchronously with a bounded wait. `pty_kill` reports
+  failure when descendant termination is unconfirmed, even if the direct process exits.
 
 ### Removed
 
