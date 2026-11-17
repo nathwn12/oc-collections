@@ -23,7 +23,7 @@ updates:
       # Measuring with 9.0.0 would make the width test disagree with the
       # rendered output. Drop this entry when @opentui/core moves to v9.
       - dependency-name: "string-width"
-        versions: [">=9.0.0"]
+        versions: [">7.2.0"]
 
   - package-ecosystem: "cargo"
     directory: "/"
