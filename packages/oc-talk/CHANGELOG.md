@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Run the offline test suite as part of the package check.
+
 ### Fixed
 
 - Respect cancellation and deadlines during session lookup, polling, and reply reads; preserve successful delivery when a later wait or read fails.

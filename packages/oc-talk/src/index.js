@@ -283,13 +283,27 @@ function sleep(ms, signal) {
       if (signal) signal.removeEventListener('abort', finish);
       resolve();
     };
+    // No unref: a sleep is the work a wait is doing, so it must hold the loop
+    // open until it fires. An unref'd timer here lets a process with nothing
+    // else pending exit mid-wait, and a pending promise that no handle keeps
+    // alive is a hang, not a wait.
     const t = setTimeout(finish, ms);
-    if (t.unref) t.unref();
     if (signal) {
       if (signal.aborted) finish();
       else signal.addEventListener('abort', finish, { once: true });
     }
   });
+}
+
+// A deadline that keeps the loop alive while it is pending, for the same reason
+// as sleep(). `AbortSignal.timeout()` is unref'd by definition.
+function deadlineSignal(ms) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => {
+    ctrl.abort(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
+  }, ms);
+  ctrl.signal.addEventListener('abort', () => clearTimeout(timer), { once: true });
+  return ctrl.signal;
 }
 
 // The id of the newest message in a session, or '' when it has none. Captured
@@ -318,7 +332,7 @@ async function waitForIdle(sessionID, waitMs, sinceID, opts = {}) {
       return { ok: false, code: 'cancelled', detail: 'wait cancelled' };
     }
     const remaining = Math.max(0, deadline - Date.now());
-    const timeout = AbortSignal.timeout(Math.max(1, remaining));
+    const timeout = deadlineSignal(Math.max(1, remaining));
     const signal = opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
     const r = await runApi(['session.message.list', '--param', 'sessionID=' + sessionID, '--param', 'limit=1'], { signal });
     if (timeout.aborted && !(cancelSignal && cancelSignal.aborted)) {
