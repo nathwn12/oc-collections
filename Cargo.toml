@@ -2,7 +2,7 @@
 #
 # The imported crates (crates/gladius, crates/puppet) were removed on
 # 2026-10-29; those MCP servers stay on their own release lanes (see
-# MIGRATIONS.md). This stays a valid virtual workspace with no members: a
+# docs/MIGRATIONS.md). This stays a valid virtual workspace with no members: a
 # `crates/*` glob is an error when it matches nothing, so members is explicit.
 # resolver = "2" is kept for any future member.
 [workspace]

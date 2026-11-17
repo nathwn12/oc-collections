@@ -36,6 +36,9 @@ const NAMES = new Set(["AGENTS.md", "CONTRIBUTING.md", "INSTALL.md", "PUBLISHING
 const IN_SCOPE = ["README.md", "AGENTS.md", "packages/oc-bifrost", "packages/oc-flight-deck", "packages/oc-harness-setup", "packages/rea-shim"];
 // Bare filenames are only claims when they name a maintainer document or a
 // manifest. Config examples such as `opencode.jsonc` are not repo paths.
+// `MIGRATIONS.md` lives in docs/ and its bare name stays claimed on purpose: the
+// token still resolves from docs/ itself, while a stale reference to the old
+// root location names a file that is gone and fails.
 const BARE_CLAIMS = new Set([
   "README.md", "AGENTS.md", "CONTRIBUTING.md", "INSTALL.md", "PUBLISHING.md",
   "SKILL.md", "CHANGELOG.md", "MIGRATIONS.md", "LICENSE", "package.json",

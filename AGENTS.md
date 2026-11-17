@@ -45,7 +45,7 @@ bun install
 
 - `README.md` — the index table; the table is the source of truth.
 - `CHANGELOG.md` — index and monorepo history; earlier implementation history was removed with the implementation.
-- `MIGRATIONS.md` — what moved into `packages/`, from where, and which owner calls remain open.
+- `docs/MIGRATIONS.md` — what moved into `packages/`, from where, and which owner calls remain open.
 - `LICENSE` — license text.
 - `package.json` — the private root manifest: the workspaces list and the fan-out scripts.
 - `scripts/check-index.ps1` — `--structural` (offline, PR) checks table names against the repo; `--registry` (post-publish) checks the published world.
@@ -69,7 +69,7 @@ bun install
 - Land only through a pull request, squash-merge it, then delete the branch.
 - Keep `CHANGELOG.md` and the docs current with every index change.
 - A new index row keeps the existing column order: repo, one-line description, npm package and version, links.
-- A package that moves in keeps its published npm name and its own version line; record the move in `MIGRATIONS.md`.
+- A package that moves in keeps its published npm name and its own version line; record the move in `docs/MIGRATIONS.md`.
 
 ## What the index guarantees
 
@@ -79,7 +79,7 @@ The table promises that every repo link reaches a live repository, every npm lin
 
 The root manifest is `private: true` and is never published. The repo's own release is an annotated tag `v<version>` recording a state of the index — this is not a package release tag; package releases use `<package>@<version>` below.
 
-Package releases run on a merge to `main`, not on a tag push: `scripts/derive-release.mjs --all` reads each package's highest `<package>@<version>` tag and the conventional commits since it, derives the next version per package, and the release job gates, publishes over OIDC trusted publishing with provenance, and creates that `<package>@<version>` tag at the pushed commit. A package with no releasable commit is skipped; `workflow_dispatch` forces one package and leaves `dry_run` on by default, stopping before the tag and the publish. Nothing is committed: the version cells and the closed changelog exist only in the runner's tarball, so the committed manifest and the index cell lag the newest tag until a human moves them — the tag and the registry are the release record. `.github/workflows/release.yml` has run four times, one package per run: `@nathwn12/oc-bifrost@1.6.10`, `oc-flight-deck@0.20.2`, `oc-harness-setup@0.4.4`, and `rea-shim@0.1.2`, each released through OIDC trusted publishing with provenance, each carrying two attestations, and `latest` correct on all four. Every publish step succeeded, and every run still concluded `failure` at one step: `Verify the released package on the registry` ran about 1.6 s after publish and lost npm's propagation race. That step now retries only the not-published shape (17 attempts, about 7m15s), which no real release has exercised yet; the `dry_run` dispatch path has never run either. The gladius and puppet MCP servers and the private oc-unified package were removed from this repo on 2026-10-29 and stay on their original release lanes; `rea-shim` left the repo that day and returned the same day at 0.2.2, back on this repo's lane. This repo releases exactly seven packages: `@nathwn12/oc-bifrost`, `@nathwn12/janua`, `oc-flight-deck`, `oc-harness-setup`, `oc-plugin-view`, `oc-talk`, and `rea-shim`. See `MIGRATIONS.md`.
+Package releases run on a merge to `main`, not on a tag push: `scripts/derive-release.mjs --all` reads each package's highest `<package>@<version>` tag and the conventional commits since it, derives the next version per package, and the release job gates, publishes over OIDC trusted publishing with provenance, and creates that `<package>@<version>` tag at the pushed commit. A package with no releasable commit is skipped; `workflow_dispatch` forces one package and leaves `dry_run` on by default, stopping before the tag and the publish. Nothing is committed: the version cells and the closed changelog exist only in the runner's tarball, so the committed manifest and the index cell lag the newest tag until a human moves them — the tag and the registry are the release record. `.github/workflows/release.yml` has run four times, one package per run: `@nathwn12/oc-bifrost@1.6.10`, `oc-flight-deck@0.20.2`, `oc-harness-setup@0.4.4`, and `rea-shim@0.1.2`, each released through OIDC trusted publishing with provenance, each carrying two attestations, and `latest` correct on all four. Every publish step succeeded, and every run still concluded `failure` at one step: `Verify the released package on the registry` ran about 1.6 s after publish and lost npm's propagation race. That step now retries only the not-published shape (17 attempts, about 7m15s), which no real release has exercised yet; the `dry_run` dispatch path has never run either. The gladius and puppet MCP servers and the private oc-unified package were removed from this repo on 2026-10-29 and stay on their original release lanes; `rea-shim` left the repo that day and returned the same day at 0.2.2, back on this repo's lane. This repo releases exactly seven packages: `@nathwn12/oc-bifrost`, `@nathwn12/janua`, `oc-flight-deck`, `oc-harness-setup`, `oc-plugin-view`, `oc-talk`, and `rea-shim`. See `docs/MIGRATIONS.md`.
 
 ## Guardrails
 
