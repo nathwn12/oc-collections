@@ -52,6 +52,10 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history: the scope step below diffs against the base branch with
+          # `...`, which needs a merge base (and, on a push, the `before` commit).
+          fetch-depth: 0
 
       - name: Detect a docs-only change
         id: scope
@@ -152,6 +156,10 @@ jobs:
         package: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history: the scope step below diffs against the base branch with
+          # `...`, which needs a merge base (and, on a push, the `before` commit).
+          fetch-depth: 0
 
       - name: Detect a docs-only change
         id: scope
@@ -225,6 +233,10 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history: the scope step below diffs against the base branch with
+          # `...`, which needs a merge base (and, on a push, the `before` commit).
+          fetch-depth: 0
 
       - name: Detect a docs-only change
         id: scope
