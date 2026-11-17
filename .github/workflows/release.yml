@@ -224,7 +224,7 @@ jobs:
       - name: Cache node_modules
         if: ${{ env.REFUSED != '1' && env.SKIP != '1' }}
         id: cache-node
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: node_modules
           key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
