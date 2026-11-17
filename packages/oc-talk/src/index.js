@@ -126,7 +126,7 @@ async function listSessions(opts) {
   if (opts && opts.search) {
     args.push('--param', 'search=' + opts.search);
   }
-  const r = await runApi(args);
+  const r = await runApi(args, { signal: opts && opts.signal });
   if (!r.ok) return r;
   const rows = Array.isArray(r.json.data) ? r.json.data : [];
   const cursor = r.json.cursor || {};
@@ -135,8 +135,8 @@ async function listSessions(opts) {
 
 // Direct id lookup: GET /api/session/{id}. No list, no pagination. A 404 is a
 // truthful session_not_found; anything else is reported as it came back.
-async function getSession(id) {
-  const r = await runApi(['session.get', '--param', 'sessionID=' + id]);
+async function getSession(id, opts) {
+  const r = await runApi(['session.get', '--param', 'sessionID=' + id], { signal: opts && opts.signal });
   if (!r.ok) return r;
   return { ok: true, session: mapSession(r.json.data || {}) };
 }
@@ -144,14 +144,14 @@ async function getSession(id) {
 // Substring resolution through the route that actually matches titles: the host
 // silently ignores `?title=`, `search` is the key. Pages keep the same search
 // term; a page that still has a next cursor marks the scan truncated.
-async function scanSessions(query) {
+async function scanSessions(query, opts) {
   const all = [];
   let cursor = null;
   let lastNext = null;
   for (let page = 0; page < RESOLVE_MAX_PAGES; page++) {
-    const opts = { limit: SESSION_PAGE_LIMIT, search: query };
-    if (cursor) opts.cursor = cursor;
-    const r = await listSessions(opts);
+    const pageOpts = { ...opts, limit: SESSION_PAGE_LIMIT, search: query };
+    if (cursor) pageOpts.cursor = cursor;
+    const r = await listSessions(pageOpts);
     if (!r.ok) return r;
     all.push(...r.sessions);
     lastNext = (r.cursor && r.cursor.next) || null;
@@ -178,19 +178,21 @@ function nearMisses(sessions, query) {
 //
 // `scan` and `get` are injectable so resolution can be proved offline; the tools
 // always call them with the real backend.
-async function resolveTarget(session, scan = scanSessions, get = getSession) {
+async function resolveTarget(session, scan = scanSessions, get = getSession, opts = {}) {
   if (typeof session !== 'string' || !session) {
     return { ok: false, error: 'bad_request', reason: 'session must be a session id or title substring' };
   }
   if (ID_RE.test(session)) {
-    const g = await get(session);
+    const g = await get(session, opts);
+    if (opts.signal && opts.signal.aborted) return { ok: false, error: 'cancelled', reason: 'request cancelled' };
     if (!g.ok) {
       if (g.code === 'session_not_found') return { ok: false, error: 'session_not_found', reason: 'session ' + session + ' is gone: ' + g.detail };
       return { ok: false, error: g.code, reason: 'lookup failed: ' + g.detail };
     }
     return { ok: true, id: g.session.id, title: g.session.title || '' };
   }
-  const scanned = await scan(session);
+  const scanned = await scan(session, opts);
+  if (opts.signal && opts.signal.aborted) return { ok: false, error: 'cancelled', reason: 'request cancelled' };
   if (!scanned.ok) return { ok: false, error: scanned.code, reason: 'search failed: ' + scanned.detail };
   const hits = scanned.sessions.filter((s) => s.title.includes(session));
   // A capped scan cannot prove uniqueness: an unscanned session may match too,
@@ -274,18 +276,27 @@ function parseWait(value, fallback) {
   return { ok: true, value: Math.min(value, WAIT_MAX_SECONDS) };
 }
 
-function sleep(ms) {
+function sleep(ms, signal) {
   return new Promise((resolve) => {
-    const t = setTimeout(resolve, ms);
+    const finish = () => {
+      clearTimeout(t);
+      if (signal) signal.removeEventListener('abort', finish);
+      resolve();
+    };
+    const t = setTimeout(finish, ms);
     if (t.unref) t.unref();
+    if (signal) {
+      if (signal.aborted) finish();
+      else signal.addEventListener('abort', finish, { once: true });
+    }
   });
 }
 
 // The id of the newest message in a session, or '' when it has none. Captured
 // before a send or a blocking read: the turn boundary that follows must be a
 // message this capture did not see.
-async function newestMessageID(sessionID) {
-  const r = await runApi(['session.message.list', '--param', 'sessionID=' + sessionID, '--param', 'limit=1']);
+async function newestMessageID(sessionID, opts) {
+  const r = await runApi(['session.message.list', '--param', 'sessionID=' + sessionID, '--param', 'limit=1'], { signal: opts && opts.signal });
   if (!r.ok) return { ok: false, code: r.code || 'backend_error', detail: r.detail || 'read failed' };
   const rows = Array.isArray(r.json.data) ? r.json.data : [];
   return { ok: true, id: (rows[0] && rows[0].id) || '' };
@@ -297,17 +308,34 @@ async function newestMessageID(sessionID) {
 // is still the newest message until the new turn produces anything, and accepting
 // it would report a completion that never happened. Poll until both hold or the
 // budget runs out; a peer that never idles reports timedOut:true.
-async function waitForIdle(sessionID, waitMs, sinceID) {
+async function waitForIdle(sessionID, waitMs, sinceID, opts = {}) {
   const start = Date.now();
+  const deadline = start + waitMs;
+  const cancelSignal = opts.cancelSignal === undefined ? opts.signal : opts.cancelSignal;
   for (;;) {
-    const r = await runApi(['session.message.list', '--param', 'sessionID=' + sessionID, '--param', 'limit=1']);
+    if (opts.signal && opts.signal.aborted) {
+      if (!cancelSignal || !cancelSignal.aborted) return { ok: true, timedOut: true, waitedMs: Date.now() - start };
+      return { ok: false, code: 'cancelled', detail: 'wait cancelled' };
+    }
+    const remaining = Math.max(0, deadline - Date.now());
+    const timeout = AbortSignal.timeout(Math.max(1, remaining));
+    const signal = opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
+    const r = await runApi(['session.message.list', '--param', 'sessionID=' + sessionID, '--param', 'limit=1'], { signal });
+    if (timeout.aborted && !(cancelSignal && cancelSignal.aborted)) {
+      return { ok: true, timedOut: true, waitedMs: Date.now() - start };
+    }
+    if (opts.signal && opts.signal.aborted) {
+      if (!cancelSignal || !cancelSignal.aborted) return { ok: true, timedOut: true, waitedMs: Date.now() - start };
+      return { ok: false, code: 'cancelled', detail: 'wait cancelled' };
+    }
+    if (Date.now() >= deadline) return { ok: true, timedOut: true, waitedMs: Date.now() - start };
     if (!r.ok) return { ok: false, code: r.code || 'backend_error', detail: r.detail || 'read failed' };
     const rows = Array.isArray(r.json.data) ? r.json.data : [];
     const newest = rows[0];
     const fresh = !!newest && newest.id !== sinceID;
     if (fresh && newest.type === 'idle') return { ok: true, timedOut: false, waitedMs: Date.now() - start };
     if (Date.now() - start >= waitMs) return { ok: true, timedOut: true, waitedMs: Date.now() - start };
-    await sleep(POLL_INTERVAL_MS);
+    await sleep(Math.min(POLL_INTERVAL_MS, Math.max(0, deadline - Date.now())), opts.signal);
   }
 }
 
@@ -315,14 +343,14 @@ async function waitForIdle(sessionID, waitMs, sinceID) {
 // the first page asks order=asc explicitly and cursor pages follow with the
 // cursor alone (the cursor preserves that order; cursor+order is 400), so the
 // accumulation is oldest-to-newest with no reversal anywhere on this path.
-async function collectMessages(sessionID, perPage, maxPages) {
+async function collectMessages(sessionID, perPage, maxPages, signal) {
   const asc = [];
   let cursor = null;
   for (let page = 0; page < maxPages; page++) {
     const args = ['session.message.list', '--param', 'sessionID=' + sessionID, '--param', 'limit=' + perPage];
     if (cursor) args.push('--param', 'cursor=' + cursor);
     else args.push('--param', 'order=asc');
-    const r = await runApi(args);
+    const r = await runApi(args, { signal });
     if (!r.ok) return r;
     const rows = Array.isArray(r.json.data) ? r.json.data : [];
     asc.push(...rows);
@@ -392,20 +420,23 @@ async function ensureTools(ctx) {
         // to deliver: fail here, before any backend call, instead of admitting an
         // empty body into the peer.
         if (!route.text) return fail('bad_request', 'text is only a delivery marker, so there is nothing to deliver');
-        const t = await resolveTarget(args.session);
+        const signal = context && context.signal;
+        const t = await resolveTarget(args.session, scanSessions, getSession, { signal });
+        if (signal && signal.aborted) return fail('cancelled', 'request cancelled');
         if (!t.ok) return fail(t.error, t.reason, t.candidates, t.truncated);
         // The baseline is read before the send: the turn boundary this call waits
         // for must be a message that did not exist when the message was sent.
         let baseline = '';
         if (w.value > 0) {
-          const before = await newestMessageID(t.id);
+          const before = await newestMessageID(t.id, { signal });
+          if (signal && signal.aborted) return fail('cancelled', 'request cancelled');
           if (!before.ok) {
             if (before.code === 'session_not_found') return fail('session_not_found', 'session ' + t.id + ' is gone: ' + before.detail);
             return fail(before.code, 'read failed: ' + before.detail);
           }
           baseline = before.id;
         }
-        const signal = context && context.signal;
+        if (signal && signal.aborted) return fail('cancelled', 'request cancelled');
         // The service types this field as a message id (`msg_...`): a fresh one per
         // send keeps the admission idempotent without ever replaying a real one.
         const clientID = 'msg_' + randomUUID().replaceAll('-', '');
@@ -420,15 +451,29 @@ async function ensureTools(ctx) {
         // it was. `deliveryReason` is `explicit`, `marker` or `default`.
         const out = { id: d.id || '', sessionID: d.sessionID || t.id, title: t.title || '', delivered: true, delivery: route.delivery, deliveryReason: route.reason };
         if (w.value > 0) {
-          const waited = await waitForIdle(t.id, w.value * 1000, baseline);
+          const waitController = new AbortController();
+          const waitTimer = setTimeout(() => waitController.abort(), w.value * 1000);
+          const signal = context && context.signal
+            ? AbortSignal.any([context.signal, waitController.signal])
+            : waitController.signal;
+          const waited = await waitForIdle(t.id, w.value * 1000, baseline, { signal, cancelSignal: (context && context.signal) || null });
           if (!waited.ok) {
-            if (waited.code === 'session_not_found') return fail('session_not_found', 'session ' + t.id + ' is gone: ' + waited.detail);
-            return fail(waited.code, 'wait failed: ' + waited.detail);
+            out.waitError = { code: waited.code, reason: waited.detail };
+            out.timedOut = waited.code === 'timeout';
+            out.waitedMs = waited.waitedMs;
+            clearTimeout(waitTimer);
+            return done(out);
           }
-          const got = await collectMessages(t.id, READ_MAX_LIMIT, 1);
           out.timedOut = waited.timedOut;
           out.waitedMs = waited.waitedMs;
-          out.messages = got.ok ? got.messages.map((m) => messageRow(m)) : [];
+          if (signal.aborted) {
+            out.replyReadError = { code: context && context.signal && context.signal.aborted ? 'cancelled' : 'timeout', reason: 'message read did not complete within the wait deadline' };
+          } else {
+            const got = await collectMessages(t.id, READ_MAX_LIMIT, 1, signal);
+            if (got.ok) out.messages = got.messages.map((m) => messageRow(m));
+            else out.replyReadError = { code: got.code || 'backend_error', reason: got.detail || 'read failed' };
+          }
+          clearTimeout(waitTimer);
         }
         return done(out);
       },
@@ -468,19 +513,30 @@ async function ensureTools(ctx) {
         if (args.since !== undefined && (typeof args.since !== 'string' || !args.since)) {
           return fail('bad_request', 'since must be a message id or a cursor');
         }
-        const t = await resolveTarget(target);
+        const signal = context && context.signal;
+        const t = await resolveTarget(target, scanSessions, getSession, { signal });
+        if (signal && signal.aborted) return fail('cancelled', 'request cancelled');
         if (!t.ok) return fail(t.error, t.reason, t.candidates, t.truncated);
         const out = {};
+        let readSignal = signal;
+        let inboxWaitTimer;
         if (w.value > 0) {
           // Same baseline rule as a blocking send: the boundary must be a message
           // this call did not already see.
-          const before = await newestMessageID(t.id);
+          const before = await newestMessageID(t.id, { signal });
+          if (signal && signal.aborted) return fail('cancelled', 'request cancelled');
           if (!before.ok) {
             if (before.code === 'session_not_found') return fail('session_not_found', 'session ' + t.id + ' is gone: ' + before.detail);
             return fail(before.code, 'read failed: ' + before.detail);
           }
-          const waited = await waitForIdle(t.id, w.value * 1000, before.id);
+          const waitController = new AbortController();
+          inboxWaitTimer = setTimeout(() => waitController.abort(), w.value * 1000);
+          readSignal = context && context.signal
+            ? AbortSignal.any([context.signal, waitController.signal])
+            : waitController.signal;
+          const waited = await waitForIdle(t.id, w.value * 1000, before.id, { signal: readSignal, cancelSignal: signal || null });
           if (!waited.ok) {
+            clearTimeout(inboxWaitTimer);
             if (waited.code === 'session_not_found') return fail('session_not_found', 'session ' + t.id + ' is gone: ' + waited.detail);
             return fail(waited.code, 'wait failed: ' + waited.detail);
           }
@@ -494,7 +550,8 @@ async function ensureTools(ctx) {
         const isMessageID = args.since !== undefined && /^msg_/.test(args.since);
         const listArgs = ['session.message.list', '--param', 'sessionID=' + t.id, '--param', 'limit=' + limit];
         if (args.type !== undefined) listArgs.push('--param', 'type=' + args.type);
-        const r = await runApi(listArgs, { signal: context && context.signal });
+        const r = await runApi(listArgs, { signal: readSignal });
+        if (inboxWaitTimer) clearTimeout(inboxWaitTimer);
         if (!r.ok) {
           if (r.code === 'session_not_found') return fail('session_not_found', 'session ' + t.id + ' is gone: ' + r.detail);
           return fail(r.code, 'read failed: ' + r.detail);

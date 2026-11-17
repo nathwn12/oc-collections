@@ -139,6 +139,9 @@ describe("go tone and reset suffix", () => {
   test("shows a reset suffix only under the error tone and a known future reset", () => {
     const now = 1_000_000;
     expect(goResetSuffix({ id: "5h", ratio: 0.95, resetAtMs: now + 2 * 3_600_000 }, now)).toBe(" · 2h");
+    expect(goResetSuffix({ id: "5h", ratio: 0.95, resetAtMs: now + 4 * 3_600_000 + 12 * 60_000 }, now)).toBe(" · 4h12m");
+    expect(goResetSuffix({ id: "1w", ratio: 0.99, resetAtMs: now + 5 * 3_600_000 + 17 * 60_000 }, now)).toBe(" · 5h17m");
+    expect(goResetSuffix({ id: "1m", ratio: 0.95, resetAtMs: now + 26 * 86_400_000 + 20 * 3_600_000 }, now)).toBe(" · 26d20h");
     expect(goResetSuffix({ id: "5h", ratio: 0.95, resetAtMs: now + 90_000 }, now)).toBe(" · 2m");
     expect(goResetSuffix({ id: "5h", ratio: 0.95, resetAtMs: now + 5_000 }, now)).toBe(" · 5s");
     expect(goResetSuffix({ id: "5h", ratio: 1.2, resetAtMs: now + 5 * 86_400_000 }, now)).toBe(" · 5d");

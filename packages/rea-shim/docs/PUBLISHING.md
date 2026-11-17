@@ -16,8 +16,8 @@ its original repo. The root `release` workflow runs on a merge to `main`,
 derives the next version from the conventional commits since the package's
 highest tag, and publishes over OIDC with provenance. The lane has executed four runs, one
 package per run, every one publishing successfully over OIDC with provenance,
-so the trust is proven rather than assumed (see the monorepo root
-`MIGRATIONS.md`). One step is still unproven: the post-publish registry verify
+so the trust is proven rather than assumed (see the monorepo
+`docs/MIGRATIONS.md`). One step is still unproven: the post-publish registry verify
 lost npm's propagation race in all four runs, and its retry has not yet been
 exercised by a real release.
 

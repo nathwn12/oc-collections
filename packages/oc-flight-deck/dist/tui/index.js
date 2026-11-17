@@ -645,10 +645,16 @@ function formatRemaining(ms) {
   const minutes = Math.ceil(ms / 60000);
   if (minutes < 60)
     return `${minutes}m`;
-  const hours = Math.ceil(ms / 3600000);
-  if (hours < 24)
-    return `${hours}h`;
-  return `${Math.ceil(ms / 86400000)}d`;
+  const hours = Math.floor(ms / 3600000);
+  if (hours < 24) {
+    if (hours === 0)
+      return `${minutes}m`;
+    const rest = Math.floor((ms - hours * 3600000) / 60000);
+    return rest > 0 ? `${hours}h${rest}m` : `${hours}h`;
+  }
+  const days = Math.floor(ms / 86400000);
+  const rest = Math.floor((ms - days * 86400000) / 3600000);
+  return rest > 0 ? `${days}d${rest}h` : `${days}d`;
 }
 function goResetSuffix(window, nowMs) {
   if (goTone(window) !== "error")
@@ -731,6 +737,7 @@ var STAT_FIELDS = [
   "turns",
   "guard",
   "go",
+  "dex",
   "ses"
 ];
 var ANIMATED_FIELDS = ["caution", "status", "elapsed", "tps"];
@@ -775,6 +782,8 @@ function skeletonValue(field, layout) {
       return "0";
     case "go":
       return "\u25CB 0 \u25CB 0 \u25CB 0";
+    case "dex":
+      return "unavailable";
     case "status":
       return "\u25CB idle";
     case "agent":
@@ -851,11 +860,15 @@ function asGoWindows(value) {
   windows.sort((a, b) => GO_ORDER.indexOf(a.id) - GO_ORDER.indexOf(b.id));
   return windows;
 }
-function goValueSegments(source, layout) {
-  const windows = asGoWindows(source.go);
+function goValueSegments(source, layout, name = "go") {
+  let windows = asGoWindows(source[name]);
+  const nowMs = layout.nowMs ?? Date.now();
+  if (name === "dex")
+    windows = windows.filter((w) => w.id !== "1m" && w.resetAtMs !== undefined && w.resetAtMs > nowMs);
   if (windows.length === 0)
     return;
-  const nowMs = layout.nowMs ?? Date.now();
+  if (name === "dex")
+    windows = ["5h", "1w"].map((id) => windows.find((w) => w.id === id) ?? { id });
   let flagged = -1;
   let flaggedRatio = Number.NEGATIVE_INFINITY;
   for (const [index, window] of windows.entries()) {
@@ -869,6 +882,10 @@ function goValueSegments(source, layout) {
   }
   const chunks = [];
   for (const [index, window] of windows.entries()) {
+    if (window.ratio === undefined) {
+      chunks.push([{ text: "\u2014" }]);
+      continue;
+    }
     const percent = Math.round((window.ratio ?? 0) * 100);
     const tone = goTone(window) === "error" ? "error" : undefined;
     const chunk = [{ text: `${dialGlyph(percent)} ${percent}`, tone }];
@@ -1098,9 +1115,13 @@ function statLine(field, source, layout = {}) {
       const budget = Math.max(8, SES_PREVIEW_WIDTH - Math.max(0, labelPrefix(fieldLabel("ses", layout.labels), labelWidth).length - labelPrefix("ses", labelWidth).length));
       return id === undefined ? undefined : row("ses", clip(id, budget));
     }
-    case "go": {
-      const value = goValueSegments(source, layout);
-      return value === undefined ? undefined : row("go", value.map((segment) => segment.text).join(""));
+    case "go":
+    case "dex": {
+      const name = canonicalField(field);
+      const value = goValueSegments(source, layout, name);
+      if (name === "dex" && value === undefined)
+        return row("dex", "unavailable");
+      return value === undefined ? undefined : row(name, value.map((segment) => segment.text).join(""));
     }
     default:
       return;
@@ -1117,12 +1138,12 @@ function statSegments(field, source, layout = {}) {
       ...value
     ];
   }
-  if (name !== "go")
+  if (name !== "go" && name !== "dex")
     return;
-  const value = goValueSegments(source, layout);
+  const value = goValueSegments(source, layout, name);
   if (value === undefined)
     return;
-  return [{ text: labelPrefix(fieldLabel("go", layout.labels), layout.labelWidth ?? DEFAULT_LABEL_WIDTH) }, ...value];
+  return [{ text: labelPrefix(fieldLabel(name, layout.labels), layout.labelWidth ?? DEFAULT_LABEL_WIDTH) }, ...value];
 }
 function statRows(fields, source, layout = {}) {
   const hint = { ...layout, hasTotalRow: fields.includes("total") };
@@ -2476,7 +2497,6 @@ function railLineSpans(line, style) {
 function footerLine(config) {
   return config.footer.enabled ? config.footer.text : undefined;
 }
-
 // src/tui/go-panel.ts
 var PANEL_WINDOWS = ["5h", "1w", "1m"];
 var PANEL_DEFAULT_LABELS = {
@@ -2615,24 +2635,6 @@ function windowById(usage) {
   }
   return byId;
 }
-function formatCompactRemaining(ms) {
-  const totalSeconds = Math.ceil(ms / 1000);
-  if (totalSeconds < 60)
-    return `${totalSeconds}s`;
-  const totalMinutes = Math.ceil(ms / 60000);
-  if (totalMinutes < 60)
-    return `${totalMinutes}m`;
-  const totalHours = Math.floor(ms / 3600000);
-  if (totalHours < 24) {
-    if (totalHours === 0)
-      return `${totalMinutes}m`;
-    const minutes = Math.floor((ms - totalHours * 3600000) / 60000);
-    return minutes > 0 ? `${totalHours}h${minutes}m` : `${totalHours}h`;
-  }
-  const totalDays = Math.floor(ms / 86400000);
-  const hours = Math.floor((ms - totalDays * 86400000) / 3600000);
-  return hours > 0 ? `${totalDays}d${hours}h` : `${totalDays}d`;
-}
 function resetCountdown(window, nowMs) {
   const resetAtMs = window.resetAtMs;
   if (resetAtMs === undefined || !Number.isFinite(resetAtMs) || !Number.isFinite(nowMs))
@@ -2640,7 +2642,7 @@ function resetCountdown(window, nowMs) {
   const remaining = resetAtMs - nowMs;
   if (remaining <= 0)
     return;
-  return formatCompactRemaining(remaining);
+  return formatRemaining(remaining);
 }
 function panelTone(window) {
   if (goTone(window) === "error")
@@ -3522,6 +3524,311 @@ function startGoBridge(host, deps, intervalMs = GO_POLL_MS) {
   };
 }
 
+// src/tui/codex-quota.ts
+import { spawn } from "child_process";
+import { existsSync as existsSync4, readFileSync as readFileSync3 } from "fs";
+import { isAbsolute as isAbsolute2, join as join5 } from "path";
+import { createInterface } from "readline";
+
+// src/tui/owned-process.ts
+import { join as join4 } from "path";
+var supervisor = String.raw`
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Text;
+
+public static class FlightDeckOwned {
+  [StructLayout(LayoutKind.Sequential)] struct BasicLimits {
+    public long ProcessTime, JobTime; public uint Flags;
+    public UIntPtr MinWorking, MaxWorking; public uint Active;
+    public UIntPtr Affinity; public uint Priority, Scheduling;
+  }
+  [StructLayout(LayoutKind.Sequential)] struct IoCounters {
+    public ulong ReadOps, WriteOps, OtherOps, ReadBytes, WriteBytes, OtherBytes;
+  }
+  [StructLayout(LayoutKind.Sequential)] struct Limits {
+    public BasicLimits Basic; public IoCounters Io;
+    public UIntPtr ProcessMemory, JobMemory, PeakProcessMemory, PeakJobMemory;
+  }
+  [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)] struct Startup {
+    public uint Size; public string Reserved, Desktop, Title;
+    public uint X, Y, Width, Height, XChars, YChars, Fill, Flags;
+    public ushort Show, ReservedSize; public IntPtr ReservedBytes, Input, Output, Error;
+  }
+  [StructLayout(LayoutKind.Sequential)] struct ProcessInfo {
+    public IntPtr Process, Thread; public uint Pid, Tid;
+  }
+  [DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Unicode)]
+  static extern IntPtr CreateJobObjectW(IntPtr security, string name);
+  [DllImport("kernel32.dll", SetLastError=true)]
+  static extern bool SetInformationJobObject(IntPtr job, int kind, ref Limits limits, uint size);
+  [DllImport("kernel32.dll", SetLastError=true)]
+  static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+  [DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Unicode)]
+  static extern bool CreateProcessW(string app, StringBuilder command, IntPtr ps, IntPtr ts,
+    bool inherit, uint flags, IntPtr environment, string directory, ref Startup startup, out ProcessInfo info);
+  [DllImport("kernel32.dll", SetLastError=true)] static extern uint ResumeThread(IntPtr thread);
+  [DllImport("kernel32.dll", SetLastError=true)] static extern bool TerminateProcess(IntPtr process, uint code);
+  [DllImport("kernel32.dll", SetLastError=true)] static extern bool TerminateJobObject(IntPtr job, uint code);
+  [DllImport("kernel32.dll", SetLastError=true)] static extern IntPtr OpenProcess(uint access, bool inherit, uint pid);
+  [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
+  [DllImport("kernel32.dll", SetLastError=true)]
+  static extern bool GetProcessTimes(IntPtr process, out long created, out long exited, out long kernel, out long user);
+  [DllImport("kernel32.dll", SetLastError=true)]
+  static extern uint WaitForMultipleObjects(uint count, IntPtr[] handles, bool all, uint timeout);
+  [DllImport("kernel32.dll", SetLastError=true)] static extern uint WaitForSingleObject(IntPtr handle, uint timeout);
+  [DllImport("kernel32.dll", SetLastError=true)] static extern bool GetExitCodeProcess(IntPtr process, out uint code);
+  [DllImport("kernel32.dll")] static extern IntPtr GetStdHandle(int id);
+  [DllImport("kernel32.dll", SetLastError=true)] static extern bool SetHandleInformation(IntPtr handle, uint mask, uint flags);
+  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+  static void Require(bool ok) { if (!ok) throw new Win32Exception(Marshal.GetLastWin32Error()); }
+  static string Quote(string value) {
+    var text = new StringBuilder("\""); int slashes = 0;
+    foreach (char c in value) {
+      if (c == '\\') { slashes++; continue; }
+      if (c == '"') { text.Append('\\', slashes * 2 + 1); text.Append(c); }
+      else { text.Append('\\', slashes); text.Append(c); }
+      slashes = 0;
+    }
+    text.Append('\\', slashes * 2); return text.Append('"').ToString();
+  }
+  public static int Run(string executable, string[] args, uint ownerPid) {
+    IntPtr owner = IntPtr.Zero, job = IntPtr.Zero;
+    ProcessInfo child = new ProcessInfo();
+    try {
+      owner = OpenProcess(0x00101000, false, ownerPid);
+      Require(owner != IntPtr.Zero);
+      long ownerCreated, ownCreated, ignored1, ignored2, ignored3;
+      Require(GetProcessTimes(owner, out ownerCreated, out ignored1, out ignored2, out ignored3));
+      Require(GetProcessTimes(GetCurrentProcess(), out ownCreated, out ignored1, out ignored2, out ignored3));
+      // Refuse a recycled owner PID, and hold its identity handle thereafter.
+      if (ownerCreated > ownCreated || WaitForSingleObject(owner, 0) != 258) return 1;
+      job = CreateJobObjectW(IntPtr.Zero, null);
+      Require(job != IntPtr.Zero);
+      var limits = new Limits(); limits.Basic.Flags = 0x2000; // KILL_ON_JOB_CLOSE, no breakaway.
+      Require(SetInformationJobObject(job, 9, ref limits, (uint)Marshal.SizeOf(typeof(Limits))));
+      var startup = new Startup(); startup.Size = (uint)Marshal.SizeOf(typeof(Startup));
+      startup.Flags = 0x100; // STARTF_USESTDHANDLES.
+      startup.Input = GetStdHandle(-10); startup.Output = GetStdHandle(-11); startup.Error = GetStdHandle(-12);
+      foreach (IntPtr handle in new [] { startup.Input, startup.Output, startup.Error })
+        Require(SetHandleInformation(handle, 1, 1));
+      var command = new StringBuilder(Quote(executable));
+      foreach (string arg in args) command.Append(" ").Append(Quote(arg));
+      Require(CreateProcessW(executable, command, IntPtr.Zero, IntPtr.Zero, true,
+        0x08000004, IntPtr.Zero, null, ref startup, out child)); // NO_WINDOW | SUSPENDED.
+      if (!AssignProcessToJobObject(job, child.Process)) {
+        // The uncontained child is still suspended. Terminate its exact handle.
+        TerminateProcess(child.Process, 1); WaitForSingleObject(child.Process, 5000);
+        throw new Win32Exception(Marshal.GetLastWin32Error());
+      }
+      Require(ResumeThread(child.Thread) != UInt32.MaxValue);
+      uint ready = WaitForMultipleObjects(2, new [] { child.Process, owner }, false, UInt32.MaxValue);
+      if (ready != 0) {
+        TerminateJobObject(job, 1); WaitForSingleObject(child.Process, 5000); return 1;
+      }
+      uint code; Require(GetExitCodeProcess(child.Process, out code));
+      return (int)code;
+    } finally {
+      // Closing our non-inherited handle kills every remaining descendant,
+      // including detached children, on normal exit, timeout or helper crash.
+      if (job != IntPtr.Zero) CloseHandle(job);
+      if (child.Thread != IntPtr.Zero) CloseHandle(child.Thread);
+      if (child.Process != IntPtr.Zero) CloseHandle(child.Process);
+      if (owner != IntPtr.Zero) CloseHandle(owner);
+    }
+  }
+}
+`;
+function ownedProcess(command, args, ownerPid = process.pid) {
+  const encoded = (value) => Buffer.from(value).toString("base64");
+  const decode = (value) => `[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encoded(value)}'))`;
+  const script = `$ErrorActionPreference='Stop'
+Add-Type -TypeDefinition @'
+${supervisor}
+'@
+` + `$command=${decode(command)}
+$argsList=${decode(JSON.stringify(args))}|ConvertFrom-Json
+` + `exit [FlightDeckOwned]::Run($command,[string[]]$argsList,${ownerPid})`;
+  return {
+    command: join4(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+    args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")]
+  };
+}
+
+// src/tui/codex-quota.ts
+var record = (v) => v !== null && typeof v === "object" && !Array.isArray(v) ? v : {};
+function quota(limits, account) {
+  if (record(account).type !== "chatgpt")
+    return;
+  const bucket = record(record(record(limits).rateLimitsByLimitId).codex);
+  if (bucket.limitId !== "codex")
+    return;
+  const source = [record(bucket.primary), record(bucket.secondary)];
+  const windows = [];
+  for (const [minutes, id] of [[300, "5h"], [10080, "1w"]]) {
+    const matches = source.filter((w) => w.windowDurationMins === minutes);
+    if (matches.length !== 1)
+      continue;
+    const { usedPercent: used, resetsAt: reset } = matches[0];
+    if (typeof used !== "number" || !Number.isFinite(used) || used < 0 || used > 100)
+      continue;
+    if (typeof reset !== "number" || !Number.isFinite(reset) || reset * 1000 <= Date.now())
+      continue;
+    windows.push({ id, ratio: used / 100, resetAtMs: reset * 1000 });
+  }
+  return windows.length ? { windows } : undefined;
+}
+function executable(pathValue = process.env.PATH ?? "") {
+  for (const directory of pathValue.split(process.platform === "win32" ? ";" : ":")) {
+    if (!isAbsolute2(directory))
+      continue;
+    const path = join5(directory, process.platform === "win32" ? "codex.exe" : "codex");
+    if (!existsSync4(path))
+      continue;
+    if (process.platform === "win32") {
+      const shim = path.replace(/\.exe$/i, ".shim");
+      if (existsSync4(shim)) {
+        try {
+          const target = /^path\s*=\s*"([^"\r\n]+)"\s*$/m.exec(readFileSync3(shim, "utf8"))?.[1];
+          if (target && isAbsolute2(target) && /[\\/]codex\.exe$/i.test(target) && existsSync4(target))
+            return target;
+        } catch {}
+        return;
+      }
+    }
+    return path;
+  }
+}
+function readCodex(signal, options = {}) {
+  if (signal?.aborted)
+    return Promise.resolve(undefined);
+  const command = options.command ?? executable();
+  if (!command)
+    return Promise.resolve(undefined);
+  const launch = options.command ? { command, args: options.args ?? ["app-server", "proxy"] } : process.platform === "win32" ? ownedProcess(command, ["app-server", "--stdio"]) : { command, args: ["app-server", "proxy"] };
+  return new Promise((resolve) => {
+    const child = spawn(launch.command, launch.args, {
+      windowsHide: true,
+      stdio: ["pipe", "pipe", "ignore"]
+    });
+    let finishing = false, bytes = 0, limits, account;
+    let result;
+    let killTimer;
+    const finish = (value) => {
+      if (finishing)
+        return;
+      finishing = true;
+      result = value;
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
+      child.stdin.end();
+      killTimer = setTimeout(() => {
+        result = undefined;
+        child.kill("SIGKILL");
+      }, 500);
+    };
+    const abort = () => finish();
+    const timer = setTimeout(() => finish(), options.timeoutMs ?? 15000);
+    signal?.addEventListener("abort", abort, { once: true });
+    child.on("error", () => finish());
+    child.stdin.on("error", () => finish());
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (killTimer)
+        clearTimeout(killTimer);
+      signal?.removeEventListener("abort", abort);
+      resolve(code === 0 ? result : undefined);
+    });
+    child.stdout.on("data", (chunk) => {
+      bytes += chunk.length;
+      if (bytes > 262144)
+        finish();
+    });
+    const send = (message) => {
+      if (!finishing)
+        child.stdin.write(JSON.stringify(message) + `
+`);
+    };
+    createInterface({ input: child.stdout }).on("line", (line) => {
+      if (finishing)
+        return;
+      try {
+        const message = record(JSON.parse(line));
+        if (message.error)
+          return finish();
+        if (message.id === 0 && message.result) {
+          send({ method: "initialized", params: {} });
+          send({ id: 1, method: "account/rateLimits/read" });
+          send({ id: 2, method: "account/read", params: { refreshToken: false } });
+        }
+        if (message.id === 1)
+          limits = message.result;
+        if (message.id === 2)
+          account = record(message.result).account;
+        if (limits && account)
+          finish({ limits, account });
+      } catch {
+        finish();
+      }
+    });
+    if (signal?.aborted)
+      finish();
+    else
+      send({ id: 0, method: "initialize", params: {
+        clientInfo: { name: "flight_deck", version: "1.0.0" }
+      } });
+  });
+}
+function startCodexQuota(host, deps = {}) {
+  const opened = host.storage?.memory?.("flight-deck.codex-quota", { initial: { value: null, at: 0 } });
+  if (!Array.isArray(opened) || typeof opened[1] !== "function")
+    return;
+  const [state, update] = opened;
+  let disposed = false, running = false, controller;
+  const clear = () => update((draft) => {
+    draft.value = null;
+    draft.at = 0;
+  });
+  clear();
+  const poll = async () => {
+    if (disposed || running)
+      return;
+    running = true;
+    controller = new AbortController;
+    try {
+      const result = await (deps.read ?? readCodex)(controller.signal);
+      if (disposed)
+        return;
+      const value = result ? quota(result.limits, result.account) : undefined;
+      update((draft) => {
+        draft.value = value ?? null;
+        draft.at = value ? Date.now() : 0;
+      });
+    } catch {
+      if (!disposed)
+        clear();
+    } finally {
+      running = false;
+    }
+  };
+  poll();
+  const timer = setInterval(() => {
+    poll();
+  }, deps.intervalMs ?? 60000);
+  return {
+    get value() {
+      return !disposed && Date.now() - state.at <= 90000 ? state.value ?? undefined : undefined;
+    },
+    dispose() {
+      disposed = true;
+      controller?.abort();
+      clearInterval(timer);
+      clear();
+    }
+  };
+}
+
 // src/tui/ticker.ts
 var TICKER_KEY = "flight-deck.frame";
 var IDLE_REFRESH_MS = 1000;
@@ -4356,13 +4663,15 @@ var tui_default = Plugin.define({
     };
     const goOption = config.sidebar.footer.go;
     const goPanelEnabled = goOption === true || typeof goOption === "object" && goOption !== null;
-    const animated = config.sidebar.enabled && (goPanelEnabled || config.sidebar.rows.some((name) => ANIMATED_FIELDS.some((field) => field === name)));
+    const dexEnabled = wants("dex");
+    const animated = config.sidebar.enabled && (goPanelEnabled || dexEnabled || config.sidebar.rows.some((name) => ANIMATED_FIELDS.some((field) => field === name)));
     let spinnerNeeded = false;
     const ticker = startTicker(context, animated ? config.refresh : 0, () => spinnerNeeded);
     const wantGuard = config.sidebar.enabled && config.sidebar.rows.includes("guard");
     const bridge = wantGuard ? startGuardBridge(context) : undefined;
     const wantGo = config.sidebar.enabled && (config.sidebar.rows.includes("go") || goPanelEnabled);
     const goBridge = wantGo ? startGoBridge(context) : undefined;
+    const dexBridge = dexEnabled ? startCodexQuota(context) : undefined;
     const goPanelLayout = goOption === true ? undefined : typeof goOption === "object" && goOption !== null ? goOption : undefined;
     const goLook = createGoLookReader({ hostOptions: context.options, initial: goPanelLayout });
     const announce = (sessionID) => {
@@ -4407,6 +4716,7 @@ var tui_default = Plugin.define({
         turns,
         guard: bridge?.status,
         go: goBridge?.usage,
+        dex: dexBridge?.value,
         sessionId: wants("ses") ? sessionID : undefined,
         frame: ticker?.frame ?? 0
       };
@@ -4492,6 +4802,7 @@ var tui_default = Plugin.define({
       ticker?.dispose();
       bridge?.dispose();
       goBridge?.dispose();
+      dexBridge?.dispose();
       for (const release of releases)
         release();
     };

@@ -401,10 +401,114 @@ test('live: the real graph parses and agrees with git', { skip: !hasHost }, () =
   if (state === 'stale') console.log(`  note: atlas is stale (${short(graph.commit)} vs HEAD ${short(head)})`);
 });
 
-test('live: AGENTS.md and graphify.json name the same atlas', { skip: !hasHost || !fs.existsSync(path.join(HOST, 'AGENTS.md')) }, () => {
+function assertAtlasWiring(host, atlas) {
+  const agents = fs.readFileSync(path.join(host, 'AGENTS.md'), 'utf8');
+  const system = fs.readFileSync(path.join(host, 'docs', 'SYSTEM.md'), 'utf8');
+  const config = parseJsonc(fs.readFileSync(path.join(host, 'opencode.jsonc'), 'utf8'));
+  assert.match(agents, /docs\/SYSTEM\.md/, 'AGENTS.md must identify SYSTEM.md as the machine-facts authority');
+  const expectedSystem = canonicalWindowsPath(path.join(host, 'docs', 'SYSTEM.md'));
+  assert.ok(
+    Array.isArray(config.instructions) &&
+      config.instructions.some((instruction) =>
+        typeof instruction === 'string' &&
+        !/[*?]/.test(instruction) &&
+        !/^[a-z][a-z\d+.-]*:/i.test(instruction) &&
+        canonicalWindowsPath(resolveInstruction(host, instruction)) === expectedSystem,
+      ),
+    'opencode.jsonc instructions must include docs/SYSTEM.md',
+  );
+  assert.ok(system.includes(atlas), `docs/SYSTEM.md does not name ${atlas}: atlas config and machine facts drifted`);
+}
+
+function resolveInstruction(host, instruction) {
+  if (instruction === '~') return os.homedir();
+  if (instruction.startsWith('~/') || instruction.startsWith('~\\')) {
+    return path.join(os.homedir(), instruction.slice(2));
+  }
+  return path.isAbsolute(instruction) ? instruction : path.resolve(host, instruction);
+}
+
+function canonicalWindowsPath(value) {
+  return path.win32.normalize(path.win32.resolve(value)).replaceAll('/', '\\').toLowerCase();
+}
+
+// JSONC is JSON with comments and trailing commas. Remove those lexically so
+// comment markers and commas inside quoted strings remain ordinary content.
+function parseJsonc(source) {
+  let clean = '';
+  let quote = false;
+  let escaped = false;
+  for (let i = 0; i < source.length; i++) {
+    const char = source[i];
+    if (quote) {
+      clean += char;
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === '"') quote = false;
+      continue;
+    }
+    if (char === '"') {
+      quote = true;
+      clean += char;
+    } else if (char === '/' && source[i + 1] === '/') {
+      while (i < source.length && source[i] !== '\n' && source[i] !== '\r') i++;
+      clean += '\n';
+    } else if (char === '/' && source[i + 1] === '*') {
+      i += 2;
+      while (i < source.length && !(source[i] === '*' && source[i + 1] === '/')) {
+        clean += source[i] === '\n' ? '\n' : ' ';
+        i++;
+      }
+      i++;
+    } else clean += char;
+  }
+  let json = '';
+  quote = false;
+  escaped = false;
+  for (let i = 0; i < clean.length; i++) {
+    const char = clean[i];
+    if (quote) {
+      json += char;
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === '"') quote = false;
+    } else if (char === '"') {
+      quote = true;
+      json += char;
+    } else if (char === ',') {
+      let next = i + 1;
+      while (/\s/.test(clean[next] ?? '')) next++;
+      if (clean[next] !== '}' && clean[next] !== ']') json += char;
+    } else json += char;
+  }
+  return JSON.parse(json);
+}
+
+test('atlas wiring: the machine-facts authority is referenced and injected', () => {
+  const host = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-graphify-wiring-'));
+  fs.mkdirSync(path.join(host, 'docs'));
+  fs.writeFileSync(path.join(host, 'AGENTS.md'), 'Machine facts: `docs/SYSTEM.md` is authoritative.');
+  fs.writeFileSync(path.join(host, 'opencode.jsonc'), '{\n "instructions": ["docs/SYSTEM.md",], // wired\n}');
+  fs.writeFileSync(path.join(host, 'docs', 'SYSTEM.md'), '`Q:\\vault\\graphify-out\\graph.json`');
+  assertAtlasWiring(host, 'Q:\\vault\\graphify-out\\graph.json');
+  assert.throws(() => assertAtlasWiring(host, 'Q:\\other\\graphify-out\\graph.json'), /does not name/);
+  fs.writeFileSync(
+    path.join(host, 'opencode.jsonc'),
+    '{\n // "instructions": ["docs/SYSTEM.md"]\n "instructions": ["docs/OTHER.md"],\n "note": "docs/SYSTEM.md",\n}',
+  );
+  assert.throws(() => assertAtlasWiring(host, 'Q:\\vault\\graphify-out\\graph.json'), /instructions must include/);
+  fs.writeFileSync(
+    path.join(host, 'opencode.jsonc'),
+    `{"instructions":["${path.join(os.tmpdir(), 'other', 'docs', 'SYSTEM.md').replaceAll('\\', '\\\\')}"]}`,
+  );
+  assert.throws(() => assertAtlasWiring(host, 'Q:\\vault\\graphify-out\\graph.json'), /instructions must include/);
+  fs.rmSync(host, { recursive: true, force: true });
+});
+
+test('live: authoritative machine facts and OpenCode wiring name the configured atlas', { skip: !hasHost }, () => {
   const config = readConfig(CONFIG);
-  const agents = fs.readFileSync(path.join(HOST, 'AGENTS.md'), 'utf8');
-  assert.ok(agents.includes(config.atlas), `AGENTS.md does not name ${config.atlas}: one of the two records drifted`);
+  assert.ok(config, `${CONFIG} must record an atlas`);
+  assertAtlasWiring(HOST, graphFile(config.atlas));
 });
 
 test('install: the host layout resolves back to this package', () => {
