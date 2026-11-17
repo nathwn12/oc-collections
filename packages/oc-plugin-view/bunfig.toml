@@ -1,4 +1,6 @@
 preload = ["@opentui/solid/preload"]
+jsx = "react-jsx"
+jsxImportSource = "@opentui/solid"
 
 [test]
 preload = ["@opentui/solid/preload"]
