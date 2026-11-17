@@ -1,0 +1,47 @@
+{
+  "name": "oc-recall",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Read an Atlas graph and search curated source files for OpenCode users - JavaScript.",
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "graphify",
+    "knowledge-graph",
+    "lexical-search"
+  ],
+  "license": "MIT",
+  "author": "nathwn12",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nathwn12/oc-collections.git",
+    "directory": "packages/oc-recall"
+  },
+  "homepage": "https://github.com/nathwn12/oc-collections/tree/main/packages/oc-recall",
+  "bugs": "https://github.com/nathwn12/oc-collections/issues",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "files": [
+    "index.js",
+    "index.mjs",
+    "graph.js",
+    "tools.js",
+    "lib.js",
+    "corpus.mjs",
+    "index.test.mjs",
+    "plugin.test.mjs",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test",
+    "check": "node --test"
+  }
+}
