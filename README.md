@@ -4,7 +4,7 @@
 
 ## Install
 
-Open [`packages/`](packages) and pick one. Each folder carries its own README with that package's install step, and nothing here requires the whole repository.
+Open [`packages/`](packages), or take a row from the table below. Each package installs on its own; nothing here requires the whole repository, and the root manifest is `private: true`, so there is nothing to install for the index itself.
 
 ## Use it
 
@@ -19,7 +19,7 @@ Open [`packages/`](packages) and pick one. Each folder carries its own README wi
 | rea-shim | MCP | `0.2.3` | Launches the upstream `rea` reverse-engineering MCP and can bootstrap its JDK and Ghidra. | `npx -y rea-shim@latest --doctor` |
 | oc-collections | repo | — | This index and the npm-workspaces monorepo behind it. | — |
 
-An MCP goes into your client's server list, a plugin into `plugins` in your `opencode.jsonc`, and a CLI runs once. The `gladius` and `puppet` MCP servers keep their source here but publish from the repositories that build their engines; `oc-fallback`, `oc-graphify` and `oc-terminal` are private and load by path. None of the five carries a version row.
+An MCP goes into your client's server list, a plugin into `plugins` in your `opencode.jsonc`, and a CLI runs once. The `gladius` and `puppet` MCP servers keep their source here but publish from the repositories that build their engines; `oc-fallback`, `oc-graphify` and `oc-terminal` are private, so they load from this repo instead of the registry. None of the five carries a version row.
 
 ## Requirements
 
@@ -40,16 +40,27 @@ bun run pack:check
 
 `bun run check` runs the vocabulary and launcher guards, the index check and its self-test, the docs check and its self-test, then every workspace's own check. `bun run pack:check` adds a build and verifies each tarball.
 
-Releases are cut by [docs/RELEASE.md](docs/RELEASE.md): a merge to `main` derives each package's version from the commits since its tag, then tags it and publishes over OIDC with provenance. Every package keeps its own history in its own CHANGELOG.
+```text
+oc-collections/
+|-- packages/    one family package per directory
+|-- scripts/     index, docs, workspace and release checks
+|-- docs/        migrations and the release lane
+|-- assets/      shared footer signature
+|-- .github/     ci.yml and release.yml
+`-- Cargo.toml   a virtual workspace with no members
+```
+
+A merge to `main` is the release: `docs/RELEASE.md` derives each package's version from the commits since its tag, tags it, and publishes over OIDC with provenance. History lives in `CHANGELOG.md`, at the root for the index and beside each listed package for its release.
 
 ## Status
 
-**Experimental** — pre-release; interfaces may change.
+**Active** — maintained, issues welcome.
 
 ## Links
 
 - [Issues](https://github.com/nathwn12/oc-collections/issues)
-- [Releases](https://github.com/nathwn12/oc-collections/releases)
+- [Packages on npm](https://www.npmjs.com/~nathwn12)
 - [Release lane](docs/RELEASE.md)
+- [Migrations](docs/MIGRATIONS.md)
 - [Changelog](CHANGELOG.md)
 - [MIT licence](LICENSE)
