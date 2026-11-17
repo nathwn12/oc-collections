@@ -51,7 +51,7 @@ jobs:
     # need only the tree. Fails in about a second on a missing file.
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Full history: the scope step below diffs against the base branch with
           # `...`, which needs a merge base (and, on a push, the `before` commit).
@@ -127,7 +127,7 @@ jobs:
     outputs:
       matrix: ${{ steps.set.outputs.matrix }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
@@ -155,7 +155,7 @@ jobs:
       matrix:
         package: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Full history: the scope step below diffs against the base branch with
           # `...`, which needs a merge base (and, on a push, the `before` commit).
@@ -232,7 +232,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Full history: the scope step below diffs against the base branch with
           # `...`, which needs a merge base (and, on a push, the `before` commit).
