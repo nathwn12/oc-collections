@@ -17,6 +17,14 @@ updates:
           - "minor"
           - "patch"
 
+    ignore:
+      # Kept on 7.2.0 deliberately: @opentui/core, which draws these cells,
+      # still bundles string-width 7.2.0 and measures U+26A0 as two cells.
+      # Measuring with 9.0.0 would make the width test disagree with the
+      # rendered output. Drop this entry when @opentui/core moves to v9.
+      - dependency-name: "string-width"
+        versions: [">=9.0.0"]
+
   - package-ecosystem: "cargo"
     directory: "/"
     schedule:
