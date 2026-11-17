@@ -4,9 +4,9 @@
 
 - Reshaped the root `README.md` to the house product skeleton: HTML H1, one bold pitch, then `## Install`, `## Use it` carrying the package table, `## Requirements`, `## Development`, `## Status` and `## Links`. The table moved under `## Use it` with the same columns, the same eight rows and the same pins, and the house README contract reads CONFORMANT. Removed the `## What it does` section and the absolute browse URL in favour of a relative link. Deleted the four planning documents under `packages/oc-bifrost/docs/superpowers/` and repointed the one `VERIFIED-PLUGINS.md` sentence that cited a spec file there. No code changed and no version moved.
 
-- Retired `packages/oc-stacked` on the owner's ruling and deleted it: the directory, its three `scripts/workspace-plan.mjs` entries, its two `bun.lock` workspace blocks, its `$Omitted` entry in `scripts/check-index.ps1`, and the two `MIGRATIONS.md` passages that described it as a live copy. It was already absent from the release allowlist, the dispatch choice list, the index-registry scope table, the doc checker's map and the structural self-test, so the repo releases the same seven packages. `oc-graphify` stays in the tree and stays off npm; `MIGRATIONS.md` now records that as a ruling rather than an open release line. No version moved and nothing is published by this commit.
+- Retired `packages/oc-stacked` on the owner's ruling and deleted it: the directory, its three `scripts/workspace-plan.mjs` entries, its two `bun.lock` workspace blocks, its `$Omitted` entry in `scripts/check-index.ps1`, and the two `docs/MIGRATIONS.md` passages that described it as a live copy. It was already absent from the release allowlist, the dispatch choice list, the index-registry scope table, the doc checker's map and the structural self-test, so the repo releases the same seven packages. `oc-graphify` stays in the tree and stays off npm; `docs/MIGRATIONS.md` now records that as a ruling rather than an open release line. No version moved and nothing is published by this commit.
 
-- Imported three repositories into the workspace: `oc-stacked` (branch `master`, HEAD `67eeef4`), `oc-puppet` (`8eb1c2d`) and `oc-gladius` (`abba9b1`), the last two by `git subtree`, history included. Two were renamed on the way in: `puppet-mcp@7.0.2` -> `oc-puppet`, `gladius-mcp@0.7.1` -> `oc-gladius`; both old names stay on npm frozen rather than disappearing. Their npx launcher manifests moved from `npm/package.json` to the package root so each directory is a valid workspace, with `bin` and `files` pointing into `npm/` and no source file moved. `MIGRATIONS.md` records the same facts.
+- Imported three repositories into the workspace: `oc-stacked` (branch `master`, HEAD `67eeef4`), `oc-puppet` (`8eb1c2d`) and `oc-gladius` (`abba9b1`), the last two by `git subtree`, history included. Two were renamed on the way in: `puppet-mcp@7.0.2` -> `oc-puppet`, `gladius-mcp@0.7.1` -> `oc-gladius`; both old names stay on npm frozen rather than disappearing. Their npx launcher manifests moved from `npm/package.json` to the package root so each directory is a valid workspace, with `bin` and `files` pointing into `npm/` and no source file moved. `docs/MIGRATIONS.md` records the same facts.
 
 - Kept private packages out of the release allowlist: `oc-stacked` is `private: true` and a private package inside `ALLOWED` aborts the whole plan at `resolvePackage`, so one plugin commit would have blocked every other release. Privacy is now expressed by omission from `ALLOWED` plus the flag; the allowlist guard moves to nine names.
 
@@ -34,17 +34,17 @@
 ## [0.2.6] - 2026-10-22
 
 - Converted the repo to an npm-workspaces monorepo: a private root `package.json` with fan-out `check`/`build`/`test` scripts, a root lockfile, and a workspace-wide check in `.github/workflows/check.yml`.
-- Moved `@nathwn12/oc-bifrost@1.6.9` into `packages/oc-bifrost` (source branch `docs/1.6.9`, HEAD `9723533`); see [MIGRATIONS.md](MIGRATIONS.md).
+- Moved `@nathwn12/oc-bifrost@1.6.9` into `packages/oc-bifrost` (source branch `docs/1.6.9`, HEAD `9723533`); see [MIGRATIONS.md](docs/MIGRATIONS.md).
 - Rewrote the README to the monorepo truth: one index table with the in-repo package marked, the install line, and the publish rule.
-- Adapted the check vocabulary guard's scope and the no-implementation-files assertion for the imported package tree; see [MIGRATIONS.md](MIGRATIONS.md).
+- Adapted the check vocabulary guard's scope and the no-implementation-files assertion for the imported package tree; see [MIGRATIONS.md](docs/MIGRATIONS.md).
 - `scripts/check-index.ps1` now fails when it recognises no index rows; `scripts/check-index.selftest.ps1` proves both the failing and passing directions.
 - Root `npm run pack:check` runs the workspace check (which rebuilds `dist/`) before packing, so the sanctioned pack path cannot ship a dist-less tarball.
 - Moved `oc-flight-deck@0.20.1`, `oc-harness-setup@0.4.3`, `oc-unified@0.5.0`, and `rea-shim@0.1.1` into `packages/` (versions unchanged); archived `oc-todo@0.5.1` at `archive/oc-todo/`.
 - Generalised the root fan-out (`scripts/workspace-run.mjs`) and the pack guard (`scripts/pack-check.mjs`); `npm run pack:check` now checks, builds, and verifies every workspace tarball.
-- Narrowed the vocabulary guard to the index's own files and allowed package/archive sources in the implementation-file assertion; see [MIGRATIONS.md](MIGRATIONS.md).
+- Narrowed the vocabulary guard to the index's own files and allowed package/archive sources in the implementation-file assertion; see [MIGRATIONS.md](docs/MIGRATIONS.md).
 - `scripts/pack-check.mjs` now fails closed on zero workspaces or a workspace missing from the shared plan (`scripts/workspace-plan.mjs`, also used by `workspace-run.mjs`).
 - `.github/workflows/check.yml` now runs `npm run pack:check` after the workspace check, so tarball verification runs in CI.
-- Corrected `MIGRATIONS.md`: oc-flight-deck's `dist/` is tracked by policy but is not yet committed.
+- Corrected `docs/MIGRATIONS.md`: oc-flight-deck's `dist/` is tracked by policy but is not yet committed.
 - Imported `gladius@0.4.2` and `puppet@4.5.3` from their release tags: Rust crates under `crates/`, npx launchers under `packages/gladius-mcp` and `packages/puppet-mcp`, plus the root Cargo workspace.
 - Added `scripts/check-launcher.mjs` (offline bin/manifest validation) and wired both launchers into the workspace plan; `pack:check` now covers seven packages.
 - Engine binaries still come from the original repos' release assets; the launchers' manifests, install guards, and `os`/`cpu` gap are unchanged.
