@@ -251,10 +251,13 @@ function lockCellVersion(ref, dir, root) {
   }
 }
 
-/** Did this commit change the package's own version cell in the root lockfile?
- *  A lockfile edit elsewhere in the file belongs to nobody. */
-function lockCellChanged(sha, dir, root) {
-  return lockCellVersion(sha, dir, root) !== lockCellVersion(`${sha}^`, dir, root)
+/** Did this commit change the package's lockfile cell to an unreleased version?
+ *  A lockfile edit elsewhere belongs to nobody, and syncing a stale cell to the
+ *  already-released version is not new release intent. */
+function lockCellChanged(sha, dir, root, releasedVersion) {
+  const version = lockCellVersion(sha, dir, root)
+  const changed = version !== lockCellVersion(`${sha}^`, dir, root)
+  return changed && (releasedVersion === null || version !== releasedVersion)
 }
 
 /**
@@ -264,14 +267,14 @@ function lockCellChanged(sha, dir, root) {
  * path is never in the range, however it is typed: this is what keeps one
  * package's change (or a docs-only change) from bumping the other five.
  */
-export function readOwnedCommits(baseRef, dir, root = ROOT) {
+export function readOwnedCommits(baseRef, dir, root = ROOT, releasedVersion = null) {
   const own = readCommits(baseRef, [dir], root)
   const lock = readCommits(baseRef, [LOCKFILE], root)
   const ownShas = new Set(own.commits.map((commit) => commit.sha))
   const lockOnly = new Set()
   for (const commit of lock.commits) {
     if (ownShas.has(commit.sha)) continue
-    if (lockCellChanged(commit.sha, dir, root)) lockOnly.add(commit.sha)
+    if (lockCellChanged(commit.sha, dir, root, releasedVersion)) lockOnly.add(commit.sha)
   }
   if (lockOnly.size === 0) return { range: own.range, paths: [dir, LOCKFILE], commits: own.commits }
   // Both sources have commits in this range: read the union in one pass so the
@@ -472,7 +475,7 @@ export function runDerivation(name, prepare = false, root = ROOT) {
   const baseVersion = best ? best.version : target.version
   const baseSource = best ? "tag" : "manifest"
   const baseRef = best ? best.tag : null
-  const { range, paths, commits } = readOwnedCommits(baseRef, dir, root)
+  const { range, paths, commits } = readOwnedCommits(baseRef, dir, root, baseVersion)
   const changelogPath = path.join(target.dir, "CHANGELOG.md")
   const changelog = fs.existsSync(changelogPath)
     ? { path: `${dir}/CHANGELOG.md`, text: fs.readFileSync(changelogPath, "utf8") }
@@ -1166,7 +1169,7 @@ function writeFixtureFile(root, rel, content) {
  * package's version cell, one tag per package at the base, then `commits`.
  * The caller removes the returned directory.
  */
-function fixtureRepo(commits) {
+function fixtureRepo(commits, initialLockEdit = null) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "derive-release-"))
   const run = (args) =>
     spawnSync(
@@ -1185,7 +1188,7 @@ function fixtureRepo(commits) {
   }
   gitOrFail(["init", "-b", "main", "--quiet"])
   writeFixtureFile(root, "package.json", JSON.stringify({ name: "fixture-root", private: true, workspaces: ["packages/*"] }, null, 2) + "\n")
-  writeFixtureFile(root, LOCKFILE, fixtureLock())
+  writeFixtureFile(root, LOCKFILE, fixtureLock(initialLockEdit))
   for (const pkg of FIXTURE_PACKAGES) {
     const manifest = { name: pkg.name, version: FIXTURE_BASE }
     if (pkg.scoped) manifest.publishConfig = { access: "public" }
@@ -1228,6 +1231,39 @@ const GIT_CASES = [
     expect: { "@nathwn12/janua": "0.1.1" },
   },
   {
+    name: "git-ignores-lockfile-cell-sync-to-manifest",
+    initialLockEdit: (lock) => {
+      lock.workspaces["packages/janua"].version = "0.0.9"
+    },
+    commits: [
+      {
+        subject: "feat(oc-fallback): add model fallback",
+        files: {
+          "packages/oc-fallback/index.js": "export const fallback = true\n",
+          [LOCKFILE]: fixtureLock((lock) => {
+            lock.workspaces["packages/janua"].version = FIXTURE_BASE
+          }),
+        },
+      },
+    ],
+    expect: {},
+  },
+  {
+    name: "git-counts-shared-lockfile-version-intent",
+    commits: [
+      {
+        subject: "feat: prepare shared package versions",
+        files: {
+          "docs/release.md": "shared release intent\n",
+          [LOCKFILE]: fixtureLock((lock) => {
+            lock.workspaces["packages/janua"].version = "0.2.0"
+          }),
+        },
+      },
+    ],
+    expect: { "@nathwn12/janua": "0.2.0" },
+  },
+  {
     name: "git-ignores-a-lockfile-edit-with-no-cell",
     commits: [
       {
@@ -1258,7 +1294,7 @@ function runGitCase(fixture) {
   let root = null
   const listed = Object.entries(fixture.expect).map(([name, version]) => `${name} ${version}`)
   try {
-    root = fixtureRepo(fixture.commits)
+    root = fixtureRepo(fixture.commits, fixture.initialLockEdit)
     const split = deriveAll(true, root)
     const derived = Object.fromEntries(split.release.map((result) => [result.package, result.version]))
     for (const pkg of FIXTURE_PACKAGES) {
