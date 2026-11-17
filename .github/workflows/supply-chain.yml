@@ -27,6 +27,7 @@ jobs:
       # node-gyp > @opencode/util). Scoped to that advisory only; remove this
       # ignore once picomatch > 4.0.7 ships and the lockfile can take it.
       - run: bun audit --audit-level=high --ignore=GHSA-fc5q-39xc-vjpf
+      - uses: dtolnay/rust-toolchain@stable
       - uses: rustsec/audit-check@v2.0.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
