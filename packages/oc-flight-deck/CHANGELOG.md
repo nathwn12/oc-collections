@@ -7,13 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- The compact Go row shows reset countdowns with the same two-unit precision as the Go panel instead of rounding hours or days up to a single unit.
-
 ### Added
 
 - Opt-in `dex` sidebar row: compact 5h and 1w Codex account dials match the Go row. Windows uses a private authenticated stdio server enclosed in an owned Job Object; no shared daemon, OAuth credential-file access or process-tree kills.
+
+### Changed
+
+- The TPS row defaults to the realtime estimate and includes observed time to first token when available. The settled-turn average remains opt-in.
+- Missing TPS uses the configured placeholder instead of a misleading zero; observed TTFT remains visible between streams.
+
+### Fixed
+
+- The compact Go row shows reset countdowns with the same two-unit precision as the Go panel instead of rounding hours or days up to a single unit.
 
 ## [0.22.0] - 2026-11-10
 

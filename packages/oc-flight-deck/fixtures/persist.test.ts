@@ -29,7 +29,7 @@ const SKELETONS: Readonly<Record<string, string>> = {
   context: "░░░░░░░░░░ ~0%",
   perms: "0 waiting",
   elapsed: "0s",
-  tps: "0 tok/s",
+  tps: "—",
   spark: "▁▁▁▁▁▁▁▁▁▁▁▁",
   reasoning: "0",
   turns: "0",
@@ -103,19 +103,17 @@ describe("persistent sidebar rows", () => {
     ]);
   });
 
-  test("the tps skeleton follows the display mode", () => {
-    // The single-figure modes draw the one shape either would read as a
-    // zero; `both` draws both figures, like the live row.
-    expect(statRows(["tps"], {}, { persist: true })).toEqual(["tps       0 tok/s"]);
-    expect(statRows(["tps"], {}, { persist: true, tpsDisplay: "rt" })).toEqual(["tps       0 tok/s"]);
-    expect(statRows(["tps"], {}, { persist: true, tpsDisplay: "both" })).toEqual(["tps       0 rt · 0 avg"]);
+  test("missing tps uses the placeholder in every display mode", () => {
+    expect(statRows(["tps"], {}, { persist: true })).toEqual(["tps       —"]);
+    expect(statRows(["tps"], {}, { persist: true, tpsDisplay: "rt" })).toEqual(["tps       —"]);
+    expect(statRows(["tps"], {}, { persist: true, tpsDisplay: "both" })).toEqual(["tps       —"]);
   });
 
   test("the both-mode skeleton rides the resolved display from the config", () => {
     const both = resolveConfig({ sidebar: { tps: { display: "both" } } }).config;
-    expect(sidebarLines(both, {})).toContain("tps       0 rt · 0 avg");
+    expect(sidebarLines(both, {})).toContain("tps       —");
     // ... and the default config keeps the single figure.
-    expect(sidebarLines(DEFAULT_CONFIG, {})).toContain("tps       0 tok/s");
+    expect(sidebarLines(DEFAULT_CONFIG, {})).toContain("tps       —");
     expect(sidebarLines(DEFAULT_CONFIG, {})).not.toContain("0 rt");
   });
 

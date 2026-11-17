@@ -236,12 +236,12 @@ describe("flight deck live rows", () => {
     expect(statLine("tps", { tps: { rt: 106, avg: 999 } }, { tpsDisplay: "rt" })).toBe("tps       106 tok/s");
   });
 
-  test("draws the settled-turn average by default", () => {
+  test("draws the settled-turn average when selected", () => {
     // No layout hint: the shipped default is the average, not the realtime rate.
-    expect(statLine("tps", { tps: { rt: 106, avg: 41.4 } })).toBe("tps       41 tok/s");
-    expect(statLine("tps", { tps: { rt: 106, avg: 41.5 } })).toBe("tps       42 tok/s");
+    expect(statLine("tps", { tps: { rt: 106, avg: 41.4 } }, { tpsDisplay: "avg" })).toBe("tps       41 tok/s");
+    expect(statLine("tps", { tps: { rt: 106, avg: 41.5 } }, { tpsDisplay: "avg" })).toBe("tps       42 tok/s");
     // The realtime half never leaks into the average figure.
-    expect(statLine("tps", { tps: { rt: 999, avg: 41 } })).toBe("tps       41 tok/s");
+    expect(statLine("tps", { tps: { rt: 999, avg: 41 } }, { tpsDisplay: "avg" })).toBe("tps       41 tok/s");
   });
 
   test("draws both figures on one line in both mode", () => {
@@ -282,8 +282,10 @@ describe("flight deck live rows", () => {
       "tps       106 rt",
     );
     // Single modes never draw it.
-    expect(statLine("tps", { tps: { rt: 83, avg: 38, ttft: 1.2 } }, { tpsDisplay: "rt" })).toBe("tps       83 tok/s");
-    expect(statLine("tps", { tps: { rt: 83, avg: 38, ttft: 1.2 } })).toBe("tps       38 tok/s");
+    expect(statLine("tps", { tps: { rt: 83, avg: 38, ttft: 1.2 } }, { tpsDisplay: "rt" })).toBe("tps       83 tok/s · 1.2s ttft");
+    expect(statLine("tps", { tps: { rt: 0, ttft: 1.2 } }, { tpsDisplay: "rt" })).toBe("tps       1.2s ttft");
+    expect(statLine("tps", { tps: { ttft: 0 } }, { tpsDisplay: "rt" })).toBe("tps       0.0s ttft");
+    expect(statLine("tps", { tps: { rt: 83, avg: 38, ttft: 1.2 } }, { tpsDisplay: "avg" })).toBe("tps       38 tok/s");
   });
 
   test("hides the tps row rather than printing a zero rate, in every mode", () => {
@@ -294,10 +296,10 @@ describe("flight deck live rows", () => {
     expect(statLine("tps", { tps: { rt: 0.4, avg: 41 } }, { tpsDisplay: "rt" })).toBeUndefined();
     expect(statLine("tps", { tps: { rt: 0.5, avg: 41 } }, { tpsDisplay: "rt" })).toBe("tps       1 tok/s");
     // The average hides the same way: unknown, zero, or below half a token.
-    expect(statLine("tps", { tps: { rt: 106, avg: undefined } })).toBeUndefined();
-    expect(statLine("tps", { tps: { rt: 106, avg: 0 } })).toBeUndefined();
-    expect(statLine("tps", { tps: { rt: 106, avg: 0.4 } })).toBeUndefined();
-    expect(statLine("tps", { tps: { rt: 106, avg: 0.5 } })).toBe("tps       1 tok/s");
+    expect(statLine("tps", { tps: { rt: 106, avg: undefined } }, { tpsDisplay: "avg" })).toBeUndefined();
+    expect(statLine("tps", { tps: { rt: 106, avg: 0 } }, { tpsDisplay: "avg" })).toBeUndefined();
+    expect(statLine("tps", { tps: { rt: 106, avg: 0.4 } }, { tpsDisplay: "avg" })).toBeUndefined();
+    expect(statLine("tps", { tps: { rt: 106, avg: 0.5 } }, { tpsDisplay: "avg" })).toBe("tps       1 tok/s");
     // A bare number is no longer a figure: the reader hands over the pair.
     expect(statLine("tps", { tps: 106 })).toBeUndefined();
     expect(statLine("tps", {})).toBeUndefined();
@@ -944,4 +946,3 @@ describe("the session-id row", () => {
     expect(statLine("ses", { sessionId: "ses_ab\ncd1234" })).toBe("session   ses_ab cd1234");
   });
 });
-

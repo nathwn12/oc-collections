@@ -68,30 +68,30 @@ describe("flight deck config", () => {
     // The shipped default is the one constant: a silent edit to it is caught
     // here, and the example file pins the same value in scaffold.test.ts.
     expect(DEFAULT_TPS_SCOPE).toBe("family");
-    expect(resolveConfig(undefined).config.sidebar.tps).toEqual({ scope: "family", display: "avg" });
+    expect(resolveConfig(undefined).config.sidebar.tps).toEqual({ scope: "family", display: "rt" });
     expect(DEFAULT_CONFIG.sidebar.tps).toEqual({ scope: DEFAULT_TPS_SCOPE, display: DEFAULT_TPS_DISPLAY });
 
     const session = resolveConfig({ sidebar: { tps: { scope: "session" } } });
     expect(session.issues).toEqual([]);
-    expect(session.config.sidebar.tps).toEqual({ scope: "session", display: "avg" });
+    expect(session.config.sidebar.tps).toEqual({ scope: "session", display: "rt" });
 
     // No sensible repair for a misspelled scope: the default comes back and
     // the key is named, like every other invalid option.
     const bad = resolveConfig({ sidebar: { tps: { scope: "swarm" } } });
-    expect(bad.config.sidebar.tps).toEqual({ scope: "family", display: "avg" });
+    expect(bad.config.sidebar.tps).toEqual({ scope: "family", display: "rt" });
     expect(bad.issues.join(" ")).toContain("sidebar.tps.scope");
 
     // A string where an object belongs falls back whole rather than silently
     // becoming a scope.
     const malformed = resolveConfig({ sidebar: { tps: "family" } });
-    expect(malformed.config.sidebar.tps).toEqual({ scope: "family", display: "avg" });
+    expect(malformed.config.sidebar.tps).toEqual({ scope: "family", display: "rt" });
     expect(malformed.issues.join(" ")).toContain("sidebar.tps must be an object");
   });
 
-  test("selects which tps figure draws, defaulting to the settled-turn average", () => {
+  test("selects which tps figure draws, defaulting to realtime", () => {
     // The shipped default is the one constant, like the scope beside it.
-    expect(DEFAULT_TPS_DISPLAY).toBe("avg");
-    expect(DEFAULT_CONFIG.sidebar.tps.display).toBe("avg");
+    expect(DEFAULT_TPS_DISPLAY).toBe("rt");
+    expect(DEFAULT_CONFIG.sidebar.tps.display).toBe("rt");
 
     // Every exact value passes through cleanly, leaving the scope alone.
     for (const display of ["avg", "rt", "both"] as const) {
@@ -103,13 +103,13 @@ describe("flight deck config", () => {
     // No sensible repair for a misspelled display: the default comes back and
     // the key is named, like every other invalid option.
     const bad = resolveConfig({ sidebar: { tps: { display: "turbo" } } });
-    expect(bad.config.sidebar.tps).toEqual({ scope: "family", display: "avg" });
-    expect(bad.issues).toEqual(['sidebar.tps.display must be "avg", "rt" or "both"; using "avg"']);
+    expect(bad.config.sidebar.tps).toEqual({ scope: "family", display: "rt" });
+    expect(bad.issues).toEqual(['sidebar.tps.display must be "avg", "rt" or "both"; using "rt"']);
 
     // The two knobs are independent: a bad display keeps a good scope, and a
     // bad scope keeps a good display.
     const mixed = resolveConfig({ sidebar: { tps: { scope: "session", display: "turbo" } } });
-    expect(mixed.config.sidebar.tps).toEqual({ scope: "session", display: "avg" });
+    expect(mixed.config.sidebar.tps).toEqual({ scope: "session", display: "rt" });
     expect(mixed.issues.join(" ")).toContain("sidebar.tps.display");
     expect(mixed.issues.join(" ")).not.toContain("sidebar.tps.scope");
   });

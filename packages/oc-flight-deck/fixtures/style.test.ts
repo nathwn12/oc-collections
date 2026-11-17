@@ -23,7 +23,7 @@ const baselineRail = [
   "context   ░░░░░░░░░░ ~0%",
   "perms     0 waiting",
   "elapsed   0s",
-  "tps       0 tok/s",
+  "tps       —",
 ];
 
 describe("configurable rail styling", () => {

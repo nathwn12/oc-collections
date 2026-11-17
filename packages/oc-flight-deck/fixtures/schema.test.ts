@@ -84,7 +84,7 @@ describe("the schema describes the real config", () => {
     expect(props["sidebar"]!.properties.tps.properties.scope.enum).toEqual(["family", "session"]);
     expect(props["sidebar"]!.properties.tps.properties.display.default).toBe(DEFAULT_CONFIG.sidebar.tps.display);
     expect(props["sidebar"]!.properties.tps.properties.display.default).toBe(DEFAULT_TPS_DISPLAY);
-    expect(props["sidebar"]!.properties.tps.properties.display.default).toBe("avg");
+    expect(props["sidebar"]!.properties.tps.properties.display.default).toBe("rt");
     expect(props["sidebar"]!.properties.tps.properties.display.enum).toEqual(["avg", "rt", "both"]);
     expect(props["sidebar"]!.properties.persist.default).toBe(DEFAULT_CONFIG.sidebar.persist);
     expect(props["sidebar"]!.properties.placeholder.default).toBe(DEFAULT_CONFIG.sidebar.placeholder);
@@ -324,7 +324,7 @@ describe("the shipped example validates against the shipped schema", () => {
     expect(sidebar["persist"]).toBe(true);
     expect(sidebar["placeholder"]).toBe("—");
     expect(sidebar["maxLines"]).toBe(DEFAULT_CONFIG.sidebar.maxLines);
-    expect(sidebar["tps"]).toEqual({ scope: "family", display: "avg" });
+    expect(sidebar["tps"]).toEqual({ scope: "family", display: "rt" });
     const style = parsed["style"] as Record<string, unknown>;
     expect(resolveConfig(parsed).config.style).toEqual(DEFAULT_CONFIG.style);
     expect(style["rows"]).toEqual({ "*": { color: "subdued", attributes: [] } });
@@ -446,7 +446,7 @@ describe("the shipped example validates against the shipped schema", () => {
     const tpsDisplayResolution = resolveConfig(tpsDisplay);
     expect(tpsDisplayResolution.config.sidebar.tps.display).toBe(DEFAULT_CONFIG.sidebar.tps.display);
     expect(tpsDisplayResolution.issues.join(" ")).toContain("sidebar.tps.display");
-    expect(tpsDisplayResolution.issues.join(" ")).toContain('must be "avg", "rt" or "both"; using "avg"');
+    expect(tpsDisplayResolution.issues.join(" ")).toContain('must be "avg", "rt" or "both"; using "rt"');
     for (const display of ["avg", "rt", "both"]) {
       const ok = { sidebar: { tps: { display } } };
       expect(schemaErrors(schema as unknown as SchemaNode, ok, "")).toEqual([]);
