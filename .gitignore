@@ -9,3 +9,5 @@ target/
 
 # working state, not part of the collection
 .stack/
+.seed/
+.opencode/skills/*-seed/
