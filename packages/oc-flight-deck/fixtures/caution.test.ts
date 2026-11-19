@@ -60,7 +60,6 @@ function run(options: {
 
 const kinds = (found: ReturnType<typeof run>) => found.map((c) => c.kind);
 
-// ---------------------------------------------------------------------------
 
 describe("reading the host's shapes", () => {
   test("reads a tool part, preferring the recorded run time", () => {

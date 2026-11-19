@@ -33,7 +33,6 @@ import path from 'node:path';
 const PKG_ROOT = path.resolve(import.meta.dirname, '..');
 const CLI = path.join(PKG_ROOT, 'bin', 'cli.js');
 
-/* --------------------------- host discovery --------------------------- */
 
 function hostVersion() {
   const r = spawnSync('opencode', ['--version'], { encoding: 'utf8', timeout: 60000 });
@@ -51,7 +50,6 @@ const SKIP = !HOST
     ? `host is ${HOST.raw}; this package targets the 2.2.0 config dialect — shapes UNVERIFIED`
     : false;
 
-/* ------------------------- JSONC read (package file) ------------------- */
 
 function stripJsonc(text) {
   let out = '';
@@ -78,7 +76,6 @@ function readDistroConfig() {
   return JSON.parse(stripJsonc(readFileSync(path.join(PKG_ROOT, 'opencode.jsonc'), 'utf8')));
 }
 
-/* --------------------------- host round-trip -------------------------- */
 
 // Write `configObject` as a PROJECT config (cwd) — the one surface 2.2.0 reads
 // from an arbitrary directory with no env var and no touch to the live config —
@@ -126,7 +123,6 @@ function dropped(inNode, outNode, at = '$', hits = []) {
   return hits; // scalar: a rewrite is normalization, not loss
 }
 
-/* ----------------------- fake host for the install -------------------- */
 
 // The installer must reach a 2.2.0-shaped host while the probe below reaches
 // the real one, so the CLI child gets a PATH whose `opencode` is this shim.

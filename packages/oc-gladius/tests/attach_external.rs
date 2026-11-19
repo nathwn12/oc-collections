@@ -17,7 +17,6 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-// ---------------------------------------------------------------- helpers
 
 struct Client {
     stdin: ChildStdin,

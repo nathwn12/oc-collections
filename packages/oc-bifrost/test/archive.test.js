@@ -31,7 +31,6 @@ function read(buffer, limits = LIMITS, prefix = PREFIX) {
   return readTarGz(buffer, prefix, limits)
 }
 
-/* ---- happy paths ---- */
 
 test("readTarGz: strips the top-level directory and returns regular files with their bytes", () => {
   const contents = read(gzipSync(tar(
@@ -95,7 +94,6 @@ test("readTarGz: an empty archive is empty, not an error", () => {
   assert.deepEqual(contents, { files: [], totalBytes: 0 })
 })
 
-/* ---- untrusted input: refusals ---- */
 
 test("readTarGz: absolute paths, traversal, empty/dot segments, backslashes, NUL and `:` are refused as unsafe", () => {
   for (const bad of [
@@ -153,7 +151,6 @@ test("readTarGz: a malformed archive is refused (checksum, truncation, magic)", 
   assert.equal(refusalKind(() => read(Buffer.from("not gzip"))), "malformed")
 })
 
-/* ---- caps: refuse, never truncate ---- */
 
 test("readTarGz: the uncompressed cap is enforced by the gunzip itself", () => {
   const big = tar(entry(`${PREFIX}/big.txt`, "z".repeat(4096)))

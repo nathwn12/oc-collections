@@ -136,7 +136,6 @@ async function routerAt({ model = 'opencode-go/deepseek-v4.1-flash', agent = 'le
   return { router, ...fake };
 }
 
-// --- the configuration file ----------------------------------------------
 
 test('a missing config file falls back to the built-in defaults and says so once', () => {
   const { config: loaded, source, problem } = loadConfig({ env: {}, read: missing });
@@ -190,7 +189,6 @@ test('normalize coerces junk instead of throwing', () => {
   assert.equal(normalize({ rules: { excludeFree: false } }).rules.excludeFree, false);
 });
 
-// --- the ladders, inline and by pointer -----------------------------------
 
 test('inline ladders are read from the config file itself', () => {
   const { ladders, problem } = readLadders(LADDERS, { read: missing });
@@ -241,7 +239,6 @@ test('splitModel splits on the first slash only and rejects a half id', () => {
   assert.equal(splitModel(null), null);
 });
 
-// --- the tool contract ----------------------------------------------------
 
 test('list reports the ladder, rung and current model and changes nothing', async () => {
   const { router, calls } = await routerAt();
@@ -374,7 +371,6 @@ test('a call with no session and no agent is unknown-agent', async () => {
   assert.equal((await router.switchModel({}, {})).error, 'unknown-agent');
 });
 
-// --- the rules ------------------------------------------------------------
 
 test('a -free rung never reaches a ladder: the step is refused and posts nothing', async () => {
   const ladders = { lead: ['opencode-go/deepseek-v4.1-flash', 'opencode-go/longcat-2.5-free'] };
@@ -638,7 +634,6 @@ test('a catalog miss forces one refresh before not-available', async () => {
   assert.equal(round, 2);
 });
 
-// --- the automatic path ---------------------------------------------------
 
 test('a recorded failure steps the next resolve down one rung on the same provider', async () => {
   const fake = fakeCtx();
@@ -721,7 +716,6 @@ test('a retry with a rung left is not vetoed', async () => {
   assert.deepEqual(open.decision, { retry: true, delay: 500 });
 });
 
-// --- logging: the record, and what it refuses to carry --------------------
 
 test('a log line is six tab separated fields, timestamp first', () => {
   const line = formatLine({
@@ -754,7 +748,6 @@ test('a log that cannot be written never costs a request', () => {
   assert.doesNotThrow(() => log('line'));
 });
 
-// --- setup, registration, and the fail-open floor -------------------------
 
 test('createFallback registers one switch_model tool in the model namespace', () => {
   const fake = fakeCtx();
@@ -863,7 +856,6 @@ test('setup registers the tool and the hook from a pointer ladder, and nothing w
   }
 });
 
-// --- the benchmark check, over a fake site -------------------------------
 
 const SITEMAP = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset>

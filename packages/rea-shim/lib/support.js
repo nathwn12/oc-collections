@@ -367,9 +367,6 @@ function sha256File(file) {
   });
 }
 
-// ---------------------------------------------------------------------------
-// HTTPS reads. No non-HTTPS URL is ever requested.
-// ---------------------------------------------------------------------------
 
 function openResponse(url, options = {}, redirects = 0) {
   return new Promise((resolve, reject) => {
@@ -505,9 +502,6 @@ async function downloadFile(url, destination, options = {}) {
   return null;
 }
 
-// ---------------------------------------------------------------------------
-// Archive inspection and extraction.
-// ---------------------------------------------------------------------------
 
 const WINDOWS_RESERVED = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
 

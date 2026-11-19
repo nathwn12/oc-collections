@@ -36,7 +36,6 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 # dep (already in the resolved tree transitively); never hand-rolled.
 base64 = "0.23"
 
-# ---------------------------------------------------------------- build speed
 # Fast inner loop. `line-tables-only` keeps file:line backtraces but drops
 # variable/type debuginfo. Measured (MSVC, this toolchain): dev PDB 63.2 -> 26.8 MB
 # (-57.7 %) for gladius and 11,677,696 -> 6,074,368 B (-48.0 %) for puppet; dev
@@ -51,7 +50,6 @@ opt-level = 0                # already the default; keep it (see §6)
 [profile.test]
 inherits = "dev"
 
-# ---------------------------------------------------------------- release
 # DELIBERATELY EMPTY: the release defaults are already the build-time-friendly
 # set (opt-level=3, codegen-units=16, lto=false, panic="unwind", debug=false,
 # strip="none"). Adding lto/codegen-units=1 makes builds SLOWER and changes the

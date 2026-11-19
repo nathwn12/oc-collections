@@ -295,7 +295,6 @@ fn capture_times_out_typed_and_the_worker_recovers() {
     );
 }
 
-// --- static coverage of the boundedness discipline ------------------------
 
 fn src_text(name: &str) -> String {
     let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))

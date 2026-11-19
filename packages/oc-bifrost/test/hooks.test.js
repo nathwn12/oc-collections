@@ -297,10 +297,6 @@ test("bridge: config is refused out loud", async () => {
   await assertRefused("config")
 })
 
-/* ------------------------------------------------------------------ */
-/* Rows below were reported by the compat-matrix audit as naming a test */
-/* that did not exist; each one now exercises the real bridge path.     */
-/* ------------------------------------------------------------------ */
 
 test("bridge: chat.params maps onto context generation options", async () => {
   const { ctx, fire } = fakeContext()

@@ -237,7 +237,6 @@ export async function registerV1Hooks(
   // is a mount failure, not a tool that answers with empty content.
   const toolDefinitions = validateToolMap(table.tool)
 
-  /* ---------------- tool.execute.before ---------------- */
   const before = asHandler(table["tool.execute.before"])
   if (before) {
     await ctx.tool.hook("execute.before", async (event) => {
@@ -269,7 +268,6 @@ export async function registerV1Hooks(
     reporter.record("tool.execute.before", "full", "mutable event.input + event.tool write-back")
   }
 
-  /* ---------------- tool.execute.after ---------------- */
   const after = asHandler(table["tool.execute.after"])
   if (after) {
     await ctx.tool.hook("execute.after", async (event) => {
@@ -300,7 +298,6 @@ export async function registerV1Hooks(
     reporter.record("tool.execute.after", "partial", "completed: result.output/metadata, error: error.message/metadata; title ignored on both branches")
   }
 
-  /* ---------------- shell.env ---------------- */
   const shellEnv = asHandler(table["shell.env"])
   if (shellEnv) {
     await ctx.shell.hook("create.before", async (event) => {
@@ -311,7 +308,6 @@ export async function registerV1Hooks(
     reporter.record("shell.env", "full", "shell create.before event.env")
   }
 
-  /* ---------------- chat.params ---------------- */
   const chatParams = asHandler(table["chat.params"])
   if (chatParams) {
     // Fanned out to every model-request kind: V2 runs exactly one of these
@@ -369,7 +365,6 @@ export async function registerV1Hooks(
     reporter.record("chat.params", "partial", "mapped onto session context/compaction/generate/title generation options")
   }
 
-  /* ---------------- chat.headers ---------------- */
   const chatHeaders = asHandler(table["chat.headers"])
   if (chatHeaders) {
     await ctx.session.hook("model.request", async (event) => {
@@ -380,7 +375,6 @@ export async function registerV1Hooks(
     reporter.record("chat.headers", "full", "session model.request headers")
   }
 
-  /* ---------------- chat.message ---------------- */
   const chatMessage = asHandler(table["chat.message"])
   if (chatMessage) {
     await ctx.session.hook("prompt", async (event) => {
@@ -431,7 +425,6 @@ export async function registerV1Hooks(
     reporter.record("chat.message", "partial", "prompt hook; pre-filled V1 message/parts -> event.prompt.text/files/agents/skills write-back; non-text content parts ignored; an empty string rewrite clears the prompt")
   }
 
-  /* ---------------- permission.ask ---------------- */
   const permissionAsk = asHandler(table["permission.ask"])
   if (permissionAsk) {
     await ctx.permission.hook("evaluate", async (event) => {
@@ -445,7 +438,6 @@ export async function registerV1Hooks(
     reporter.record("permission.ask", "full", "permission evaluate effect")
   }
 
-  /* ---------------- experimental.chat.messages.transform ---------------- */
   // Registered BEFORE the system.transform block: V1 plugins that pair the two
   // (agent-identity) rely on messages.transform firing first, and V2 runs the
   // session:context callbacks in registration order.
@@ -528,7 +520,6 @@ export async function registerV1Hooks(
     reporter.record("experimental.chat.messages.transform", "full", "V2 Message[] -> V1 {info,parts}[] pre-fill on session context/compaction/generate/title; originals kept whole only when the shape is unchanged, otherwise plain messages from the hook's own envelope")
   }
 
-  /* ---------------- experimental.chat.system.transform ---------------- */
   const systemTransform = asHandler(table["experimental.chat.system.transform"])
   if (systemTransform) {
     // Same fan-out as chat.params above; the title shape carries system too.
@@ -576,7 +567,6 @@ export async function registerV1Hooks(
     reporter.record("experimental.chat.system.transform", "partial", "string[] <-> SystemPart[] round-trip on session context/compaction/generate/title; originals kept only when the shape is unchanged, otherwise plain text parts")
   }
 
-  /* ---------------- experimental.session.compacting ---------------- */
   const compacting = asHandler(table["experimental.session.compacting"])
   if (compacting) {
     await ctx.session.hook("compaction", async (event) => {
@@ -596,7 +586,6 @@ export async function registerV1Hooks(
     reporter.record("experimental.session.compacting", "partial", "context appended to compaction system; V1 prompt replacement has no V2 destination (SessionCompaction carries no prompt field)")
   }
 
-  /* ---------------- tool.definition ---------------- */
   const toolDefinition = asHandler(table["tool.definition"])
   if (toolDefinition) {
     const snapshot = new Map<string, { description?: string; parameters?: unknown }>()
@@ -619,7 +608,6 @@ export async function registerV1Hooks(
     reporter.record("tool.definition", "partial", "apply-time snapshot; transform callbacks must stay synchronous")
   }
 
-  /* ---------------- tool map ---------------- */
   // Every definition was validated above, before any hook was registered: no
   // silent `{"content":""}` fallback exists any more.
   if (toolDefinitions.length > 0) {
@@ -639,7 +627,6 @@ export async function registerV1Hooks(
     reporter.record("tool", "partial", `${toolDefinitions.length} V1 tool(s) registered via ctx.tool.transform`)
   }
 
-  /* ---------------- event ---------------- */
   const eventHook = asHandler(table.event)
   if (eventHook) {
     const controller = new AbortController()
@@ -662,7 +649,6 @@ export async function registerV1Hooks(
     )
   }
 
-  /* ---------------- dispose ---------------- */
   const dispose = asHandler(table.dispose)
   if (dispose) {
     cleanups.push(async () => {
@@ -671,7 +657,6 @@ export async function registerV1Hooks(
     reporter.record("dispose", "full", "setup cleanup")
   }
 
-  /* ---------------- explicitly refused ---------------- */
   const refused: Array<[string, string]> = [
     ["config", "V1 global config mutation maps to per-domain transforms with different semantics"],
     ["auth", "V1 auth hook maps to ctx.integration.transform + integration APIs"],

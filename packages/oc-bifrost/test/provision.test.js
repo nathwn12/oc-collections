@@ -79,7 +79,6 @@ async function withNpmCli(cli, fn) {
   }
 }
 
-/* ---- host-store junction (the proven live mechanism) ---- */
 
 test("provisionTree: a host-store package is junctioned into the tree (zero network)", async () => {
   const root = tmpRoot()
@@ -355,7 +354,6 @@ test("provisionTree: a tree without a package.json is skipped silently", async (
   }
 })
 
-/* ---- npm fallback ---- */
 
 test("provisionTree: npm fallback spawns `npm install --no-save --prefix <tree>`", async () => {
   const root = tmpRoot()
@@ -402,7 +400,6 @@ test("provisionTree: a failing npm install refuses the package without throwing"
   }
 })
 
-/* ---- missingDeps ---- */
 
 test("missingDeps: lists a bare specifier the entry imports that the tree cannot resolve", () => {
   const root = tmpRoot()

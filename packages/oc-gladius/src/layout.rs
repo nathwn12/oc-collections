@@ -434,7 +434,6 @@ fn visible_of(info: &Value, has_box: bool) -> bool {
     has_box && display != "none" && vis != "hidden" && vis != "collapse" && opacity > 0.0
 }
 
-// ------------------------------------------------------------ assert_layout
 
 /// Parsed `checks` input.
 struct Checks {
@@ -896,7 +895,6 @@ pub async fn assert_layout(
     Ok(out)
 }
 
-// ------------------------------------------------------------------- layout
 
 /// `layout`: boxes, scroll sizes, computed visibility and overlapping pairs
 /// for every match of the requested selectors/refs.

@@ -67,9 +67,6 @@ interface CautionInput {
   readonly thresholds: CautionThresholds;
 }
 
-// ---------------------------------------------------------------------------
-// Reading the host's shapes
-// ---------------------------------------------------------------------------
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -147,9 +144,6 @@ function sortValue(value: unknown): unknown {
   return sorted;
 }
 
-// ---------------------------------------------------------------------------
-// The rules
-// ---------------------------------------------------------------------------
 
 const SEVERITY_ORDER: Record<CautionSeverity, number> = { caution: 0, watch: 1 };
 
@@ -334,9 +328,6 @@ export function worstCaution(cautions: readonly Caution[]): Caution | undefined 
   return [...cautions].sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity])[0];
 }
 
-// ---------------------------------------------------------------------------
-// Wording
-// ---------------------------------------------------------------------------
 
 export const WATCH_GLYPH = "▲";
 export const CAUTION_GLYPH = "●";

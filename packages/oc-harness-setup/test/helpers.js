@@ -158,7 +158,6 @@ export function walkFiles(dir, out = []) {
   }
   return out;
 }
-/* ---------------- fake opencode + hermetic PATH ---------------- */
 
 export function writeFakeOpencode(binDir) {
   const mjs = path.join(binDir, 'fake-opencode.mjs');

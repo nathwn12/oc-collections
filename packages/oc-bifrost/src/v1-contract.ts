@@ -76,9 +76,6 @@ export interface V1ToolDefinition {
   execute: (args: unknown, context?: unknown) => unknown
 }
 
-/* ------------------------------------------------------------------ */
-/* Hook payload envelopes (what the bridge supplies / reads back)      */
-/* ------------------------------------------------------------------ */
 
 export interface V1ToolExecuteBeforeInput {
   tool: string

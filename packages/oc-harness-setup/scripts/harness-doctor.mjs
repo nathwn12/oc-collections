@@ -75,7 +75,6 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 
-/* ------------------------------- arguments -------------------------------- */
 
 const argv = process.argv.slice(2);
 let fix = false;
@@ -102,7 +101,6 @@ if (!(process.env.USERPROFILE ?? '').trim()) {
 
 const root = configDirArg || path.join(process.env.USERPROFILE, '.config', 'opencode');
 
-/* ---------- declared values (each names its evidence) ---------- */
 // Required layout paths. Evidence: the harness shape itself (opencode.jsonc
 // header "Harness v4"); stable, changes only via a harness restructure.
 const requiredPaths = [
@@ -148,7 +146,6 @@ const denyGates = [
 // convention carried over from the deleted checker lineage.
 const secretNamePattern = /(apikey|api_key|secret|password|bearer|credential)/i;
 
-/* -------------------------------- helpers --------------------------------- */
 
 // PowerShell's -eq/-contains/-ne compare strings case-insensitively; the port
 // keeps that so a config that graded PASS before still grades PASS.
@@ -460,7 +457,6 @@ function getUnwiredRoutingDoc(docsRoot) {
   return null;
 }
 
-/* ---------------------------- law evaluation ------------------------------ */
 
 const laws = [];
 
@@ -1329,7 +1325,6 @@ if (!isFile(templatePath)) {
   }
 }
 
-/* -------------------------------- verdict --------------------------------- */
 
 const failLaws = laws.filter((law) => law.result === 'FAIL');
 const driftLaws = laws.filter((law) => law.result === 'DRIFT');
@@ -1394,7 +1389,6 @@ if (json) {
   process.exit(exitCode);
 }
 
-/* --------------------------------- report --------------------------------- */
 
 out(`=== harness-doctor ${root} ===`);
 for (const law of laws) {

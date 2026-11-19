@@ -118,7 +118,6 @@ function readCliJson(cli) {
   )
 }
 
-/* ---- wrapper ---- */
 
 test("wireTui: creates the tui.tsx wrapper re-exporting the tree's own exports[\"./tui\"] target", async () => {
   const root = tmpRoot()
@@ -552,7 +551,6 @@ test("wireTui: healing one tree unwires only that tree - a second wired tree sta
   }
 })
 
-/* ---- cli.json merge: golden byte-preservation ---- */
 
 test("wireTui: inserts the plugins key after $schema with every unrelated byte preserved (golden)", async () => {
   const root = tmpRoot()
@@ -738,7 +736,6 @@ test("wireTui: a writer that races on every attempt is refused loudly, naming th
   }
 })
 
-/* ---- unwireTui: removes only what we added ---- */
 
 test("unwireTui: round-trips a created key byte-for-byte (golden)", async () => {
   const root = tmpRoot()
@@ -921,7 +918,6 @@ test("wireTui: a splice that would leave a malformed plugins array is refused lo
   }
 })
 
-/* ---- loud refusals on ambiguous formatting ---- */
 
 test("wireTui: refuses loudly when the plugins value is not an array, leaving the file untouched", async () => {
   const root = tmpRoot()
@@ -1382,7 +1378,6 @@ test("wireTui: degenerate treeFamily ('/' and '--') with no key prunes nothing",
   }
 })
 
-/* ---- server entry ---- */
 
 const SERVER_WRAPPER_MARKER = "// oc-bifrost: managed server entry"
 

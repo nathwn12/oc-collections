@@ -206,9 +206,6 @@ function release(tag, assetNames, extra = {}) {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Pure helpers
-// ---------------------------------------------------------------------------
 
 test('parseJavaMajor handles modern, LTS and legacy version strings', () => {
   assert.equal(bootstrap.parseJavaMajor('openjdk version "25.0.4.1" 2026-08-18 LTS'), 25);
@@ -256,9 +253,6 @@ test('resolveUpstreamRelease pins exact and never accepts a dist-tag', () => {
   ]);
 });
 
-// ---------------------------------------------------------------------------
-// Archive safety
-// ---------------------------------------------------------------------------
 
 test('archive entry validation rejects traversal, absolute paths and unsafe names', () => {
   const safe = support.assertSafeArchiveEntries([
@@ -384,9 +378,6 @@ test('downloadFile never deletes a pre-existing destination', async (t) => {
   assert.equal(fs.readFileSync(destination, 'utf8'), 'sentinel');
 });
 
-// ---------------------------------------------------------------------------
-// Ghidra and JDK release resolution
-// ---------------------------------------------------------------------------
 
 test('selectGhidraRelease picks the highest patch in the accepted line only', () => {
   const releases = [
@@ -560,9 +551,6 @@ test('readUpstreamPolicy reads the accepted line from the installed release', as
   );
 });
 
-// ---------------------------------------------------------------------------
-// Ghidra / JDK local verification
-// ---------------------------------------------------------------------------
 
 test('ghidraJavaRequirement is read from the installation, never a constant', (t) => {
   const dir = temporary(t);
@@ -609,9 +597,6 @@ test('verifyGhidra requires the exact version and an upstream-accepted line', (t
   );
 });
 
-// ---------------------------------------------------------------------------
-// Upstream acceptance contracts
-// ---------------------------------------------------------------------------
 
 function healthyDoctor(version = '12.1.4') {
   return {
@@ -944,9 +929,6 @@ test('bootstrap discovery prefers the most recently installed Ghidra', (t) => {
   assert.equal(candidates[1].version, '12.2');
 });
 
-// ---------------------------------------------------------------------------
-// Read-only discovery through Scoop `current` junctions
-// ---------------------------------------------------------------------------
 
 test('scoop apps/ghidra/current junction resolves to the canonical Ghidra install', { skip: WINDOWS_ONLY }, (t) => {
   const home = temporary(t, 'rea-shim-home-');
@@ -1010,9 +992,6 @@ test('only a safe sibling current junction is followed', { skip: WINDOWS_ONLY },
   assert.equal(discovery.resolveScoopCurrent(plain), null);
 });
 
-// ---------------------------------------------------------------------------
-// Installer mechanics
-// ---------------------------------------------------------------------------
 
 test('ensureArtifact installs once, reuses by marker, and preserves foreign targets', { skip: WINDOWS_ONLY }, async (t) => {
   const root = temporary(t);
@@ -1423,9 +1402,6 @@ test('runBootstrap refuses a nested _cacache junction before npm runs', { skip: 
   assert.equal(fs.readFileSync(sentinel, 'utf8'), 'external sentinel');
 });
 
-// ---------------------------------------------------------------------------
-// npm child environment
-// ---------------------------------------------------------------------------
 
 test('npmChildEnv removes every inherited cache spelling and keeps one canonical value', { skip: WINDOWS_ONLY }, () => {
   const inside = 'C:\\inside\\npm-cache';
@@ -1593,9 +1569,6 @@ test('a dry-run metadata lookup cannot receive an inherited cache override', { s
   assert.equal(fs.existsSync(root), false, 'a dry run must not create the bootstrap root');
 });
 
-// ---------------------------------------------------------------------------
-// CLI behaviour
-// ---------------------------------------------------------------------------
 
 test('--doctor is read-only and never creates the bootstrap root', (t) => {
   const parent = temporary(t);

@@ -53,7 +53,6 @@ test("resolveSpec: bare package names resolve to the registry kind (installed fr
   })
 })
 
-/* ---- new behaviour ---- */
 
 test("resolveSpec: ~ expands against the home directory", () => {
   assert.deepEqual(resolveSpec("~/x/y.ts", DIR), {
@@ -91,7 +90,6 @@ test("defaultHostStoreRoot: the npm SIBLING of the oc-bifrost cache under the sh
   assert.notEqual(defaultHostStoreRoot(home, {}), path.dirname(githubCacheRoot(home, {})))
 })
 
-/* ---- options/env plumbing: provision mode ---- */
 
 test("provisionMode: the default is \"host\" when both the option and the environment are absent", () => {
   assert.equal(provisionMode(undefined, {}), "host")

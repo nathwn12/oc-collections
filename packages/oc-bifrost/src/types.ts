@@ -82,9 +82,6 @@ export interface HookReport {
   note?: string
 }
 
-/* ------------------------------------------------------------------ */
-/* Structural V2 surface (what oc-bifrost itself uses)                 */
-/* ------------------------------------------------------------------ */
 
 export interface ToolExecuteBefore {
   tool: string

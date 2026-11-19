@@ -23,7 +23,6 @@ import {
   writeGoalAllowConfig, writeGoalPair, writePriorJournal,
 } from './helpers.js';
 
-/* ---------------- test 3: full upgrade install ---------------- */
 
 const shared = {};
 test('real install upgrades a prior 0.3.3 tree (fake opencode, real doctor)', { skip: WIN_SKIP, timeout: 300000 }, () => {
@@ -400,7 +399,6 @@ test('a user-set install-owned key survives the merge, is reported, and the ship
     rmSync(base, { recursive: true, force: true });
   }
 });
-/* ---------------- test 5 (before uninstall): negative doctor ---------------- */
 
 test('doctor fails naming state/template.md when it is removed', { skip: WIN_SKIP, timeout: 120000 }, () => {
   if (!shared.cfg) {
@@ -414,7 +412,6 @@ test('doctor fails naming state/template.md when it is removed', { skip: WIN_SKI
   assert.notEqual(r.status, 0, `doctor should fail without state/template.md:\n${out}`);
   assert.ok(out.includes('state/template.md'), 'a law failure names the missing path');
 });
-/* ---------------- T1: doctor grades a config with no permissions key ---------------- */
 
 test('doctor grades a config with no permissions key instead of crashing', { skip: WIN_SKIP, timeout: 120000 }, () => {
   const base = mkdtempSync(path.join(os.tmpdir(), 'oc-doctor-noperms-'));
@@ -429,7 +426,6 @@ test('doctor grades a config with no permissions key instead of crashing', { ski
     rmSync(base, { recursive: true, force: true });
   }
 });
-/* ---------------- T2: doctor secret-pointer law ---------------- */
 
 test('doctor fails a literal apiKey but accepts a pointer', { skip: WIN_SKIP, timeout: 120000 }, () => {
   const distroPerms = parseJsoncForTest(readFileSync(path.join(PKG_ROOT, 'opencode.jsonc'), 'utf8')).permissions;
@@ -460,7 +456,6 @@ test('doctor fails a literal apiKey but accepts a pointer', { skip: WIN_SKIP, ti
     rmSync(baseB, { recursive: true, force: true });
   }
 });
-/* ---------------- test 4: uninstall ---------------- */
 
 test('uninstall keeps adopter edits, removes harness files, restores originals', { skip: WIN_SKIP }, () => {
   if (!shared.cfg) {

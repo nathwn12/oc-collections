@@ -163,7 +163,6 @@ function cacheDirFor(root, spec) {
   return path.join(githubCacheLayoutRoot(root), githubCacheId(spec))
 }
 
-/* ---- strict spec validation ---- */
 
 test("parseGithubSpec: the full form splits owner, repo, ref, and path", () => {
   assert.deepEqual(parseGithubSpec("github:rtk-ai/rtk@v0.50.0#hooks/opencode/rtk.ts"), SPECS.full)
@@ -212,7 +211,6 @@ test("githubLabel: round-trips the parsed form", () => {
   assert.equal(githubLabel(SPECS.bare), "github:obra/superpowers")
 })
 
-/* ---- specifier routing ---- */
 
 test("githubCacheRoot: GitHub plugins share the user-level OpenCode cache, never the working project", () => {
   const home = path.join(os.tmpdir(), "oc-bifrost-home-test")
@@ -249,7 +247,6 @@ test("resolveSpec: a bare package name resolves to the registry kind", () => {
   })
 })
 
-/* ---- cache hardening: id + inside-root guard ---- */
 
 test("githubCacheId: filesystem-safe, deterministic, and distinct per distinct spec", () => {
   const id = githubCacheId(SPECS.full)
@@ -321,7 +318,6 @@ test("cache-path boundary: a symlinked cache ROOT and a file-shaped entry are re
   }
 })
 
-/* ---- the consent gate ---- */
 
 test("remoteTrustEnabled: an explicit option wins over the env; the env consents when the option is omitted", () => {
   assert.equal(remoteTrustEnabled(true, {}), true)
@@ -366,7 +362,6 @@ test("consent: the refusal message names what is about to be fetched, the provis
   assert.match(message, /Nothing was fetched and nothing was executed/)
 })
 
-/* ---- cold fetch (consented): the snapshot route ---- */
 
 test("resolveGithubPlugin: a cold cache WITH opt-in fetches the repository SNAPSHOT by commit and records provenance", async () => {
   const root = tmpRoot()
@@ -608,7 +603,6 @@ test("resolveGithubPlugin: a full 40-hex ref needs NO resolution - zero API call
   }
 })
 
-/* ---- the loud single-file fallback ---- */
 
 test("resolveGithubPlugin: a snapshot lacking every candidate falls back to single-file, named in meta", async () => {
   const root = tmpRoot()
@@ -717,7 +711,6 @@ test("resolveGithubPlugin: a pre-snapshot FLAT cache is never read as a snapshot
   }
 })
 
-/* ---- immutable identity / no silent replacement ---- */
 
 test("resolveGithubPlugin: the tarball is fetched BY the resolved commit (a moving ref cannot split meta from bytes)", async () => {
   const root = tmpRoot()
@@ -855,7 +848,6 @@ test("resolveGithubPlugin: a symlinked cache entry is refused", async () => {
   }
 })
 
-/* ---- fail-closed offline + fetch hardening ---- */
 
 test("resolveGithubPlugin: cold cache + failing network fails closed (never falls back)", async () => {
   const root = tmpRoot()
@@ -1038,7 +1030,6 @@ test("resolveGithubPlugin: a TARBALL response that left the allowed origin is re
   }
 })
 
-/* ---- refusal hygiene ---- */
 
 test("control characters never reach a refusal message raw (spec and remote response)", async () => {
   const CONTROL = /[\u0000-\u001f\u007f\u0080-\u009f]/
@@ -1081,7 +1072,6 @@ test("resolveGithubPlugin: an unusable commit sha from the API refuses (identity
   }
 })
 
-/* ---- candidate probing refusals ---- */
 
 test("resolveGithubPlugin: no candidate path existing refuses with every path tried", async () => {
   const root = tmpRoot()
@@ -1126,7 +1116,6 @@ test("resolveGithubPlugin: a failing default-branch lookup refuses loudly with t
   }
 })
 
-/* ---- the informed mount report ---- */
 
 test("mountNote: a snapshot always prints the layout, the commit, the digest, and the host-rights line", () => {
   const snapshot = {
@@ -1179,7 +1168,6 @@ test("mountNote: a single-file fallback says the loss out loud on every load", (
   assert.match(warm, /SINGLE FILE \u2014 sibling files are NOT available and a plugin that reads them by relative path is inert/)
 })
 
-/* ---- provisioning the fetched tree (Phase 1 wiring) ---- */
 
 /** A snapshot that declares one dependency, with an ESM entry importing it. */
 const PROVISIONED_PATH = "hooks/opencode/superpowers.mjs"

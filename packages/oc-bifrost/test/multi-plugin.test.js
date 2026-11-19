@@ -437,7 +437,6 @@ test("wireTui: OC_BIFROST_WIRE_TUI=1 opts in when the option is omitted; an expl
   }
 })
 
-/* ---- provision rows must survive a failed entry import ---- */
 
 /**
  * The live flight-deck failure mode, in miniature: provisioning REFUSES a

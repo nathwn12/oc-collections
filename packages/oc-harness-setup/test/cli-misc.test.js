@@ -21,7 +21,6 @@ import {
   writeGoalAllowConfig, writeGoalPair, writePriorJournal,
 } from './helpers.js';
 
-/* ---------------- test 1: --version ---------------- */
 
 test(`--version prints ${EXPECTED_VERSION}`, { skip: WIN_SKIP }, () => {
   const r = runCli(['--version']);
@@ -115,7 +114,6 @@ test('version gate: 1.x refused, 2.0/2.1 warn and install, 2.2.0 clean — docs 
     rmSync(base, { recursive: true, force: true });
   }
 });
-/* ---------------- test 2: --dry-run ---------------- */
 
 test('--dry-run prints the manifest with orchestrator, state/, 18 and creates no files', { skip: WIN_SKIP }, () => {
   // Hermetic fake opencode: the real CLI creates its config dir on `debug
@@ -141,7 +139,6 @@ test('--dry-run prints the manifest with orchestrator, state/, 18 and creates no
   assert.ok(out.includes('18 laws'), 'manifest names the 18-law doctor gate');
   assert.ok(!existsSync(cfgDir), 'dry-run created no files');
 });
-/* ---------------- test 6: package audit ---------------- */
 
 test('package audit: files list exists, no leaks, 10/6/6 with 1:1 seam', { skip: WIN_SKIP }, () => {
   const pkg = JSON.parse(readFileSync(path.join(PKG_ROOT, 'package.json'), 'utf8'));
@@ -228,7 +225,6 @@ test('package audit: files list exists, no leaks, 10/6/6 with 1:1 seam', { skip:
   const unwiredText = readFileSync(unwiredPath, 'utf8');
   assert.ok(/\bunwire[a-z]*\b[^.]{0,40}\bmodel\b|\bmodel\b[^.]{0,40}\bunwired\b/is.test(unwiredText), 'unwired-routing record names the unwired model state');
 });
-/* ---------------- packed-tarball install (no dotfile rename) ---------------- */
 
 test('a packed tarball installs and passes the doctor (no dotfile rename)', { skip: WIN_SKIP, timeout: 300000 }, () => {
   // On Windows npm is an .cmd shim CreateProcess cannot launch directly

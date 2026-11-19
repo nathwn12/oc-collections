@@ -21,7 +21,6 @@ import {
   writeGoalAllowConfig, writeGoalPair, writePriorJournal,
 } from './helpers.js';
 
-/* ---------------- regression: /goal belongs to the host ---------------- */
 
 // OpenCode v2.2.1 ships a first-party `/goal` session-continuation command
 // (`Usage: /goal <objective> | pause | resume | clear`). A custom

@@ -70,7 +70,6 @@ function fakeInstall({ name, version = "1.2.3", entry = "index.js", manifest = {
   return { install, calls }
 }
 
-/* ---- specifier parsing ---- */
 
 test("resolveSpec: a bare name resolves to the registry kind", () => {
   assert.deepEqual(resolveSpec("oc-todo", DIR), {
@@ -129,7 +128,6 @@ test("resolveSpec: bun: strips the prefix and records the alias manager", () => 
   assert.equal(resolved.spec.name, "@scope/pkg")
 })
 
-/* ---- malformed specs refuse loudly ---- */
 
 test("resolveSpec: malformed registry specs refuse loudly, never guess", () => {
   // Empty remainder behind a prefix: the parser's own invalid-specifier refusal.
@@ -152,7 +150,6 @@ test("isBareRegistrySpecifier: only genuine bare names qualify", () => {
   assert.equal(isBareRegistrySpecifier(""), false)
 })
 
-/* ---- cache-root convention (mirrors the github layout) ---- */
 
 test("registryCacheRoot: the oc-bifrost registry sibling of the github cache under the shared opencode cache root", () => {
   const home = path.join(os.tmpdir(), "oc-bifrost-registry-home-test")
@@ -169,7 +166,6 @@ test("registryCacheId: filesystem-safe, deterministic, and distinct per distinct
   assert.notEqual(registryCacheId("oc-todo@1.0.0"), registryCacheId("oc-todo@2.0.0"), "distinct specs must never share a directory")
 })
 
-/* ---- cold install + warm cache-first (hermetic) ---- */
 
 test("resolveRegistryPlugin: a cold cache installs via the injected runner and verifies the entry before import", async () => {
   const root = tmpRoot()
@@ -323,7 +319,6 @@ test("resolveRegistryEntry: an install whose manifest names no importable entry 
   }
 })
 
-/* ---- classification: V1 bridges, V2 runs natively ---- */
 
 test("registry: a V1 factory package classifies as V1 (bridged) and a V2 definition as V2 (native setup)", async () => {
   const root = tmpRoot()
@@ -354,7 +349,6 @@ test("registry: a V1 factory package classifies as V1 (bridged) and a V2 definit
   }
 })
 
-/* ---- the alias-honesty mount note ---- */
 
 test("registryMountNote: pnpm: and bun: say plainly they are aliases installed the same way", async () => {
   const root = tmpRoot()

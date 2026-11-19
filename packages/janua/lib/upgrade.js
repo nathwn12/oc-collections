@@ -103,7 +103,6 @@ function describe(err) {
   return err && err.message ? err.message : String(err);
 }
 
-// --- process probes -------------------------------------------------------
 
 function probe(bin, args) {
   const result = spawnSync(process.execPath, [bin, ...args], {
@@ -152,7 +151,6 @@ function verify(prefix, version) {
   return { ok: true };
 }
 
-// --- npm ------------------------------------------------------------------
 
 function quoteForCmd(arg) {
   return /[\s"&|<>^()]/.test(arg) ? `"${arg}"` : arg;
@@ -199,7 +197,6 @@ export function npmLatest() {
   return assertVersion(out.split('\n').pop().trim());
 }
 
-// --- lock -----------------------------------------------------------------
 
 const OWNER_FILE = 'owner.json';
 
@@ -264,7 +261,6 @@ function acquireLock(home, { now = Date.now } = {}) {
   return () => release(lockDir, token);
 }
 
-// --- staging, moving, and the pointer -------------------------------------
 
 /**
  * Install into a private prefix and prove it there. Nothing is moved while the
