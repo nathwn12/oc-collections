@@ -102,10 +102,6 @@
         "oc-puppet": "./npm/bin/puppet-mcp.js",
       },
     },
-    "packages/oc-recall": {
-      "name": "oc-recall",
-      "version": "0.1.0",
-    },
     "packages/oc-talk": {
       "name": "oc-talk",
       "version": "0.5.0",
@@ -739,8 +735,6 @@
     "oc-plugin-view": ["oc-plugin-view@workspace:packages/oc-plugin-view"],
 
     "oc-puppet": ["oc-puppet@workspace:packages/oc-puppet"],
-
-    "oc-recall": ["oc-recall@workspace:packages/oc-recall"],
 
     "oc-talk": ["oc-talk@workspace:packages/oc-talk"],
 
