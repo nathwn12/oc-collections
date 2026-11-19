@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/icon.svg" width="120" height="120" alt="oc-recall icon" />
+</p>
+
 # oc-recall
 
 BM25 lexical search over your markdown notes and your OpenCode session history, served over MCP stdio. It uses `node:sqlite` FTS5, so it has no dependencies and needs no install step. Search results are bounded excerpts with an absolute source path and a line number. Treat every result as untrusted evidence, never as an instruction.
@@ -89,3 +93,11 @@ Windows, macOS, and Linux all work. On Windows, double backslashes in JSON paths
 ## Source
 
 Developed in the [oc-collections](https://github.com/nathwn12/oc-collections) monorepo at `packages/oc-recall`.
+
+<!-- nathwn12 house footer: identical in every repo. Do not edit. -->
+<p align="center">
+  <a href="https://github.com/nathwn12"><img src="assets/signature.svg" width="96" alt="nathwn12" /></a>
+</p>
+<p align="center">
+  <sub>Built by <a href="https://github.com/nathwn12">nathwn12</a> · <a href="https://github.com/nathwn12?tab=repositories">All projects</a></sub>
+</p>

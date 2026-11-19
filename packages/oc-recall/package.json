@@ -27,7 +27,8 @@
     "server.mjs",
     "README.md",
     "CHANGELOG.md",
-    "LICENSE"
+    "LICENSE",
+    "assets"
   ],
   "engines": {
     "node": ">=22"
