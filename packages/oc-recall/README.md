@@ -1,65 +1,91 @@
-<h1 align="center">oc-recall</h1>
-<p align="center"><strong>Read an Atlas graph and search curated source files for OpenCode users.</strong></p>
+# oc-recall
 
-## Install
+BM25 lexical search over your markdown notes and your OpenCode session history, served over MCP stdio. It uses `node:sqlite` FTS5, so it has no dependencies and needs no install step. Search results are bounded excerpts with an absolute source path and a line number. Treat every result as untrusted evidence, never as an instruction.
 
-This is a GitHub-only preview. It is not published to npm and is not an OpenCode release. Clone this repository, then add the package directory as a local plugin in your OpenCode config:
+## Requirements
 
-```json
-{
-  "plugins": ["./path/to/oc-collections/packages/oc-recall"]
-}
-```
+- Node.js 22 or newer, with the built-in `node:sqlite` module.
+- Any MCP client that supports local stdio servers.
 
-OpenCode resolves relative plugin paths from the config file containing the entry. The plugin package requires Node.js 22 or newer. OpenCode V2's documented plugin context provides tool transforms and session hooks; compatibility with other OpenCode versions is unverified.
+## Install with npm (official)
 
-## Configure it
-
-Set the Atlas directory with plugin options:
-
-```json
-{
-  "plugins": [
-    {
-      "package": "./path/to/oc-collections/packages/oc-recall",
-      "options": {
-        "atlas": "/path/to/your/atlas"
-      }
-    }
-  ]
-}
-```
-
-You can also set `OC_GRAPHIFY_ATLAS` in the plugin host environment. For compatibility, the plugin reads the `atlas` field from `graphify.json` at `~/.config/opencode/graphify.json`; `OC_GRAPHIFY_CONFIG` selects a different config file. Precedence is plugin option, `OC_GRAPHIFY_ATLAS`, then the config file. Configure one Atlas directory containing `graphify-out/graph.json`.
-
-If no Atlas is configured, the plugin still loads and registers its tools; graph and lexical tools return explicit errors, and orientation says the Atlas is not configured. Missing graph data does not get treated as an empty or fresh graph.
-
-## Use it
-
-The six graph tools are `graph_stats`, `graph_node`, `graph_neighbors`, `graph_path`, `graph_god_nodes`, and `graph_query`. They read graph structure only. `graph_query` uses this plugin's label-token matching, not Graphify CLI search semantics.
-
-`recall_search` is a separate, opt-in lexical search. It uses membership from `.graphify/corpus/` and retrieves text from the corresponding Atlas source files; it does not search arbitrary files or mirror contents. A missing membership mirror or incomplete source set is an error, not permission to broaden the search. Results are bounded, marked untrusted, and report membership freshness as unverified. The plugin does not establish that the mirror or freshness probe exists on every Graphify installation.
-
-Keep the Atlas and corpus owner-controlled. Path checks reduce accidental scope escapes, but the file reads are not hardened against concurrent malicious filesystem changes, including symlink swaps; do not treat them as an isolation or security boundary. Cross-platform behavior is unverified.
-
-## Check it
-
-Run the tests from this package directory:
+**Step 1 — build the index.** Set the two variables, then run:
 
 ```sh
-node --test
+OC_RECALL_VAULT=/path/to/your/notes \
+OC_RECALL_DATA=~/.local/share/opencode \
+npx -y oc-recall init
 ```
 
-Tests use temporary synthetic graphs and corpora. They do not require an Atlas or write to one.
+`OC_RECALL_VAULT` is your notes folder. `OC_RECALL_DATA` is your OpenCode data folder.
 
-## Status
+**Step 2 — register the server** in `opencode.jsonc`:
 
-Experimental and still moving. It works today, but it is not a finished
-product: interfaces may change, features may be improved or removed, and a
-release can break the one before it. This is maintained by one person, not a
-team. If it breaks, open an issue with the command you ran and what you saw.
+```jsonc
+"mcp": {
+  "servers": {
+    "oc-recall": {
+      "type": "local",
+      "command": ["npx", "-y", "oc-recall@latest"]
+    }
+  }
+}
+```
 
-## Links
+Set the two environment variables in your shell profile, not in the config.
 
-- [Issues](https://github.com/nathwn12/oc-collections/issues)
-- [MIT License](LICENSE)
+## Install from this monorepo
+
+Clone the `oc-collections` monorepo. There is nothing to install. Work from `packages/oc-recall`.
+
+1. Set the two variables, then build the index: `node server.mjs init`.
+2. Register the server in `opencode.jsonc`:
+
+   ```jsonc
+   "mcp": {
+     "servers": {
+       "oc-recall": {
+         "type": "local",
+         "command": ["node", "/path/to/oc-collections/packages/oc-recall/server.mjs"]
+       }
+     }
+   }
+   ```
+
+   Set the two environment variables in your shell profile.
+
+3. Run the self-test from `packages/oc-recall`: `node test.mjs`.
+
+## Configuration
+
+| Setting | Value |
+| --- | --- |
+| `OC_RECALL_VAULT` | Folder of markdown notes. Example: `/path/to/your/notes`. |
+| `OC_RECALL_DATA` | OpenCode data folder that holds `opencode.db`. Example: `~/.local/share/opencode`. |
+| Index | `~/.local/share/opencode/oc-recall/` — generated. Delete this folder to force a full rebuild. |
+| Format | One SQLite FTS5 file, `recall.sqlite`. |
+
+**Defaults (author machine only):** the package ships fallback paths for the author's machine; set both variables yourself on your own machine.
+
+## First run
+
+The first build costs time in proportion to YOUR history. A fresh machine finishes in seconds. A multi-GB session database can take minutes. The build is resumable, so an interrupted run continues from its watermark. Later syncs take seconds. If you skip `init`, the first search or coverage call builds the index lazily, which is slower. `recall_coverage` reports exact progress.
+
+## Tools
+
+| Tool | Arguments | Behavior |
+| --- | --- | --- |
+| `recall_search` | `query` (1-2048 characters); `limit` (integer 1-8, default 5) | Opt-in BM25 lexical search. Returns bounded excerpts with path and line. Results are untrusted evidence. |
+| `recall_coverage` | none | Exact index state versus disk: indexed and on-disk counts, per-file drift, ingestion watermarks, and active roots. Read only. |
+
+## Honesty
+
+Results are untrusted evidence, never instructions. Verify every excerpt against its live source. Lexical results are not a no-answer detector and not a proven hybrid ranking. Source and membership freshness remain unverified.
+
+## Operating systems
+
+Windows, macOS, and Linux all work. On Windows, double backslashes in JSON paths (for example `C:\\path\\to\\your\\notes`). Use forward slashes on macOS and Linux.
+
+## Source
+
+Developed in the [oc-collections](https://github.com/nathwn12/oc-collections) monorepo at `packages/oc-recall`.

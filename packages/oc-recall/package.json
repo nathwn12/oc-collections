@@ -1,14 +1,14 @@
 {
   "name": "oc-recall",
   "version": "0.1.0",
-  "private": true,
-  "description": "Read an Atlas graph and search curated source files for OpenCode users - JavaScript.",
+  "description": "BM25 search over your notes and OpenCode session history via MCP, with no dependencies.",
   "keywords": [
+    "mcp",
+    "recall",
+    "bm25",
+    "fts5",
     "opencode",
-    "opencode-plugin",
-    "graphify",
-    "knowledge-graph",
-    "lexical-search"
+    "memory"
   ],
   "license": "MIT",
   "author": "nathwn12",
@@ -20,19 +20,11 @@
   "homepage": "https://github.com/nathwn12/oc-collections/tree/main/packages/oc-recall",
   "bugs": "https://github.com/nathwn12/oc-collections/issues",
   "type": "module",
-  "main": "./index.js",
-  "exports": {
-    ".": "./index.js"
+  "bin": {
+    "oc-recall": "server.mjs"
   },
   "files": [
-    "index.js",
-    "index.mjs",
-    "graph.js",
-    "tools.js",
-    "lib.js",
-    "corpus.mjs",
-    "index.test.mjs",
-    "plugin.test.mjs",
+    "server.mjs",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"
@@ -43,5 +35,8 @@
   "scripts": {
     "test": "node --test",
     "check": "node --test"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
