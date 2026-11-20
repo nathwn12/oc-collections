@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-11-20
+
+Delivery moves off the user prompt and onto the host's synthetic route.
+
+### Changed
+
+- `talk_send` admits `POST /api/session/{id}/synthetic` instead of `POST /api/session/{id}/prompt`. The message is synthetic session input: it schedules the peer, is filed in its inbox as `type: synthetic`, and never renders as a TUI user turn. No `resume` flag is sent, so the host schedules execution.
+- Every message carries an envelope in `text`: sender id, sender title and the reply target, then a blank line and the caller's text. The same id and reply target ride in `metadata.ocTalk` with `version: "0.6.2"`, and a short `description` names the sender's title. The envelope stays in `text` because metadata is not guaranteed to reach the model's context.
+- `talk_send` reports `from: {sessionID, title}` and `replyTo`. A caller the host does not expose keeps the old bare-text payload and reports `from: null` and `replyTo: null`. A text that already opens with `[oc-talk] from ` is not wrapped again.
+- `wait` returns only messages newer than the pre-send baseline, oldest first, as `{role, text}`, capped at 20. The sender's own delivery is excluded.
+
+### Compatibility
+
+- A call no longer triggers a user prompt in the target session. Code that relied on a peer seeing a user turn must read the synthetic mail with `talk_inbox`.
+
 ## [0.6.1] - 2026-11-17
 
 ### Changed

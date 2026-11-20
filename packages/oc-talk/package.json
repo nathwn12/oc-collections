@@ -1,7 +1,7 @@
 {
   "name": "oc-talk",
   "version": "0.6.2",
-  "description": "Cross-session talk for any OpenCode harness: send one message into a peer session and read what it said.",
+  "description": "Two-way synthetic messaging between OpenCode sessions: send an addressed note into a peer and read the reply.",
   "keywords": [
     "opencode",
     "opencode-plugin",
@@ -9,7 +9,9 @@
     "session",
     "sessions",
     "agent",
-    "messaging"
+    "messaging",
+    "synthetic",
+    "cross-session"
   ],
   "license": "MIT",
   "author": "nathwn12",

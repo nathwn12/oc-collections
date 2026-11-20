@@ -1,6 +1,6 @@
 <h1 align="center">oc-talk</h1>
 
-<p align="center"><strong>Cross-session messaging for OpenCode: send one message into any live session and read what it said back.</strong></p>
+<p align="center"><strong>Two-way cross-session messaging for OpenCode: send an addressed synthetic note to a live session and read the reply.</strong></p>
 
 <p align="center">
   <a href="https://www.npmjs.com/package/oc-talk"><img src="https://img.shields.io/npm/v/oc-talk" alt="npm version"></a>
@@ -9,49 +9,65 @@
   <a href="https://github.com/nathwn12/oc-collections/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT"></a>
 </p>
 
-## Why
-
-A dispatcher often needs to hand a task to a lane that is already running, then read what came back. `oc-talk` gives the agent two tools for that without a child process, a shell, or a second dependency: one to deliver the message, one to read the session.
-
-Every send steers into the target's current turn. A request that names another lane fails instead of being reinterpreted, so the meaning of what you wrote cannot change in transit. Failures are typed JSON payloads, never throws.
-
 ## Install
 
-The package is published on npm. Add it to the `plugins` array in your `opencode.jsonc` and restart OpenCode:
+Add the plugin to `~/.config/opencode/opencode.jsonc` and restart OpenCode:
 
 ```json
-{ "plugins": ["oc-talk@0.6.1"] }
+{ "plugins": ["oc-talk@0.6.2"] }
 ```
 
-The plugin registers both tools when the session starts and reaches the server OpenCode already runs over loopback HTTP.
+The plugin reads the harness service state and needs no other config.
 
-## Use
+## Use it
 
-Deliver a message, then read the session:
+Send a message, then read the session:
 
 ```text
 talk_send { "session": "build lane", "text": "Run the tests and report failures." }
-→ { "id": "msg_0f3c…", "sessionID": "ses_9a1…", "delivered": true,
-    "delivery": "steer", "deliveryReason": "default" }
+→ { "id": "msg_0f3c…", "sessionID": "ses_9a1…", "from": { "sessionID": "ses_caller", "title": "dispatcher" }, "replyTo": "ses_caller", "delivered": true }
 
-talk_inbox { "session": "build lane", "limit": 20 }
-→ { "sessionID": "ses_9a1…", "messages": [ … ] }
+talk_inbox { "session": "ses_caller" }
+→ { "sessionID": "ses_caller", "messages": [ … ] }
 ```
 
-`talk_send` returns as soon as the message is admitted; it does not wait for an answer. Add a bounded `wait` to poll until the target reaches its next turn boundary. The reply reports `timedOut` and `waitedMs` rather than claiming a completion that never happened.
+The message enters the peer as synthetic session input: it schedules the peer, is filed in its inbox as `type: synthetic`, and never renders as a user turn. The text carries an envelope with the sender id, sender title and reply target; the same fields ride in `metadata.ocTalk`. Metadata is not guaranteed to reach the model, so the envelope lives in the text.
 
-`talk_inbox` reads `{id, role, text, tools, time}` messages. It defaults to the calling session, pages with `cursor`, filters with `since` and `type`, and blocks with `wait`. An unknown or ambiguous title returns the candidate list as data.
+## Tools
 
-## Configure
+- `talk_send` — deliver one message into a session by id (`ses_...`) or unique title. It admits `POST /api/session/{id}/synthetic`, reports `{id, sessionID, title, from, replyTo, delivered, delivery, deliveryReason}`, and accepts an optional `wait` that returns only messages newer than the send. `delivery: "steer"` is accepted; `delivery: "queue"` is a typed `bad_request`. A leading `[steer]` or `STEER:` is stripped.
+- `talk_inbox` — read any session's messages as `{id, role, text, tools, time}`, newest first, default 20, including synthetic peer mail. `session` defaults to the calling session; `since` keeps only newer messages, `type` filters, `cursor` pages, and `wait` blocks until the session idles again. Unknown or ambiguous titles return candidates, never a guess.
 
-No config file. The `plugins` entry above is the whole setup.
-
-`delivery: "steer"` is accepted and changes nothing. `delivery: "queue"` is a typed `bad_request` — `queue removed; oc-talk is steer-only`. A leading `[steer]` or `STEER:` is stripped before delivery; `[queue]` and `QUEUE:` are delivered as written.
+Both tools work across sessions, subagents and agents: a reply is a real synthetic message back to the sender.
 
 ## Requirements
 
 - OpenCode V2.
 - Node 22 or newer.
+- The harness's own local service with a readable state file. No network, no telemetry.
+
+## Development
+
+From `packages/oc-talk`:
+
+```text
+node --test "test/**/*.test.js"
+OC_TALK_LIVE=1 node --test "test/**/*.test.js"
+```
+
+```text
+src/index.js           plugin and the two tools
+src/transport.mjs      the only HTTP client
+test/plugin.test.js    offline tool contracts
+test/transport.test.js wire shape and credential redaction
+test/live.test.js      opt-in service probe
+package.json           manifest
+README.md              this file
+```
+
+## Status
+
+**Unverified** — as-is, use at your own risk.
 
 ## Links
 

@@ -433,16 +433,16 @@ async function ensureTools(ctx) {
     tools.add({
       name: 'talk_send',
       description:
-        'Deliver one text message into another session by id (ses_...) or unambiguous title substring; every send steers into the target\'s current turn at its next step boundary, and a leading `[steer]` or `STEER:` marker is stripped before delivery. ' +
-        'Fire to hand work or correct a peer mid-turn: the call is admitted in milliseconds rather than answered, and an optional `wait` seconds only polls afterwards for the target\'s next turn boundary and returns what it said. ' +
+        'Deliver one text message into another session by id (ses_...) or unambiguous title substring as synthetic session input: it schedules the peer, appears in its inbox as a synthetic note, and never renders as a TUI user turn. ' +
+        'The text carries an envelope with your session id, title and reply target so the peer can answer with talk_send, and metadata.ocTalk carries the same fields for tools; `wait` seconds returns only messages newer than this send. ' +
         'Never guesses: an unknown or ambiguous title returns the candidate list as data.',
       input: {
         type: 'object',
         properties: {
           session: { type: 'string', description: 'Session id (ses_...) or exact title substring' },
           text: { type: 'string', description: 'Message text; a leading [steer] or STEER: marker is stripped before delivery' },
-          delivery: { type: 'string', enum: DELIVERY_VALUES, description: 'Always steer: the message reaches the target\'s current turn at its next step boundary; queue delivery is removed' },
-          wait: { type: 'number', description: 'Seconds to poll after sending for the target\'s next turn boundary; the lane is unchanged; default 0 (never block)' },
+          delivery: { type: 'string', enum: DELIVERY_VALUES, description: 'Always steer: the synthetic note is admitted with delivery "steer"; queue delivery is removed' },
+          wait: { type: 'number', description: 'Seconds to return only messages newer than this send after admission; default 0 (never block)' },
         },
         required: ['session', 'text'],
         additionalProperties: false,
@@ -562,9 +562,9 @@ async function ensureTools(ctx) {
     tools.add({
       name: 'talk_inbox',
       description:
-        'Read one session\'s messages as id, role, text, tools and time, newest first, default 20; `session` defaults to the session that called this tool, `since` keeps only what is newer, and `cursor` pages. ' +
-        'Fire to see what a peer said or what your own conversation has produced; with `wait` seconds it blocks until the session reaches a turn boundary first. ' +
-        'Reads only: it never sends, wakes, or steers the other session, and an unknown title returns candidates instead of a guess.',
+        'Read one session\'s messages as id, role, text, tools and time, newest first, default 20; peer mail arrives as synthetic notes carrying the `[oc-talk] from` envelope, and `session` defaults to the session that called this tool. ' +
+        '`since` keeps only what is newer, `type` filters, `cursor` pages, and `wait` seconds blocks until the session idles again before reading. ' +
+        'Reads only: it never sends, wakes, or steers another session, and an unknown title returns candidates instead of a guess.',
       input: {
         type: 'object',
         properties: {
@@ -572,7 +572,7 @@ async function ensureTools(ctx) {
           since: { type: 'string', description: 'A message id to read newer than, or an opaque cursor from a previous talk_inbox' },
           limit: { type: 'number', description: 'Messages to return, default 20, max 100' },
           type: { type: 'string', description: 'Only messages of this type, e.g. assistant, user, idle' },
-          wait: { type: 'number', description: 'Seconds to block until the session reaches a turn boundary before reading; default 0' },
+          wait: { type: 'number', description: 'Seconds to block until the session idles again before reading; default 0' },
         },
         additionalProperties: false,
       },
