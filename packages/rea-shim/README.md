@@ -1,6 +1,17 @@
-# rea-shim
+<h1 align="center">rea-shim</h1>
 
-A one-line MCP launcher that serves upstream `rea` reverse-engineering tools over stdio, and can install the exact JDK and Ghidra that upstream release requires.
+<p align="center"><strong>A one-line MCP launcher for upstream rea, with an optional bootstrap for its exact JDK and Ghidra.</strong></p>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/rea-shim"><img src="https://img.shields.io/npm/v/rea-shim" alt="npm version"></a>
+  <img src="https://img.shields.io/badge/platform-windows--64bit-2b3137?logo=windows&amp;logoColor=white" alt="platform">
+</p>
+
+## Why
+
+Upstream `rea` needs a matching Ghidra and JDK, and a wrong pair wastes an afternoon. `rea-shim` resolves them from the installed upstream release's own policy — there is no shim version table to go stale. It serves the upstream agents over stdio without vendoring their code, and verifies every archive against the SHA-256 in official release data before extracting it.
+
+Extraction refuses an archive without one top-level directory and rejects links, junctions and reparse points before and after the fact. A foreign install or a mismatched cache entry is reported and preserved, never overwritten.
 
 ## Install
 
@@ -23,32 +34,29 @@ Point your MCP client at the same command with no flag to serve. `--print-config
 }
 ```
 
-## What you get
+## Use
 
-| Capability | What it does for you |
-| --- | --- |
-| One-line launcher | Resolves your Ghidra and a matching JDK, then serves upstream `rea` over stdio as its child. |
-| `--doctor` | Prints node, the Ghidra dir, the declared Java requirement, the JDK home and major, the upstream version, and the exact child command — read-only, exit `0` or `2`. |
-| `--print-config` | Prints the `opencode.jsonc` block for this machine, byte for byte what your client reads. |
-| `--bootstrap` | Installs the exact upstream release, the Ghidra line it declares, and the JDK that Ghidra needs. The only mutating command. |
-| Follows upstream | Takes the Ghidra line from the exact installed upstream release's own policy and the JDK floor from the installed Ghidra, with no shim version table. |
-| Verified artifacts | Checks every archive against the SHA-256 published in official release data before extracting it. |
-| Safe extraction | Refuses an archive without one top-level directory, and refuses links, junctions and reparse points before and after extraction. |
-| Never overwrites | A foreign install, a pre-existing download destination or a mismatched cache entry is reported and preserved. |
-| Ships no upstream code | Resolves the upstream agents at run time; nothing of theirs is vendored here. |
+- `--doctor` prints node, the Ghidra dir, the declared Java requirement, the JDK home and major, the upstream version, and the exact child command. It is read-only and exits `0` or `2`.
+- `--print-config` prints the `opencode.jsonc` block for this machine, byte for byte what your client reads.
+- `--bootstrap` installs the exact upstream release, the Ghidra line it declares, and the JDK Ghidra needs. This is the only mutating command.
+
+With no flag, the shim serves upstream `rea` over stdio as its child.
+
+## Configure
+
+No config file. The command line is the surface. `--bootstrap` derives the Ghidra line and the JDK floor from the installed upstream release, so there is nothing to pin by hand. The environment variables are listed in the guide.
 
 ## Requirements
 
-Windows x64, with Node matching the current upstream `rea-agents` release, plus a Ghidra install and a full JDK satisfying that Ghidra's declared bounds — or run `--bootstrap`.
+- Windows x64.
+- Node matching the current upstream `rea-agents` release.
+- A Ghidra install and a full JDK satisfying that Ghidra's declared bounds, or run `--bootstrap` to install both.
 
-## Going deeper
+## Links
 
-The manual at <https://github.com/nathwn12/oc-collections/blob/main/packages/rea-shim/docs/GUIDE.md> covers every command and exit code, the four environment variables, what `--bootstrap` installs and verifies, the discovery order, and what the package deliberately does not ship.
+- [Issues](https://github.com/nathwn12/oc-collections/issues)
+- [Releases](https://github.com/nathwn12/oc-collections/releases)
+- [Guide](https://github.com/nathwn12/oc-collections/blob/main/packages/rea-shim/docs/GUIDE.md)
+- [MIT licence](https://github.com/nathwn12/oc-collections/blob/main/LICENSE)
 
-<!-- nathwn12 house footer: identical in every repo. Do not edit. -->
-<p align="center">
-  <a href="https://github.com/nathwn12"><img src="assets/signature.svg" width="96" alt="nathwn12" /></a>
-</p>
-<p align="center">
-  <sub>Built by <a href="https://github.com/nathwn12">nathwn12</a> · <a href="https://github.com/nathwn12?tab=repositories">All projects</a></sub>
-</p>
+<p align="center"><sub>Built by nathwn12</sub></p>
