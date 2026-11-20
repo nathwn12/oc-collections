@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-11-15
+
 ### Added
 
 - `janua run`, a one-shot command runner: one call starts a fresh PTY, writes optional `stdin`, and returns
