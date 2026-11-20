@@ -9,6 +9,7 @@
 // defaults below, so the rail always renders and a typo can never break the TUI.
 
 import { DEFAULT_PLACEHOLDER, canonicalField, isStatField, STAT_FIELDS } from "./stats.js";
+import { defaultLifetimeTotalsPath } from "./lifetime-totals.js";
 import type { CautionThresholds } from "./caution.js";
 import type { DurationStyle, TimestampDateStyle, TimestampTimeStyle } from "./format.js";
 import {
@@ -289,6 +290,12 @@ export interface FlightDeckConfig {
    * it needs a tick. `0` turns the ticker off, leaving every row event-driven.
    */
   readonly refresh: number;
+  /**
+   * Path to the durable lifetime-totals ledger. Ships as
+   * `~/.local/share/opencode/flight-deck/totals.json`; a host config can point
+   * it at another file, which is also the test seam.
+   */
+  readonly lifetimeTotalsPath: string;
 }
 
 /** The millisecond view the rules in ./caution.ts operate on. */
@@ -545,6 +552,7 @@ export const DEFAULT_CONFIG: FlightDeckConfig = {
   glyphs: DEFAULT_GLYPHS,
   style: DEFAULT_STYLE,
   refresh: DEFAULT_REFRESH_MS,
+  lifetimeTotalsPath: defaultLifetimeTotalsPath(),
 };
 
 /** Layout guards: keep a hand-edited config from producing an unusable rail. */
@@ -922,6 +930,22 @@ type SectionKey = "sidebar" | "footer" | "caution" | "notifications" | "layout" 
 function sectionOf(options: Record<string, unknown>, key: SectionKey): Record<string, unknown> {
   const value = options[key];
   return isRecord(value) ? value : {};
+}
+
+/**
+ * Optional override for the durable lifetime-totals file.
+ *
+ * A non-empty string is used as given; an absent key leaves the module's
+ * shipped path alone. A malformed key is reported and ignored, like every
+ * other option.
+ */
+function readLifetimeTotalsPath(value: unknown, issues: string[]): string {
+  if (value === undefined) return DEFAULT_CONFIG.lifetimeTotalsPath;
+  if (typeof value !== "string" || value.trim().length === 0) {
+    issues.push("lifetimeTotalsPath must be a non-empty string; using the default path");
+    return DEFAULT_CONFIG.lifetimeTotalsPath;
+  }
+  return value.trim();
 }
 
 /**
@@ -1594,6 +1618,7 @@ export function resolveConfig(options: unknown): ConfigResolution {
       glyphs: readGlyphs(glyphs, issues),
       style: readStyle(style, issues),
       refresh: readRefresh(options.refresh, issues),
+      lifetimeTotalsPath: readLifetimeTotalsPath(options.lifetimeTotalsPath, issues),
     },
     issues,
   };

@@ -36,12 +36,16 @@ afterEach(() => {
 function stubContext(options: Record<string, unknown> = {}) {
   const slots: { readonly path: string; readonly placement: string; readonly release: () => void }[] = [];
   const memoryCalls: string[] = [];
+  // Keep the lifetime ledger off the machine's real data path.
+  const totalsDirectory = mkdtempSync(join(tmpdir(), "flight-deck-scaffold-totals-"));
+  created.push(totalsDirectory);
+  const mergedOptions = { lifetimeTotalsPath: join(totalsDirectory, "totals.json"), ...options };
   // A workspace for `location.directory`; config isolation comes from the
   // `$XDG_CONFIG_HOME` the enclosing `beforeEach` points at a throwaway dir.
   const directory = mkdtempSync(join(tmpdir(), "flight-deck-scaffold-"));
   created.push(directory);
   const context = {
-    options,
+    options: mergedOptions,
     location: { directory },
     theme: { text: { default: "#ffffff", subdued: "#888888" } },
     data: {

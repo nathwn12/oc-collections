@@ -40,6 +40,11 @@ export interface StatSource {
    */
   readonly sessionId?: unknown;
   readonly tree?: unknown;
+  /**
+   * The durable high-water family figure for the lifetime row, when the host's
+   * current `tree` has shrunk. Untrusted like every other field.
+   */
+  readonly lifetime?: unknown;
   readonly context?: unknown;
   readonly project?: unknown;
   readonly status?: unknown;

@@ -139,6 +139,14 @@ function harness(options: unknown, directory: string, session: unknown = undefin
   const claims: Claim[] = [];
   const toasts: string[] = [];
   const counts = { sessionList: 0, modelList: 0 };
+  // Every render gets its own ledger, so a lifetime figure recorded here can
+  // never leak into the machine's real path or into another test.
+  const totalsDirectory = mkdtempSync(join(tmpdir(), "flight-deck-render-totals-"));
+  created.push(totalsDirectory);
+  const mergedOptions = {
+    lifetimeTotalsPath: join(totalsDirectory, "totals.json"),
+    ...((options ?? {}) as Record<string, unknown>),
+  };
   // The fake host event bus for the realtime tracker: `emit` delivers one
   // delta event on the host's own clock, so tests inject a stream without
   // sleeping.
@@ -149,7 +157,7 @@ function harness(options: unknown, directory: string, session: unknown = undefin
     }
   };
   const context = {
-    options,
+    options: mergedOptions,
     location: { directory },
     renderer: extras.renderer,
     theme: { text: { default: "#ffffff", subdued: "#888888" } },

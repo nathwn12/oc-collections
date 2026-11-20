@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The `total` row is now a durable high-water mark: the highest family figure seen for a session root is kept under `~/.local/share/opencode/flight-deck/totals.json`, so restarts and host pruning cannot lower it. The current-model spend row is unchanged.
+
 ### Changed
 
 - Every numeric sidebar row now draws an honest zero instead of hiding or drawing a placeholder. The `tps` row sticks at `0 <label>` when nothing generates; observed TTFT rides only while a rate stands. The default `sidebar.placeholder` is now `0` for the text rows that still need one.

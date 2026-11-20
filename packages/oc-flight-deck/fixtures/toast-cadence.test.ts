@@ -30,8 +30,10 @@ afterEach(() => {
 });
 
 function fakeContext(options: unknown): Parameters<typeof flightDeck.setup>[0] {
+  const totalsDirectory = mkdtempSync(join(tmpdir(), "flight-deck-toast-totals-"));
+  created.push(totalsDirectory);
   return {
-    options,
+    options: { lifetimeTotalsPath: join(totalsDirectory, "totals.json"), ...((options ?? {}) as Record<string, unknown>) },
     location: { directory: "/tmp" },
     theme: { text: {} },
     data: {

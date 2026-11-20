@@ -22,6 +22,7 @@ import { startGoBridge } from "./go.js";
 import { startCodexQuota } from "./codex-quota.js";
 import { startTicker } from "./ticker.js";
 import { asCount, asRecord, type SessionLike } from "./coerce.js";
+import { createLifetimeTotals } from "./lifetime-totals.js";
 import { createProjectTotals } from "./project-totals.js";
 import { createRealtimeTps } from "./realtime-tps.js";
 import { createSessionReads, locationOf } from "./session-reads.js";
@@ -175,6 +176,10 @@ export default Plugin.define({
 
     const { projectTotals } = createProjectTotals(context);
 
+    // The lifetime figure is a high-water mark, not just the host's current
+    // family roll-up. This ledger is the only durable state the rail keeps.
+    const lifetimeTotals = createLifetimeTotals({ path: config.lifetimeTotalsPath });
+
     const cautionThreshold = cautionThresholds(config.caution);
 
     const cautionsOf = (sessionID: string, now: number): Caution[] =>
@@ -315,6 +320,30 @@ export default Plugin.define({
       const ownCost = wantsUsage ? sessionCost(sessionID, session as SessionLike | undefined) : undefined;
       const tree = wantsUsage ? treeTotals(sessionID) : undefined;
 
+      // The lifetime figure is a high-water mark. Resolve the family root the
+      // same way treeTotals does, read what earlier ticks recorded, and raise
+      // the stored figure when the host currently reports more. Only `lifetime`
+      // carries the raised number: `tree` stays the live roll-up so the cost
+      // row keeps naming the current model's spend alone.
+      let lifetime: { cost: number; count: number; kind: string } | undefined;
+      if (wantsUsage) {
+        let root = sessionID;
+        try {
+          root = context.data.session.root(sessionID) ?? sessionID;
+        } catch {
+          root = sessionID;
+        }
+        const stored = lifetimeTotals.read(root);
+        const live = tree?.cost;
+        if (live !== undefined && (stored === undefined || live > stored)) {
+          lifetimeTotals.record(root, live);
+        }
+        const high = Math.max(live ?? 0, stored ?? 0);
+        if (live !== undefined || stored !== undefined) {
+          lifetime = { cost: high, count: tree?.count ?? 0, kind: tree?.kind ?? "bounded" };
+        }
+      }
+
       return {
         ...session,
         cost: ownCost?.cost,
@@ -323,6 +352,7 @@ export default Plugin.define({
         caution: wants("caution") ? announce(sessionID) : undefined,
         branch: wants("branch") ? branchOf(location) : undefined,
         tree,
+        lifetime,
         context: wants("context") ? contextUsage(sessionID, session?.model) : undefined,
         project: wants("project") ? projectTotals(sessionID) : undefined,
         status: wants("status") ? statusOf(sessionID) : undefined,

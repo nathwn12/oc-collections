@@ -89,6 +89,7 @@ One global file: `~/.config/opencode/flight-deck.jsonc`. The `.json` name is als
 
 | Key | Default | Effect |
 | --- | --- | --- |
+| **`lifetimeTotalsPath`** | `~/.local/share/opencode/flight-deck/totals.json` | Optional file for the lifetime total's high-water mark. A non-empty string overrides it; malformed values fall back and are reported. |
 | **`sidebar.enabled`** | `true` | `false` leaves the plugin loaded but invisible. |
 | **`sidebar.rows`** | `["status","agent","model","cost","project","tokens","cache","context","perms","elapsed","tps"]` | Live rows, top to bottom, any subset in any order. Max 24 names; unknown names are ignored with a one-time warning. |
 | **`sidebar.lines`** | `[]` | Fixed lines above the rows. Max 24. These plus rows share the rail cap (`maxLines`); fixed lines render at full brightness while live rows are dimmed. |
@@ -176,7 +177,7 @@ Every name `sidebar.rows` accepts, what its number means, and whether it draws b
 | `model` | Model id, plus ` · variant` when one is present. | yes |
 | `branch` | Current git branch. Costs a VCS call. | opt-in |
 | `cost` | Money for this conversation plus its subagent tree. With `total` on the rail, this row shows the session's own figure. Merged shape `$1.84 · 3 subagents`; childless shows `$1.84`. | yes |
-| `total` | Family total plus subagent count, `$1.84 · 0 subagents` when childless. | opt-in |
+| `total` | Family total plus subagent count, `$1.84 · 0 subagents` when childless. A durable high-water mark: the highest figure seen for the family root is kept in `~/.local/share/opencode/flight-deck/totals.json`, so a restart or host pruning cannot lower the row. | opt-in |
 | `project` | Every session in the project: `$12.40 · 21 sessions` when more than one, else just the figure. | yes |
 | `tokens` | `1.2M in · 84k out`, same family scope as `cost`. | yes |
 | `cache` | `92% hit · 1.1M read`, family scope. The hit-rate denominator is cache read plus input; cache write is excluded because a write is not a lookup. A zero read is drawn (`0 read`, or `0% hit · 0 read` when input exists), never hidden. | yes |

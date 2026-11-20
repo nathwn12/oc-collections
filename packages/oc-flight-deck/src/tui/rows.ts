@@ -383,11 +383,15 @@ export function statLine(
       // have a hole in it. With no family record at all it still draws the
       // honest zero: this is a numeric row, so it never blanks or falls back
       // to the placeholder.
-      const tree = asRecord(source.tree);
-      const cost = asCount(tree?.cost) ?? 0;
-      const count = asCount(tree?.count) ?? 0;
+      const live = asRecord(source.tree);
+      const durable = asRecord(source.lifetime);
+      // The durable high-water wins over the host's current roll-up so the
+      // lifetime never shrinks. The cost row keeps reading `tree` alone, so
+      // raising this figure cannot change the current model's spend.
+      const cost = asCount(durable?.cost) ?? asCount(live?.cost) ?? 0;
+      const count = asCount(live?.count) ?? 0;
       const plural = count === 1 ? "subagent" : "subagents";
-      return row("total", `${feeMark(tree?.kind)}${formatCost(cost)} · ${count} ${plural}`);
+      return row("total", `${feeMark(durable?.kind ?? live?.kind)}${formatCost(cost)} · ${count} ${plural}`);
     }
     case "project": {
       const project = asRecord(source.project);

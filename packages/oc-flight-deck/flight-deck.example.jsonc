@@ -53,6 +53,11 @@
   // host's renderer, so a smaller value spends work without adding motion.
   "refresh": 100,
 
+  // Optional: where the durable high-water lifetime total is kept. Omit it to
+  // use `~/.local/share/opencode/flight-deck/totals.json`. A non-empty string
+  // is used as given; malformed values are reported and the default is used.
+  // ,"lifetimeTotalsPath": "/tmp/flight-deck-totals.json",
+
   // ── Sidebar ──────────────────────────────────────────────────────────────
   "sidebar": {
     // false hides the whole panel.

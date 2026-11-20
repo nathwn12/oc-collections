@@ -19,6 +19,12 @@
       "description": "Milliseconds between ticks. Cost and tokens arrive with host events; anything derived from the clock — `elapsed`, the status spinner, and the caution thresholds — needs this timer. 100 turns the spinner once a second. 0 turns the ticker off entirely, which also freezes the annunciator (it works, but only updates on host events). Practical range 16–1000; 1–15 are treated as 16, while 0 is the deliberate off switch and is never clamped."
     },
 
+    "lifetimeTotalsPath": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Optional path to the durable high-water ledger for the `total` row. Leave it out to use `~/.local/share/opencode/flight-deck/totals.json`. A non-empty string is used as given; a malformed value is reported and the default path is used. Entries in this file are never deleted or expired."
+    },
+
     "sidebar": {
       "type": "object",
       "additionalProperties": false,
