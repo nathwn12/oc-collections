@@ -2,68 +2,56 @@
 
 <p align="center"><strong>See every loaded OpenCode server plugin in the sidebar, without opening a dialog.</strong></p>
 
+<p align="center">
+  <a href="https://www.npmjs.com/package/oc-plugin-view"><img src="https://img.shields.io/npm/v/oc-plugin-view" alt="npm version"></a>
+  <img src="https://img.shields.io/badge/platform-windows--linux-2b3137" alt="platform">
+  <a href="https://github.com/nathwn12/oc-collections/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT"></a>
+</p>
+
+## Why
+
+The plugin manager hides its list behind a dialog. `oc-plugin-view` puts the loaded plugins in a sidebar section with their state, so you can see at a glance which ones the server actually mounted. It ships a no-op server entry next to the TUI export; that is what places the section in the plugin order.
+
 ## Install
 
 ```sh
 opencode plugin add oc-plugin-view
 ```
 
-Restart OpenCode. The plugin loads on the next start.
-
-List this package before any other sidebar TUI plugin to keep its Plugins section above other sidebar rows:
+Restart OpenCode. List this package before any other sidebar TUI plugin to keep its Plugins section above other rows:
 
 ```jsonc
 {
-  "plugins": ["oc-plugin-view", "another-plugin@1.0.0"]
+  "plugins": ["oc-plugin-view", "another-plugin"]
 }
 ```
 
-The package ships a no-op server entry next to the TUI export, so the TUI half is loaded from the server plugin list; that is what places it in the ordering above.
+## Use
 
-## Uninstall
+The section appears when at least one other package or local server plugin is installed. It excludes its own entries, so with no other plugin installed the section is hidden. Each row shows a state:
 
-```sh
-opencode plugin remove oc-plugin-view
-```
+- **Active** — the server loaded the plugin; a green bullet.
+- **Error** — the server failed to load it; a red bullet.
 
-Restart OpenCode. To disable without uninstalling, remove the entry from the `plugins` array in `opencode.jsonc` and restart.
+Click a row to open OpenCode's native plugin manager at `plugins.list`. With more than two rows, click the section header to collapse or expand it. The collapsed header reads `Plugins (N active)` or `Plugins (N active, M errors)`, and the choice persists across restarts.
 
-## Usage
+Builtin and SDK entries are not listed; only package and local file sources are, excluding any id or path that names `oc-plugin-view`.
 
-The section appears in the sidebar when at least one package or local server plugin besides this one is installed. With no other package plugin installed the section is hidden: the plugin excludes its own entries. It lists the plugin label and its state:
+## Configure
 
-- **Active** — the server loaded the plugin. The row carries a green bullet.
-- **Error** — the server failed to load the plugin. The row carries a red bullet.
+No config file. Order is set by where the entry sits in the `plugins` array. To disable, remove that entry and restart. To remove the package entirely, run `opencode plugin remove oc-plugin-view` and restart.
 
-Click a row to open OpenCode's native plugin manager at `plugins.list`. When more than two plugins are listed, click the section header to collapse or expand it. The collapsed header reads `Plugins (N active)` when nothing failed and `Plugins (N active, M error)` or `Plugins (N active, M errors)` when entries failed, and the open/closed choice persists across restarts.
+## Requirements
 
-Builtin and SDK entries are not listed. Only plugins from a package source or a local file are shown, excluding any entry whose id, source target, or source path names `oc-plugin-view`.
-
-## How it looks
-
-```text
-▼ Plugins
-• @scope/good-plugin             Active
-• @scope/broken-plugin           Error
-• ./local-plugin.ts              Active
-```
-
-A collapsed section with three entries reads:
-
-```text
-▶ Plugins (2 active, 1 error)
-```
-
-## Compatibility
-
-- OpenCode 2.2.6 V2 CLI and TUI (`@opencode/plugin/tui` 2.2.6).
+- OpenCode 2.2.6 V2 CLI and TUI.
 - `@opentui/core` and `@opentui/solid` 0.8.0 or newer; `solid-js` 1.9.0 or newer.
-- TUI plus a no-op server entrypoint; the server entry carries `features.tui` from the package root and renders nothing.
+- Node 22 or newer, or Bun 1.4 or newer.
 
-<!-- nathwn12 house footer: identical in every repo. Do not edit. -->
-<p align="center">
-  <a href="https://github.com/nathwn12"><img src="assets/signature.svg" width="96" alt="nathwn12" /></a>
-</p>
-<p align="center">
-  <sub>Built by <a href="https://github.com/nathwn12">nathwn12</a> · <a href="https://github.com/nathwn12?tab=repositories">All projects</a></sub>
-</p>
+## Links
+
+- [Issues](https://github.com/nathwn12/oc-collections/issues)
+- [Releases](https://github.com/nathwn12/oc-collections/releases)
+- [Package source](https://github.com/nathwn12/oc-collections/tree/main/packages/oc-plugin-view)
+- [MIT licence](https://github.com/nathwn12/oc-collections/blob/main/LICENSE)
+
+<p align="center"><sub>Built by nathwn12</sub></p>

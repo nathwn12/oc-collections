@@ -1,6 +1,22 @@
-# oc-harness-setup
+<p align="center">
+  <img src="https://raw.githubusercontent.com/nathwn12/oc-collections/main/packages/oc-harness-setup/assets/icon.svg" width="120" height="120" alt="oc-harness-setup icon" />
+</p>
 
-A compact OpenCode starter that runs a real loop, researches before it claims, keeps a ledger, cleans up after itself, and grows the next skill you need.
+<h1 align="center">oc-harness-setup</h1>
+
+<p align="center"><strong>A consent-first OpenCode starter for Windows: ten seats, six skills and a doctor gate in one command.</strong></p>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/oc-harness-setup"><img src="https://img.shields.io/npm/v/oc-harness-setup" alt="npm version"></a>
+  <img src="https://img.shields.io/badge/platform-windows--64bit-2b3137?logo=windows&amp;logoColor=white" alt="platform">
+  <a href="https://github.com/nathwn12/oc-collections/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT"></a>
+</p>
+
+## Why
+
+A starter that writes files is only safe if you can see and undo what it does. `oc-harness-setup` prints a full manifest before anything moves and waits for you to type `y`. It gives every agent a trigger, an owned path set and a check, so a verdict never comes from the author. A doctor gate ends each run on an 18-law check that names the failing law and its fix.
+
+The install is reversible by journal: SHA-256 per file, so `--uninstall` restores what was there and removes exactly what it added.
 
 ## Install
 
@@ -8,33 +24,40 @@ A compact OpenCode starter that runs a real loop, researches before it claims, k
 npx --yes oc-harness-setup setup
 ```
 
-First run prints a manifest of everything it will touch and waits for you to type `y`.
+The first run prints the manifest of everything it will touch and waits for confirmation. `--dry-run` changes nothing at all.
 
-## What you get
+## Use
 
-| Capability | What it does for you |
+Run `setup` to install the starter, then answer `y` at the manifest. The pack puts ten seats on one routing table, six skills behind six commands, and twelve on-demand references loaded one at a time from an index.
+
+Afterwards:
+
+- `evolve` turns a repeated workflow into one skill, command, reference, seat, or config change.
+- `--uninstall` restores the pre-install state from the journal.
+- `--dry-run` shows the plan without writing.
+
+## Configure
+
+There is no config file to edit by hand. Your model, provider, keys, plugins and state are kept while the pack owns runtime policy. The command line is the surface:
+
+| Command | Effect |
 | --- | --- |
-| Ten seats on one routing table | Gives every agent a trigger, an owned path set, and a check, so the verdict never comes from the author. |
-| Six skills behind six commands | Ships close, evolve, fast, loop, search and swarm, each loadable on its own trigger. |
-| Twelve on-demand references | Loads one index and then only the file a rule names, instead of a wall of standing instructions. |
-| Doctor gate | Ends every setup run on an 18-law check that names the failing law and the fix. |
-| Consent-first install | Prints the full manifest before anything moves, and `--dry-run` changes nothing at all. |
-| Settings that survive | Keeps your model, provider, keys, plugins and state while the pack owns runtime policy. |
-| Reversible by journal | Records SHA-256 per file, so `--uninstall` restores what was there and removes exactly what it added. |
-| Grows with you | `evolve` turns a repeated workflow into one skill, command, reference, seat, or config change. |
+| `setup` | Install the starter behind the manifest and doctor gate. |
+| `evolve` | Grow the setup by one skill, command, reference, seat, or config change. |
+| `--dry-run` | Print the plan without writing. |
+| `--uninstall` | Restore files from the journal. |
 
 ## Requirements
 
-Windows 10/11 with Node.js 22 or newer and OpenCode 2.2.0 or newer: a 2.0/2.1 host warns before installing, and a 1.x host is refused before anything is written.
+- Windows 10 or 11.
+- Node.js 22 or newer.
+- OpenCode 2.2.0 or newer. A 2.0/2.1 host warns before installing; a 1.x host is refused before anything is written.
 
-## Going deeper
+## Links
 
-The manual at <https://github.com/nathwn12/oc-collections/blob/main/packages/oc-harness-setup/docs/GUIDE.md> covers the full command list and its exit codes, every environment variable, what the doctor gate checks, the safe upgrade path, and how `evolve` grows the setup.
+- [Issues](https://github.com/nathwn12/oc-collections/issues)
+- [Releases](https://github.com/nathwn12/oc-collections/releases)
+- [Guide](https://github.com/nathwn12/oc-collections/blob/main/packages/oc-harness-setup/docs/GUIDE.md)
+- [MIT licence](https://github.com/nathwn12/oc-collections/blob/main/LICENSE)
 
-<!-- nathwn12 house footer: identical in every repo. Do not edit. -->
-<p align="center">
-  <a href="https://github.com/nathwn12"><img src="assets/signature.svg" width="96" alt="nathwn12" /></a>
-</p>
-<p align="center">
-  <sub>Built by <a href="https://github.com/nathwn12">nathwn12</a> · <a href="https://github.com/nathwn12?tab=repositories">All projects</a></sub>
-</p>
+<p align="center"><sub>Built by nathwn12</sub></p>

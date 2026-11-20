@@ -1,10 +1,26 @@
-# oc-bifrost
+<p align="center">
+  <img src="https://raw.githubusercontent.com/nathwn12/oc-collections/main/packages/oc-bifrost/assets/icon.svg" width="120" height="120" alt="oc-bifrost icon" />
+</p>
 
-Runs your V1-era OpenCode plugins on OpenCode V2: supported hooks bridge across, the rest refuse out loud.
+<h1 align="center">oc-bifrost</h1>
+
+<p align="center"><strong>Run V1-era OpenCode plugins on OpenCode V2: supported hooks bridge across, the rest refuse out loud.</strong></p>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/@nathwn12/oc-bifrost"><img src="https://img.shields.io/npm/v/@nathwn12/oc-bifrost" alt="npm version"></a>
+  <img src="https://img.shields.io/badge/platform-windows--linux-2b3137" alt="platform">
+  <a href="https://github.com/nathwn12/oc-collections/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT"></a>
+</p>
+
+## Why
+
+The V1 plugin hook API does not mount unchanged on the V2 runtime. `oc-bifrost` takes 24 V1 hooks: 5 bridge fully, 10 bridge with a stated loss, and 9 refuse by design. A lost hook is named, never silently dropped.
+
+Every load prints one verdict per hook — `full`, `partial`, or `unsupported` — and mirrors it to a durable report file, because the host discards stdout in service and stdio modes. Four plugin sources are supported: a GitHub snapshot, a registry package, a local path, and the bundled offline `preset:rtk`.
 
 ## Install
 
-Add one entry to the `plugins` array in your `opencode.jsonc`, then restart OpenCode. OpenCode fetches the package itself, so you run no install command:
+Add one entry to the `plugins` array in your `opencode.jsonc` and restart OpenCode. OpenCode fetches the package itself; you run no install command:
 
 ```jsonc
 {
@@ -20,31 +36,36 @@ Add one entry to the `plugins` array in your `opencode.jsonc`, then restart Open
 }
 ```
 
-## What you get
+## Use
 
-| Capability | What it does for you |
+Name the plugins you want in the `plugins` option. A cold `github:` cache refuses until you set `trustRemote`, then pins the snapshot by commit and digest. Registry packages, local paths and `preset:rtk` need no remote trust.
+
+On each start, read the mount report. It gives one line per hook, so a `partial` or `unsupported` verdict tells you exactly what changed before you blame your own plugin. The same lines are written to the durable report file for headless runs.
+
+## Configure
+
+All settings live in the `options` object of the entry above:
+
+| Option | Effect |
 | --- | --- |
-| Hook-by-hook bridging | Takes 24 V1 hooks: 5 bridge fully, 10 bridge with a stated loss, 9 refuse by design. |
-| Shape-based routing | V1 factories and V1 modules mount through the bridge; V2 `{ id, setup }` definitions mount as-is; Effect-only definitions refuse out loud. |
-| Mount report | Prints one verdict per hook on every load — `full`, `partial`, `unsupported` — so a lost hook is named, never silently dropped. |
-| Durable report file | Mirrors every report line to a file, because the host discards stdout in service and stdio modes. |
-| Four plugin sources | Mounts a GitHub snapshot, a registry package, a local path, or the bundled offline `preset:rtk`. |
-| Consent-gated fetching | A cold `github:` cache refuses until you set `trustRemote`, then pins the snapshot by commit and digest. |
-| Dependency provisioning | Resolves snapshot dependencies from the host store, falls back to `npm install --no-save`, or does nothing, per `provision`. |
-| Stranded-file scan | Warns when a V1 plugin file sits in a discovery directory the host would reject before the bridge ever runs. |
+| `plugins` | The V1 plugins to mount. Accepts `github:`, registry, local path, and `preset:` sources. |
+| `trustRemote` | Allows a cold GitHub fetch. Without it the bridge refuses instead of fetching unverified code. |
+| `provision` | How snapshot dependencies are resolved: from the host store, an `npm install --no-save` fallback, or no action. |
+
+A stranded-file scan warns when a V1 plugin file sits in a discovery directory the host would reject before the bridge runs.
 
 ## Requirements
 
-OpenCode V2 (2.2.6 or newer) with Node 22 or later, on any platform the host runs on; the npm registry must be reachable for the first fetch.
+- OpenCode 2.2.6 or newer.
+- Node 22 or later.
+- The npm registry must be reachable for the first fetch of a registry or GitHub plugin.
 
-## Going deeper
+## Links
 
-The manual at <https://github.com/nathwn12/oc-collections/blob/main/packages/oc-bifrost/docs/GUIDE.md> covers the bridge contract hook by hook, every option and environment variable, the mount report, and what the bridge refuses.
+- [Issues](https://github.com/nathwn12/oc-collections/issues)
+- [Releases](https://github.com/nathwn12/oc-collections/releases)
+- [Guide](https://github.com/nathwn12/oc-collections/blob/main/packages/oc-bifrost/docs/GUIDE.md)
+- [Third-party notices](https://github.com/nathwn12/oc-collections/blob/main/packages/oc-bifrost/THIRD-PARTY-NOTICES.md)
+- [MIT licence](https://github.com/nathwn12/oc-collections/blob/main/LICENSE)
 
-<!-- nathwn12 house footer: identical in every repo. Do not edit. -->
-<p align="center">
-  <a href="https://github.com/nathwn12"><img src="assets/signature.svg" width="96" alt="nathwn12" /></a>
-</p>
-<p align="center">
-  <sub>Built by <a href="https://github.com/nathwn12">nathwn12</a> · <a href="https://github.com/nathwn12?tab=repositories">All projects</a></sub>
-</p>
+<p align="center"><sub>Built by nathwn12</sub></p>
