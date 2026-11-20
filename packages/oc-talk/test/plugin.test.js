@@ -254,7 +254,7 @@ function recorder(session = { id: 'ses_a', title: 'active work', location: { dir
         },
       };
     }
-    if (verb === 'post' && String(target).endsWith('/prompt')) {
+    if (verb === 'post' && String(target).endsWith('/synthetic')) {
       return { ok: true, json: { data: { id: 'msg_sent', sessionID: session.id, time: { created: 1 } } } };
     }
     return { ok: true, json: { data: {} } };
@@ -272,11 +272,17 @@ async function toolWith(name) {
   return { tool: added.find((t) => t.name === name), calls: rec.calls };
 }
 
-// The prompt body the backend actually received, parsed: the payload, not the
+// The synthetic body the backend actually received, parsed: the payload, not the
 // intent, is what these cases assert on.
-function promptBody(calls) {
-  const call = calls.find((a) => a[0] === 'post' && String(a[1]).endsWith('/prompt'));
+function syntheticBody(calls) {
+  const call = calls.find((a) => a[0] === 'post' && String(a[1]).endsWith('/synthetic'));
   return call ? JSON.parse(call[3]) : null;
+}
+
+// The exact envelope the tool must put in `text`. Spelled out so a drift in the
+// header, the reply line or the blank line is a red test.
+function envel(text, id = 'ses_caller', title = 'active work') {
+  return `[oc-talk] from ${id} "${title}"\nReply with talk_send(session="${id}", text="...").\n\n${text}`;
 }
 
 const CALLER = { sessionID: 'ses_caller', signal: undefined };
@@ -291,7 +297,7 @@ async function waitingTool() {
     calls.push(args);
     const [verb, target] = args;
     if (verb === 'session.get') return { ok: true, json: { data: { id: 'ses_a', title: 'active work' } } };
-    if (verb === 'post' && String(target).endsWith('/prompt')) {
+    if (verb === 'post' && String(target).endsWith('/synthetic')) {
       posted = true;
       return { ok: true, json: { data: { id: 'msg_sent', sessionID: 'ses_a' } } };
     }
@@ -344,13 +350,15 @@ test('every send steers, carries a client id, and returns the admission', async 
     id: 'msg_sent',
     sessionID: 'ses_a',
     title: 'active work',
+    from: { sessionID: 'ses_caller', title: 'active work' },
+    replyTo: 'ses_caller',
     delivered: true,
     delivery: 'steer',
     deliveryReason: 'default',
   });
 
-  const body = promptBody(calls);
-  assert.equal(body.text, 'do the thing');
+  const body = syntheticBody(calls);
+  assert.equal(body.text, envel('do the thing'));
   assert.equal(body.delivery, 'steer', 'there is one lane, and it is on the wire');
   assert.equal(body.resume, undefined, 'the admission shape carries no resume flag');
   assert.match(body.id, /^msg_[0-9a-f]{32}$/, 'the id is a client-generated msg id, so a retry is idempotent');
@@ -358,8 +366,128 @@ test('every send steers, carries a client id, and returns the admission', async 
   // Two sends are two admissions, never one idempotent replay.
   const again = JSON.parse((await tool.execute({ session: 'ses_a', text: 'again' }, CALLER)).content);
   assert.equal(again.delivered, true);
-  const bodies = calls.filter((a) => a[0] === 'post' && String(a[1]).endsWith('/prompt')).map((a) => JSON.parse(a[3]));
+  const bodies = calls.filter((a) => a[0] === 'post' && String(a[1]).endsWith('/synthetic')).map((a) => JSON.parse(a[3]));
   assert.notEqual(bodies[0].id, bodies[1].id);
+});
+
+test('the envelope is byte-exact and delivery uses the synthetic route, never prompt', async () => {
+  const { tool, calls } = await toolWith('talk_send');
+  await tool.execute({ session: 'ses_a', text: 'ship it' }, CALLER);
+  const posts = calls.filter((a) => a[0] === 'post');
+  assert.equal(posts.length, 1, 'one admission per send');
+  assert.equal(posts[0][1], '/api/session/ses_a/synthetic', 'the stealth route, not the user prompt');
+  assert.ok(!calls.some((a) => String(a[1]).endsWith('/prompt')), 'the prompt route is never touched');
+  const body = JSON.parse(posts[0][3]);
+  assert.equal(
+    body.text,
+    '[oc-talk] from ses_caller "active work"\nReply with talk_send(session="ses_caller", text="...").\n\nship it',
+    'the envelope is byte-exact',
+  );
+  assert.equal(body.description, 'oc-talk from active work');
+  assert.equal(body.delivery, 'steer');
+  assert.match(body.id, /^msg_[0-9a-f]{32}$/);
+  assert.equal(body.resume, undefined, 'the host schedules execution; no resume flag');
+});
+
+test('the synthetic metadata carries the ocTalk reply fields and the package version', async () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, '..', 'package.json'), 'utf8'));
+  assert.equal(pkg.version, '0.6.2', 'the manifest version is the envelope version');
+  const { tool, calls } = await toolWith('talk_send');
+  const out = JSON.parse((await tool.execute({ session: 'ses_a', text: 'hi' }, CALLER)).content);
+  assert.deepEqual(syntheticBody(calls).metadata, {
+    ocTalk: { from: 'ses_caller', replyTo: 'ses_caller', version: '0.6.2' },
+  });
+  assert.deepEqual(out.from, { sessionID: 'ses_caller', title: 'active work' });
+  assert.equal(out.replyTo, 'ses_caller');
+});
+
+test('a caller with no session id keeps the bare text and reports from: null', async () => {
+  const { tool, calls } = await toolWith('talk_send');
+  const out = JSON.parse((await tool.execute({ session: 'ses_a', text: 'bare handoff' }, {})).content);
+  assert.equal(out.error, undefined, 'a missing caller must not break the send');
+  assert.equal(out.from, null);
+  assert.equal(out.replyTo, null);
+  const body = syntheticBody(calls);
+  assert.equal(body.text, 'bare handoff', 'compatibility: no envelope without a caller');
+  assert.deepEqual(body.metadata.ocTalk, { from: null, replyTo: null, version: '0.6.2' });
+  assert.equal(body.description, 'oc-talk');
+  assert.equal(calls.filter((a) => a[0] === 'session.get').length, 1, 'only the target is looked up');
+});
+
+test('an incoming envelope is not wrapped a second time', async () => {
+  const { tool, calls } = await toolWith('talk_send');
+  const text = envel('relayed body', 'ses_other', 'relay lane');
+  const out = JSON.parse((await tool.execute({ session: 'ses_a', text }, CALLER)).content);
+  assert.equal(out.error, undefined);
+  assert.equal(syntheticBody(calls).text, text, 'a relayed envelope survives byte for byte');
+  assert.equal(text.split('[oc-talk] from ').length - 1, 1, 'exactly one envelope on the wire');
+});
+
+// A wait backend that reads one fixed ascending history after a one-shot send.
+// The baseline is `msg_before`; the newest row turns fresh and idle once posted.
+async function replyTool(history) {
+  const mod = await load();
+  let posted = false;
+  mod.setApiRunner(async (args) => {
+    const [verb, target] = args;
+    if (verb === 'session.get') return { ok: true, json: { data: { id: 'ses_a', title: 'active work' } } };
+    if (verb === 'post' && String(target).endsWith('/synthetic')) {
+      posted = true;
+      return { ok: true, json: { data: { id: 'msg_own', sessionID: 'ses_a', type: 'synthetic' } } };
+    }
+    if (args.includes('limit=1')) {
+      return { ok: true, json: { data: [{ id: posted ? 'msg_idle_new' : 'msg_before', type: 'idle' }] } };
+    }
+    return { ok: true, json: { data: history, cursor: {} } };
+  });
+  const { ctx, added } = host();
+  await mod.default.setup(ctx);
+  return added.find((t) => t.name === 'talk_send');
+}
+
+test('wait returns only fresh messages, ascending, with role and text, never the sender', async () => {
+  const tool = await replyTool([
+    { id: 'msg_old', type: 'assistant', text: 'before' },
+    { id: 'msg_before', type: 'idle' },
+    { id: 'msg_own', type: 'synthetic', text: 'our own note' },
+    { id: 'msg_r1', type: 'synthetic', text: 'reply one' },
+    { id: 'msg_r2', type: 'assistant', text: 'reply two' },
+  ]);
+  const out = JSON.parse((await tool.execute({ session: 'ses_a', text: 'hello', wait: 30 }, CALLER)).content);
+  assert.equal(out.timedOut, false);
+  assert.deepEqual(out.messages, [
+    { role: 'synthetic', text: 'reply one' },
+    { role: 'assistant', text: 'reply two' },
+  ]);
+});
+
+test('a wait reply read is capped at twenty newest, still ascending', async () => {
+  const history = [{ id: 'msg_before', type: 'idle' }, { id: 'msg_own', type: 'synthetic', text: 'our note' }];
+  for (let i = 0; i < 25; i++) history.push({ id: 'msg_r' + i, type: 'assistant', text: 'r' + i });
+  const tool = await replyTool(history);
+  const out = JSON.parse((await tool.execute({ session: 'ses_a', text: 'hello', wait: 30 }, CALLER)).content);
+  assert.equal(out.messages.length, 20);
+  assert.equal(out.messages[0].text, 'r5', 'the oldest of the twenty newest');
+  assert.equal(out.messages[19].text, 'r24', 'the newest last: ascending');
+});
+
+test('talk_inbox reads synthetic peer mail with its envelope', async () => {
+  const mod = await load();
+  const envelope = envel('please review the parser', 'ses_peer', 'parser lane');
+  mod.setApiRunner(async (args) => {
+    const [verb] = args;
+    if (verb === 'session.get') return { ok: true, json: { data: { id: 'ses_caller', title: 'dispatcher' } } };
+    if (verb === 'session.message.list') {
+      return { ok: true, json: { data: [{ id: 'msg_mail', type: 'synthetic', time: { created: 900 }, text: envelope }], cursor: {} } };
+    }
+    return { ok: true, json: { data: {} } };
+  });
+  const { ctx, added } = host();
+  await mod.default.setup(ctx);
+  const out = JSON.parse((await added.find((t) => t.name === 'talk_inbox').execute({}, CALLER)).content);
+  assert.equal(out.error, undefined);
+  assert.deepEqual(out.messages, [{ id: 'msg_mail', role: 'synthetic', text: envelope, tools: [], time: 900 }]);
+  assert.match(out.messages[0].text, /^\[oc-talk\] from ses_peer "parser lane"/);
 });
 
 test('the send table steers on every row and reaches the wire byte for byte', async () => {
@@ -374,9 +502,9 @@ test('the send table steers on every row and reaches the wire byte for byte', as
     assert.equal(out.error, undefined, 'send failed for: ' + label + ' ' + JSON.stringify(out));
     assert.equal(out.delivery, 'steer', 'reply lane for: ' + label);
     assert.equal(out.deliveryReason, 'default', 'reply reason for: ' + label);
-    const body = promptBody(calls);
+    const body = syntheticBody(calls);
     assert.equal(body.delivery, 'steer', 'posted lane for: ' + label);
-    assert.equal(body.text, text, 'delivered text for: ' + label);
+    assert.equal(body.text, envel(text), 'delivered text for: ' + label);
   }
 });
 
@@ -386,9 +514,9 @@ test('a [steer] marker is stripping, not routing: the text is what is delivered'
   assert.equal(out.error, undefined);
   assert.equal(out.delivery, 'steer');
   assert.equal(out.deliveryReason, 'marker');
-  const body = promptBody(calls);
+  const body = syntheticBody(calls);
   assert.equal(body.delivery, 'steer');
-  assert.equal(body.text, 'Stop the deploy.', 'the marker is routing, not content');
+  assert.equal(body.text, envel('Stop the deploy.'), 'the marker is routing, not content');
 });
 
 test('[queue] is ordinary text now and arrives intact', async () => {
@@ -399,8 +527,8 @@ test('[queue] is ordinary text now and arrives intact', async () => {
     assert.equal(out.error, undefined, 'send failed for: ' + JSON.stringify(text));
     assert.equal(out.delivery, 'steer', 'queue in the text changes nothing: ' + JSON.stringify(text));
     assert.equal(out.deliveryReason, 'default', 'it is not a marker: ' + JSON.stringify(text));
-    const body = promptBody(calls);
-    assert.equal(body.text, text, 'the text survives byte for byte: ' + JSON.stringify(text));
+    const body = syntheticBody(calls);
+    assert.equal(body.text, envel(text), 'the text survives byte for byte: ' + JSON.stringify(text));
     assert.equal(body.delivery, 'steer', 'the wire lane is unchanged: ' + JSON.stringify(text));
   }
 });
@@ -411,9 +539,9 @@ test('an explicit delivery: "steer" is accepted and reported as explicit', async
   assert.equal(out.error, undefined);
   assert.equal(out.delivery, 'steer');
   assert.equal(out.deliveryReason, 'explicit');
-  const body = promptBody(calls);
+  const body = syntheticBody(calls);
   assert.equal(body.delivery, 'steer');
-  assert.equal(body.text, LONG_HANDOFF, 'a long body is delivered unclassified and unwritten');
+  assert.equal(body.text, envel(LONG_HANDOFF), 'a long body is delivered unclassified and unwritten');
 });
 
 test('delivery: "queue" is refused, never silently steered', async () => {
@@ -458,7 +586,7 @@ test('wait polls after an explicit steer send and never changes the lane', async
   assert.equal(out.delivery, 'steer', 'a poll after the send is not a lane');
   assert.equal(out.deliveryReason, 'explicit');
   assert.equal(out.timedOut, false);
-  assert.equal(promptBody(calls).delivery, 'steer', 'the wire lane is unchanged by the wait');
+  assert.equal(syntheticBody(calls).delivery, 'steer', 'the wire lane is unchanged by the wait');
 });
 
 test('wait polls after a [steer] send and never changes the lane', async () => {
@@ -467,8 +595,8 @@ test('wait polls after a [steer] send and never changes the lane', async () => {
   assert.equal(out.error, undefined, 'the send itself still succeeds: ' + JSON.stringify(out));
   assert.equal(out.delivery, 'steer');
   assert.equal(out.deliveryReason, 'marker');
-  assert.equal(promptBody(calls).delivery, 'steer');
-  assert.equal(promptBody(calls).text, 'Stop — that is the wrong branch.', 'the marker is still stripped');
+  assert.equal(syntheticBody(calls).delivery, 'steer');
+  assert.equal(syntheticBody(calls).text, envel('Stop — that is the wrong branch.'), 'the marker is still stripped');
 });
 
 test('wait on a plain send steers first and polls the boundary that follows it', async () => {
@@ -477,7 +605,7 @@ test('wait on a plain send steers first and polls the boundary that follows it',
   assert.equal(out.error, undefined, 'the send itself still succeeds: ' + JSON.stringify(out));
   assert.equal(out.delivery, 'steer');
   assert.equal(out.deliveryReason, 'default');
-  assert.equal(promptBody(calls).delivery, 'steer');
+  assert.equal(syntheticBody(calls).delivery, 'steer');
   // A baseline read before the send, then at least one poll after it: the
   // boundary that counts is the one this send produced.
   const reads = calls.filter((a) => a[0] === 'session.message.list');
@@ -549,7 +677,7 @@ test('a turn boundary that predates the send never counts as completion', async 
   mod.setApiRunner(async (args) => {
     const [verb, target] = args;
     if (verb === 'session.get') return { ok: true, json: { data: { id: 'ses_a', title: 'active work' } } };
-    if (verb === 'post' && String(target).endsWith('/prompt')) {
+    if (verb === 'post' && String(target).endsWith('/synthetic')) {
       return { ok: true, json: { data: { id: 'msg_sent', sessionID: 'ses_a' } } };
     }
     // The session's previous boundary marker, and nothing newer: the sent
@@ -569,7 +697,7 @@ test('a peer that never reaches a turn boundary reports timedOut:true, never suc
   mod.setApiRunner(async (args) => {
     const [verb, target] = args;
     if (verb === 'session.get') return { ok: true, json: { data: { id: 'ses_busy', title: 'active busy' } } };
-    if (verb === 'post' && String(target).endsWith('/prompt')) {
+    if (verb === 'post' && String(target).endsWith('/synthetic')) {
       return { ok: true, json: { data: { id: 'msg_q', sessionID: 'ses_busy' } } };
     }
     // A newest message that is never the idle marker: the peer is mid-turn.
@@ -589,7 +717,7 @@ test('a delivered send reports final reply-read failures without erasing deliver
   mod.setApiRunner(async (args) => {
     const [verb, target] = args;
     if (verb === 'session.get') return { ok: true, json: { data: { id: 'ses_a', title: 'active work' } } };
-    if (verb === 'post' && String(target).endsWith('/prompt')) {
+    if (verb === 'post' && String(target).endsWith('/synthetic')) {
       posted = true;
       return { ok: true, json: { data: { id: 'msg_sent', sessionID: 'ses_a' } } };
     }

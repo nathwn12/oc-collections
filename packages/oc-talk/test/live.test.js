@@ -53,7 +53,10 @@ test('live: talk_send delivers into a real session and talk_inbox reads it back'
   assert.ok(Array.isArray(inbox.messages) && inbox.messages.length > 0, 'the inbox must return the echo');
   const found = inbox.messages.find((m) => typeof m.text === 'string' && m.text.includes(text));
   assert.ok(found, 'the sent text must be present: ' + JSON.stringify(inbox.messages));
-  assert.equal(found.role, 'user');
+  assert.notEqual(found.role, 'user', 'synthetic input is never a TUI user turn');
+  assert.match(found.text, /^\[oc-talk\] from /, 'the envelope reaches the peer');
+  assert.deepEqual(sent.from, { sessionID: sessionID, title: sent.title });
+  assert.equal(sent.replyTo, sessionID);
   assert.ok(Array.isArray(found.tools), 'every row carries a tools array');
   assert.ok(typeof found.time === 'number');
 });
@@ -97,8 +100,10 @@ test('live: a steer send is admitted into a real session, and the enum is the se
   assert.equal(doc.ok, true, 'openapi read failed: ' + JSON.stringify(doc));
   const schema = doc.json.components.schemas['Session.Inbox.Delivery'];
   assert.deepEqual(schema.enum, ['steer', 'queue'], 'the service declares exactly steer and queue');
-  const props = doc.json.paths['/api/session/{sessionID}/prompt'].post.requestBody.content['application/json'].schema.properties;
-  assert.ok(props.delivery, 'the prompt route must accept a delivery field');
+  const props = doc.json.paths['/api/session/{sessionID}/synthetic'].post.requestBody.content['application/json'].schema.properties;
+  for (const key of ['text', 'delivery', 'metadata', 'description']) {
+    assert.ok(props[key], 'the synthetic route must accept ' + key);
+  }
 
   const created = await transport.createSession({ title: 'oc-talk-live-steer ' + Date.now() });
   assert.equal(created.ok, true, 'probe session creation failed: ' + JSON.stringify(created));
@@ -121,6 +126,6 @@ test('live: a steer send is admitted into a real session, and the enum is the se
   assert.equal(inbox.error, undefined, 'inbox failed: ' + JSON.stringify(inbox));
   const found = inbox.messages.find((m) => typeof m.text === 'string' && m.text.includes(text));
   assert.ok(found, 'the steered text must be admitted: ' + JSON.stringify(inbox.messages));
-  assert.equal(found.role, 'user', 'the correction is a user message in the target session');
+  assert.notEqual(found.role, 'user', 'the correction is synthetic input, not a user turn');
   console.log('live steer probe: session=' + sessionID + ' row=' + JSON.stringify(found));
 });

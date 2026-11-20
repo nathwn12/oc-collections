@@ -208,6 +208,21 @@ function prompt(sessionID, opts) {
   return request('POST', '/api/session/' + encodeURIComponent(sessionID) + '/prompt', { body, signal: opts.signal });
 }
 
+// The stealth lane: synthetic session input. It reaches the target's model as
+// injected input, schedules execution, and is filed in its inbox as type
+// `synthetic` — never as a user turn in its TUI. `resume` is deliberately absent
+// here: the host schedules by default, and only a caller that must admit without
+// waking a session passes resume:false.
+function synthetic(sessionID, opts) {
+  const o = opts || {};
+  const body = { text: o.text, delivery: o.delivery || 'steer' };
+  if (o.metadata !== undefined) body.metadata = o.metadata;
+  if (o.description !== undefined) body.description = o.description;
+  if (o.id) body.id = o.id;
+  if (o.resume !== undefined) body.resume = o.resume;
+  return request('POST', '/api/session/' + encodeURIComponent(sessionID) + '/synthetic', { body, signal: o.signal });
+}
+
 // One page of messages: `{data, cursor:{previous,next}}`. Newest first unless the
 // caller asks `order=asc`. A cursor is passed through verbatim, never built, and
 // never travels with `order` (the server 400s that pair).
@@ -269,6 +284,10 @@ function call(args, opts) {
   if (verb === 'post') {
     const bodyIndex = args.indexOf('--data');
     const body = bodyIndex > 0 ? args[bodyIndex + 1] : undefined;
+    if (String(target).endsWith('/synthetic')) {
+      const sid = String(target).split('/')[3];
+      return synthetic(sid, { ...JSON.parse(body || '{}'), signal: o.signal });
+    }
     if (String(target).endsWith('/prompt')) {
       const sid = String(target).split('/')[3];
       return prompt(sid, { ...JSON.parse(body || '{}'), signal: o.signal });
@@ -280,4 +299,4 @@ function call(args, opts) {
   return Promise.resolve({ ok: false, code: 'backend_error', detail: 'unsupported call: ' + String(verb) });
 }
 
-export { call, createSession, dropEndpoint, messages, prompt, redact, request, searchSessions, serviceEndpoint, session };
+export { call, createSession, dropEndpoint, messages, prompt, redact, request, searchSessions, serviceEndpoint, session, synthetic };

@@ -149,6 +149,48 @@ test('a POST without a client id is never replayed after a 401', async () => {
   }
 });
 
+// The stealth lane on the wire: the route and body are the contract the live
+// service proved, so a drift in either is caught without a peer.
+test('synthetic posts to the synthetic route with the exact body shape', async () => {
+  let seenPath = '';
+  let seenBody = '';
+  const server = http.createServer((req, res) => {
+    seenPath = req.url;
+    let chunks = '';
+    req.on('data', (c) => (chunks += c));
+    req.on('end', () => {
+      seenBody = chunks;
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ data: { id: 'msg_sent', type: 'synthetic' } }));
+    });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  try {
+    stateFile(JSON.stringify({ url: 'http://0.0.0.0:' + port, password: SECRET }));
+    const transport = await load();
+    const r = await transport.synthetic('ses_x', {
+      text: 'hello',
+      delivery: 'steer',
+      id: 'msg_' + 'c'.repeat(32),
+      metadata: { ocTalk: { from: 'ses_caller' } },
+      description: 'oc-talk from dispatcher',
+    });
+    assert.equal(r.ok, true, 'the synthetic admission must succeed: ' + JSON.stringify(r));
+    assert.equal(seenPath, '/api/session/ses_x/synthetic', 'the stealth route on the wire');
+    assert.deepEqual(JSON.parse(seenBody), {
+      text: 'hello',
+      delivery: 'steer',
+      metadata: { ocTalk: { from: 'ses_caller' } },
+      description: 'oc-talk from dispatcher',
+      id: 'msg_' + 'c'.repeat(32),
+    });
+    assert.equal(r.json.data.type, 'synthetic');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 // The lane the transport sends when a caller names none. It is the last place a
 // default could hide, so it is proved on the wire rather than in the caller.
 test('a send with no lane named carries steer', async () => {

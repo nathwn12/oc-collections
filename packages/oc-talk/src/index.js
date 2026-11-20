@@ -14,6 +14,14 @@ import { call as httpCall } from './transport.mjs';
 
 const READ_DEFAULT_LIMIT = 20;
 const READ_MAX_LIMIT = 100;
+// The version stamped into the machine-readable envelope. Also the version the
+// reply instruction asks the peer to answer with.
+const VERSION = '0.6.2';
+// The envelope travels in `text`, not only in metadata: metadata is not guaranteed
+// to reach the model's context. A text that already opens this way is passed on
+// byte for byte, so a relayed message is never wrapped a second time.
+const ENVELOPE_PREFIX = '[oc-talk] from ';
+const REPLY_LIMIT = 20;
 // Bounded block for `wait`: how long a caller may hold a turn waiting for the
 // peer's turn boundary, and how often the newest message is re-read while it does.
 const WAIT_DEFAULT_SECONDS = 0;
@@ -266,6 +274,31 @@ function messageRow(m) {
   };
 }
 
+// Two header lines, one blank line, then the caller's text verbatim. The peer
+// needs the sender id and title to address a reply, and the explicit reply line
+// makes that channel discoverable without metadata.
+function envelopeText(text, callerID, callerTitle) {
+  return (
+    ENVELOPE_PREFIX + callerID + ' "' + callerTitle + '"\n' +
+    'Reply with talk_send(session="' + callerID + '", text="...").\n\n' +
+    text
+  );
+}
+
+// The messages a send produced, not the whole history. The baseline is the newest
+// id before the send; everything after it is new. The sender's own delivery is
+// removed by both the id it chose and the id the service echoed. Oldest first,
+// capped, with only the fields a reply reader needs.
+function replyRows(messages, baselineID, ownIDs) {
+  const asc = Array.isArray(messages) ? messages : [];
+  const at = baselineID ? asc.findIndex((m) => m && m.id === baselineID) : -1;
+  const fresh = at < 0 ? asc.slice() : asc.slice(at + 1);
+  return fresh
+    .filter((m) => m && !ownIDs.has(m.id))
+    .slice(-REPLY_LIMIT)
+    .map((m) => ({ role: m.role || m.type, text: messageText(m) }));
+}
+
 // `wait` is seconds, default 0 (never block). A non-negative number is the only
 // accepted spelling; anything else is a typed refusal, never a fallback.
 function parseWait(value, fallback) {
@@ -438,6 +471,16 @@ async function ensureTools(ctx) {
         const t = await resolveTarget(args.session, scanSessions, getSession, { signal });
         if (signal && signal.aborted) return fail('cancelled', 'request cancelled');
         if (!t.ok) return fail(t.error, t.reason, t.candidates, t.truncated);
+        // The sender's identity is resolved before the send so the peer has a reply
+        // target. A caller the host does not expose keeps the old bare-text shape.
+        let callerID = context && typeof context.sessionID === 'string' && context.sessionID ? context.sessionID : '';
+        let callerTitle = '';
+        if (callerID) {
+          const cg = await getSession(callerID, { signal });
+          if (signal && signal.aborted) return fail('cancelled', 'request cancelled');
+          if (cg.ok && cg.session && cg.session.id) callerTitle = cg.session.title || '';
+          else callerID = '';
+        }
         // The baseline is read before the send: the turn boundary this call waits
         // for must be a message that did not exist when the message was sent.
         let baseline = '';
@@ -454,7 +497,21 @@ async function ensureTools(ctx) {
         // The service types this field as a message id (`msg_...`): a fresh one per
         // send keeps the admission idempotent without ever replaying a real one.
         const clientID = 'msg_' + randomUUID().replaceAll('-', '');
-        const r = await runApi(['post', '/api/session/' + t.id + '/prompt', '--data', JSON.stringify({ text: route.text, delivery: route.delivery, id: clientID })], { signal });
+        // Never double-wrap a message that already carries an envelope: a peer
+        // relaying a note back keeps the original sender and reply target.
+        const addressed = route.text.startsWith(ENVELOPE_PREFIX)
+          ? route.text
+          : callerID ? envelopeText(route.text, callerID, callerTitle) : route.text;
+        // Synthetic input is the host's stealth lane: it reaches the model as
+        // injected session input and is filed as type `synthetic`, never as a user
+        // turn. `resume` is omitted on purpose so the host schedules execution.
+        const r = await runApi(['post', '/api/session/' + t.id + '/synthetic', '--data', JSON.stringify({
+          text: addressed,
+          delivery: route.delivery,
+          metadata: { ocTalk: { from: callerID || null, replyTo: callerID || null, version: VERSION } },
+          description: callerID ? 'oc-talk from ' + (callerTitle || callerID) : 'oc-talk',
+          id: clientID,
+        })], { signal });
         if (!r.ok) {
           if (r.code === 'session_not_found') return fail('session_not_found', 'session ' + t.id + ' is gone: ' + r.detail);
           return fail(r.code, 'send failed: ' + r.detail);
@@ -463,7 +520,16 @@ async function ensureTools(ctx) {
         // The lane and the reason for it are reported, not assumed: a reader has
         // to be able to see that the message steered, and why the text was what
         // it was. `deliveryReason` is `explicit`, `marker` or `default`.
-        const out = { id: d.id || '', sessionID: d.sessionID || t.id, title: t.title || '', delivered: true, delivery: route.delivery, deliveryReason: route.reason };
+        const out = {
+          id: d.id || '',
+          sessionID: d.sessionID || t.id,
+          title: t.title || '',
+          from: callerID ? { sessionID: callerID, title: callerTitle } : null,
+          replyTo: callerID || null,
+          delivered: true,
+          delivery: route.delivery,
+          deliveryReason: route.reason,
+        };
         if (w.value > 0) {
           const waitController = new AbortController();
           const waitTimer = setTimeout(() => waitController.abort(), w.value * 1000);
@@ -484,7 +550,7 @@ async function ensureTools(ctx) {
             out.replyReadError = { code: context && context.signal && context.signal.aborted ? 'cancelled' : 'timeout', reason: 'message read did not complete within the wait deadline' };
           } else {
             const got = await collectMessages(t.id, READ_MAX_LIMIT, 1, signal);
-            if (got.ok) out.messages = got.messages.map((m) => messageRow(m));
+            if (got.ok) out.messages = replyRows(got.messages, baseline, new Set([clientID, d.id].filter(Boolean)));
             else out.replyReadError = { code: got.code || 'backend_error', reason: got.detail || 'read failed' };
           }
           clearTimeout(waitTimer);
