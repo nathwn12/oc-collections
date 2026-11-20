@@ -38,7 +38,7 @@
     },
     "packages/oc-flight-deck": {
       "name": "oc-flight-deck",
-      "version": "0.22.0",
+      "version": "0.24.0",
       "dependencies": {
         "@opencode/plugin": "^2.3.0",
       },
@@ -104,7 +104,7 @@
     },
     "packages/oc-talk": {
       "name": "oc-talk",
-      "version": "0.5.0",
+      "version": "0.6.1",
       "dependencies": {
         "@opencode/plugin": "^2.3.0",
       },

@@ -30,6 +30,7 @@
   //  cli.json, which take precedence on hosts that forward them.
   // ═════════════════════════════════════════════════════════════════════════
 
+  // ── Update cadence ───────────────────────────────────────────────────────
   // Milliseconds between refreshes: the tick rate of everything that has to
   // animate. The status spinner has ten frames, so 100 turns it once a second.
   //
@@ -52,6 +53,7 @@
   // host's renderer, so a smaller value spends work without adding motion.
   "refresh": 100,
 
+  // ── Sidebar ──────────────────────────────────────────────────────────────
   "sidebar": {
     // false hides the whole panel.
     "enabled": true,
@@ -246,6 +248,7 @@
     "maxLines": 24
   },
 
+  // ── Footer ───────────────────────────────────────────────────────────────
   // Off by default: the sidebar already carries the data, and the prompt
   // footer is high-traffic space, so a line there should earn its place.
   //
@@ -257,6 +260,7 @@
     "text": "Flight Deck"
   },
 
+  // -- Caution ---------------------------------------------------------------
   // The annunciator: a warning row for the one failure nothing else can see.
   //
   // A hang emits NO events - no completion, no error, nothing - so everything
@@ -307,6 +311,7 @@
     "toast": false
   },
 
+  // -- Notifications ---------------------------------------------------------
   // The silencing layer over every toast the plugin can raise: the
   // invalid-config warning, the copy outcome, and the opt-in caution toast
   // above. Every flag is on by default and only ever silences — a verified
@@ -327,6 +332,7 @@
     "caution": true
   },
 
+  // -- Layout ----------------------------------------------------------------
   // Row geometry and wording. Change these when your terminal is unusually
   // narrow or wide, or when you want a row called something else.
   "layout": {
@@ -351,6 +357,7 @@
     "labels": {}
   },
 
+  // -- Format ----------------------------------------------------------------
   // How values are written on the rail. Display only: nothing here changes
   // what is measured, only how a number is drawn.
   "format": {
@@ -385,6 +392,7 @@
     }
   },
 
+  // -- Glyphs ----------------------------------------------------------------
   // The annunciator's characters. Change these if your terminal renders a
   // default as a box or at the wrong width - an ugly but readable panel beats
   // an unreadable one. One or two characters each.
@@ -394,6 +402,7 @@
     "clear": "○"
   },
 
+  // -- Style -----------------------------------------------------------------
   // Optional appearance, resolved through your active theme (no ANSI escapes).
   // Colors are theme roles: default, subdued, warning, error, success, info.
   // Attributes: bold, dim, italic, underline, blink, inverse, hidden,
