@@ -65,10 +65,4 @@ team. If it breaks, open an issue with the command you ran and what you saw.
 - [MIT](LICENSE)
 - [Third-party notices](THIRD-PARTY-NOTICES.md)
 
-<!-- nathwn12 house footer: identical in every repo. Do not edit. -->
-<p align="center">
-  <a href="https://github.com/nathwn12"><img src="assets/signature.svg" width="96" alt="nathwn12" /></a>
-</p>
-<p align="center">
-  <sub>Built by <a href="https://github.com/nathwn12">nathwn12</a> · <a href="https://github.com/nathwn12?tab=repositories">All projects</a></sub>
-</p>
+<p align="center"><sub>Built by nathwn12</sub></p>
