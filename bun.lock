@@ -7,7 +7,7 @@
     },
     "packages/janua": {
       "name": "@nathwn12/janua",
-      "version": "0.5.1",
+      "version": "0.5.2",
       "bin": {
         "janua": "bin/janua.js",
       },
