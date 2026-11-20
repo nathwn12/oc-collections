@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The `caution` row no longer reports `no progress` for an idle session: silent-turn now needs an open turn, not just a stale host `running` flag. The `status` row reads idle on stale running, paused when a permission or a question tool waits, and running only with real evidence.
+
 ### Added
 
 - Clearer row names `spend` and `lifetime` are now the defaults. `cost` and `total` remain accepted aliases with their old labels and meaning; naming both an alias and its key renders once and reports the duplicate.

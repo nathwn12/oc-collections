@@ -50,6 +50,8 @@ export interface StatSource {
   readonly status?: unknown;
   /** True when anything is working: this session, a subagent, or a shell. */
   readonly busy?: unknown;
+  /** True when a permission or a question tool is waiting on the person. */
+  readonly paused?: unknown;
   readonly perms?: unknown;
   /**
    * Session generation speed: the figures the reader hands over.
@@ -236,6 +238,8 @@ export interface LayoutHint {
    * config's own type: this module must not import config.
    */
   readonly tpsLabel?: string;
+  /** The status row's paused mark, from `glyphs.paused`. Default `‖`. */
+  readonly pausedGlyph?: string;
   /**
    * Whether the `tps` row may draw the observed mean time to first token
    * (`1.2s ttft`). Off suppresses that segment in every display mode,

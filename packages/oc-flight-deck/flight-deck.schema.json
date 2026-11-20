@@ -394,7 +394,7 @@
     "glyphs": {
       "type": "object",
       "additionalProperties": false,
-      "description": "The annunciator's characters. Change these when a terminal renders the defaults as a box, or at the wrong width — an ugly-but-readable panel beats an unreadable one. One or two characters each.",
+      "description": "The rail's status marks: one per annunciator severity, plus the paused mark for the status row. Change these when a terminal renders the defaults as a box, or at the wrong width — an ugly-but-readable panel beats an unreadable one. One or two characters each.",
       "properties": {
         "watch": {
           "type": "string",
@@ -416,6 +416,13 @@
           "maxLength": 2,
           "default": "○",
           "description": "Reserved for a future always-visible annunciator state. Not currently drawn: the row is absent when nothing is wrong."
+        },
+        "paused": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2,
+          "default": "‖",
+          "description": "Shown on the `status` row when a permission request is pending or a `question` tool is waiting on the person. One glyph plus one word: `‖ paused`."
         }
       }
     },

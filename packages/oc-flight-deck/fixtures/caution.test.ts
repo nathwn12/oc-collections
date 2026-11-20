@@ -44,6 +44,7 @@ function run(options: {
   parts?: readonly unknown[];
   shells?: readonly unknown[];
   sessionRunning?: boolean;
+  openTurn?: boolean;
   lastMessageAt?: number;
   now?: number;
   overrides?: Partial<CautionThresholds>;
@@ -53,6 +54,9 @@ function run(options: {
     shells: options.shells ?? [],
     now: options.now ?? NOW,
     sessionRunning: options.sessionRunning ?? true,
+    // The older cases describe a genuinely open turn; the closed-turn cases
+    // below pass `false` explicitly.
+    openTurn: options.openTurn ?? true,
     lastMessageAt: options.lastMessageAt,
     thresholds: { ...thresholds, ...options.overrides },
   });
@@ -246,9 +250,33 @@ describe("rule 4 — the same call failing over and over", () => {
   });
 });
 
-describe("rule 5 — running, but nothing is moving", () => {
+describe("rule 5 — an open turn, but nothing is moving", () => {
   const settled = (ago: number) =>
     part("read", "completed", { path: "a" }, { ran: NOW - ago - 1_000, completed: NOW - ago });
+
+  test("stays silent for a closed turn however stale the running flag is", () => {
+    // The owner's measurement: `no progress 30m` while the session was idle.
+    expect(run({ parts: [settled(60 * MINUTE)], lastMessageAt: NOW - 30 * MINUTE, openTurn: false })).toEqual([]);
+    expect(
+      run({ parts: [], lastMessageAt: NOW - 30 * MINUTE, sessionRunning: true, openTurn: false }),
+    ).toEqual([]);
+  });
+
+  test("fires for an open turn older than the watch threshold", () => {
+    expect(
+      kinds(run({ parts: [], lastMessageAt: NOW - 12 * MINUTE, sessionRunning: true, openTurn: true })),
+    ).toEqual(["silent-turn"]);
+    // An open turn alone does not outrank the host flag: the flag must also say
+    // running, exactly as before.
+    expect(
+      run({
+        parts: [],
+        lastMessageAt: NOW - 12 * MINUTE,
+        sessionRunning: false,
+        openTurn: true,
+      }),
+    ).toEqual([]);
+  });
 
   test("notes a quiet running session, and escalates", () => {
     expect(run({ parts: [settled(11 * MINUTE)] })[0]?.severity).toBe("watch");

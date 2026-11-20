@@ -211,7 +211,7 @@ describe("flight deck plugin", () => {
       "caution.exemptTools", "caution.toast", "notifications.enabled", "notifications.config",
       "notifications.copy", "notifications.caution", "layout.labelWidth", "layout.barWidth",
       "layout.sparkWidth", "layout.labels", "format.duration", "glyphs.watch", "glyphs.caution",
-      "glyphs.clear", "style.lines", "style.rows",
+      "glyphs.clear", "glyphs.paused", "style.lines", "style.rows",
     ]) {
       expect(guideConfig).toContain("**`" + key + "`**");
     }

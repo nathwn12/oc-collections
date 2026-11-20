@@ -291,9 +291,20 @@ describe("session elapsed integration", () => {
     const working = createSessionReads(stubContext(families, messages, "running"));
     expect(working.sessionElapsed("root", 10_000)).toBe(9_000);
     expect(working.sessionElapsed("root", 12_000)).toBe(11_000);
-    // Nothing working: the same record collapses to its last stamp, so a
-    // stalled turn bills no idle time however far `now` advances.
-    const settled = createSessionReads(stubContext(families, messages));
+    // A closed turn is not work, even with a stale running flag: the record
+    // collapses to its last stamp and bills no idle time. The turn is closed
+    // only once the assistant message carries `completed`.
+    const closed = {
+      root: [
+        {
+          id: "m1",
+          type: "assistant",
+          time: { created: 1_000, streamed: 6_000, completed: 6_000 },
+          tokens: { output: 5 },
+        },
+      ],
+    };
+    const settled = createSessionReads(stubContext(families, closed));
     expect(settled.sessionElapsed("root", 10_000)).toBe(5_000);
     expect(settled.sessionElapsed("root", 12_000)).toBe(5_000);
   });

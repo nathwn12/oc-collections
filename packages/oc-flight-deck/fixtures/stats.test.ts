@@ -186,13 +186,16 @@ describe("flight deck live rows", () => {
     expect(statLine("status", { busy: true, frame: 0 })).toBe("status    ⠋ running");
     // Nothing anywhere: only then does it read as idle.
     expect(statLine("status", { status: "idle", busy: false })).toBe("status    ○ idle");
-    // The session's own status wins over a missing busy flag: an explicit false
-    // must not stop the glyph while the turn is still running.
-    expect(statLine("status", { status: "running", busy: false, frame: 0 })).toBe("status    ⠋ running");
+    // A stale host flag with no evidence reads idle: `busy: false` is the
+    // disproved running state, not a flag to ignore.
+    expect(statLine("status", { status: "running", busy: false, frame: 0 })).toBe("status    ○ idle");
     // A fractional frame would index the frame list with a non-integer, and a
     // non-numeric one would render the literal text `undefined`.
     expect(statLine("status", { busy: true, frame: 2.7 })).toBe("status    ⠹ running");
     expect(statLine("status", { busy: true, frame: "x" })).toBe("status    ⠋ running");
+    // Paused outranks the spinner: one glyph plus one word, overridable.
+    expect(statLine("status", { status: "idle", busy: true, paused: true, frame: 0 })).toBe("status    ‖ paused");
+    expect(statLine("status", { paused: true, frame: 0 }, { pausedGlyph: "||" })).toBe("status    || paused");
     expect(statLine("status", {})).toBeUndefined();
   });
 

@@ -8,6 +8,7 @@
 // Coercion of untrusted values happens through ./coerce.js.
 
 import type { Plugin } from "@opencode/plugin/tui";
+import { SETTLED_TOOL, readToolCall } from "./caution.js";
 import { createActiveTime } from "./session-elapsed.js";
 import { asCount, asRecord, asText, type SessionLike } from "./coerce.js";
 import { turnKey, type ThroughputSpan } from "./stats.js";
@@ -487,13 +488,57 @@ export function createSessionReads(context: Plugin.Context) {
     }
   };
 
-  // Anything genuinely working keeps the status glyph turning: this session
-  // (thinking, streaming, running tools), any subagent in its tree, or a shell
-  // command still running. Returns `undefined` when the host has not said
-  // either way, so the rail can omit the row rather than invent "idle".
+  // A turn is open while a user prompt is waiting for its reply, or while the
+  // newest assistant message has not recorded a completion. This is the only
+  // honest clock for the silent-turn rule: the host's `running` flag can go
+  // stale, but an open turn cannot be mistaken for a closed one.
+  const openTurnOf = (sessionID: string): boolean => {
+    const messages = messagesOf(sessionID);
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = asRecord(messages[index]);
+      const type = asText(message?.["type"]);
+      // System, shell and switch records are not turns; walk past them.
+      if (type !== "user" && type !== "assistant") continue;
+      if (type === "user") return true;
+      return asCount(asRecord(message?.["time"])?.["completed"]) === undefined;
+    }
+    return false;
+  };
+
+  // A person is being asked something: a pending permission request, or a live
+  // `question` tool. Both outrank the spinner — the session cannot move until
+  // someone answers.
+  const pausedOf = (sessionID: string): boolean => {
+    if (permsOf(sessionID) !== undefined) return true;
+    for (const part of recentParts(sessionID)) {
+      const call = readToolCall(part);
+      if (call !== undefined && call.name === "question" && !SETTLED_TOOL.has(call.status)) return true;
+    }
+    return false;
+  };
+
+  // Real evidence of work: a live tool, a running shell, a running child, or an
+  // open turn. A `running` status on its own is not evidence — that flag goes
+  // stale when a turn closes without the host clearing it, and reading it as
+  // work kept the caution clock running on an idle session. Returns
+  // `undefined` only when the host said nothing at all and no evidence exists.
   const busy = (sessionID: string): boolean | undefined => {
     const status = statusOf(sessionID);
-    if (status === "running") return true;
+
+    try {
+      for (const part of recentParts(sessionID)) {
+        const call = readToolCall(part);
+        if (call !== undefined && !SETTLED_TOOL.has(call.status)) return true;
+      }
+    } catch {
+      // Unreadable parts just mean no tool evidence.
+    }
+
+    try {
+      if (shellsOf(sessionID).some((entry) => asRecord(entry)?.["status"] === "running")) return true;
+    } catch {
+      // Unreadable shells just mean no shell signal.
+    }
 
     try {
       for (const id of context.data.session.family(sessionID) ?? []) {
@@ -505,15 +550,11 @@ export function createSessionReads(context: Plugin.Context) {
         }
       }
     } catch {
-      // No subagent status on this host; the shell check below still applies.
+      // No subagent status on this host; the other signals still apply.
     }
 
-    try {
-      if (shellsOf(sessionID).some((entry) => asRecord(entry)?.["status"] === "running")) return true;
-    } catch {
-      // Unreadable shells just mean no shell signal.
-    }
-
+    if (openTurnOf(sessionID)) return true;
+    // A stale `running` with no evidence reads idle, not busy.
     return status === undefined ? undefined : false;
   };
 
@@ -608,6 +649,8 @@ export function createSessionReads(context: Plugin.Context) {
     shellsOf,
     lastActivity,
     permsOf,
+    openTurnOf,
+    pausedOf,
     busy,
   };
 }

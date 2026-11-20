@@ -333,18 +333,20 @@ interface LayoutConfig {
 }
 
 /**
- * The annunciator's glyphs: one mark per severity.
+ * The rail's status marks: one per annunciator severity, plus the status row's
+ * paused mark.
  *
- * All three are single-cell marks — `▲` watch, `●` caution, `○` clear — so the
- * annunciator row lines up with every other row on the rail regardless of how
- * the terminal classifies their East Asian width. Configurable because this is
- * the one row that has to read at a glance, and a terminal that draws one of
- * these badly can be given a substitute without a rebuild.
+ * All four are single-cell marks — `▲` watch, `●` caution, `○` clear, `‖`
+ * paused — so the rail lines up regardless of how the terminal classifies
+ * their East Asian width. Configurable because these have to read at a glance,
+ * and a terminal that draws one badly can be given a substitute without a
+ * rebuild.
  */
 interface GlyphConfig {
   readonly watch: string;
   readonly caution: string;
   readonly clear: string;
+  readonly paused: string;
 }
 
 /**
@@ -406,6 +408,7 @@ const DEFAULT_GLYPHS: GlyphConfig = {
   watch: "▲",
   caution: "●",
   clear: "○",
+  paused: "‖",
 };
 
 /**
@@ -1318,6 +1321,7 @@ function readGlyphs(section: Record<string, unknown>, issues: string[]): GlyphCo
     watch: readGlyph(section["watch"], DEFAULT_GLYPHS.watch, "glyphs.watch", issues),
     caution: readGlyph(section["caution"], DEFAULT_GLYPHS.caution, "glyphs.caution", issues),
     clear: readGlyph(section["clear"], DEFAULT_GLYPHS.clear, "glyphs.clear", issues),
+    paused: readGlyph(section["paused"], DEFAULT_GLYPHS.paused, "glyphs.paused", issues),
   };
 }
 

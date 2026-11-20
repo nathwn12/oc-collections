@@ -58,6 +58,7 @@ export function railLines(config: FlightDeckConfig, source: StatSource = {}): re
     tpsDisplay: config.sidebar.tps.display,
     tpsLabel: config.sidebar.tps.label,
     tpsTtft: config.sidebar.tps.ttft,
+    pausedGlyph: config.glyphs.paused,
     // Decided from the whole row list, the way `statRows` decides it: `spend`
     // folds the subagent total into itself only when no `lifetime` row (or its
     // `total` alias) was asked for, even if the cap later drops that row.

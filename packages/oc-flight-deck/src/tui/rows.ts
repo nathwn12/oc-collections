@@ -311,15 +311,21 @@ export function statLine(
     }
     case "status": {
       const status = asText(source.status);
-      if (status === undefined && source.busy === undefined) return undefined;
+      const paused = source.paused === true;
+      if (status === undefined && source.busy === undefined && !paused) return undefined;
+      // A person being asked something outranks the spinner: the session may
+      // still be busy underneath, but nothing moves until they answer.
+      if (paused) return row("status", `${layout.pausedGlyph ?? "‖"} paused`);
       // The spinner lives here rather than in a row of its own: an animated
       // glyph beside "running" says the same thing without spending a line.
       //
       // `busy` folds in work the session's own status misses — a subagent
-      // running in its own session, or a shell command still going — so the
-      // glyph only stops when there is genuinely nothing happening. A host that
-      // does not report it falls back to the session's own status.
-      if (source.busy !== true && status !== "running") return row("status", "○ idle");
+      // running in its own session, a shell command still going, a live tool,
+      // or an open turn — so the glyph only stops when there is real evidence
+      // of work. A stale host `running` with none of that reads idle.
+      if (source.busy === false || (source.busy !== true && status !== "running")) {
+        return row("status", "○ idle");
+      }
       // Floored at the boundary: a fractional frame would index the frame list
       // with a non-integer and render `undefined`.
       const frame = Math.floor(asCount(source.frame) ?? 0);

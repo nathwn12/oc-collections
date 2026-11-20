@@ -63,6 +63,12 @@ interface CautionInput {
   readonly shells?: readonly unknown[];
   readonly now: number;
   readonly sessionRunning: boolean;
+  /**
+   * True only while a turn is genuinely open: the newest message is a user
+   * message, or the newest assistant message has no `time.completed`. A stale
+   * host `running` flag with a closed turn must not drive the silent clock.
+   */
+  readonly openTurn?: boolean;
   readonly lastMessageAt?: number;
   readonly thresholds: CautionThresholds;
 }
@@ -88,7 +94,7 @@ function asText(value: unknown): string | undefined {
 }
 
 /** Statuses that mean a tool has stopped. Anything else counts as live. */
-const SETTLED_TOOL = new Set(["completed", "error", "aborted", "cancelled"]);
+export const SETTLED_TOOL = new Set(["completed", "error", "aborted", "cancelled"]);
 
 interface ToolCall {
   readonly name: string;
@@ -293,15 +299,18 @@ export function detectCautions(input: CautionInput): Caution[] {
     }
   }
 
-  // Rule 5 — running, but nothing is moving.
+  // Rule 5 — an OPEN turn that is not moving.
   //
-  // A live tool or shell is progress and rules 1 and 2 own it, so this stays out
-  // of the way whenever one exists — including an exempt one, because an exempt
-  // tool is usually waiting on a person.
+  // The host's `running` flag alone is not enough: it goes stale when a turn
+  // closes without the host clearing it, and then the clock runs on an idle
+  // session. The newest message must still be open. A live tool or shell is
+  // progress and rules 1 and 2 own it, so this stays out of their way too —
+  // including an exempt one, because an exempt tool is usually waiting on a
+  // person.
   const hasLiveWork =
     calls.some((call) => !SETTLED_TOOL.has(call.status)) ||
     shells.some((raw) => asRecord(raw)?.["status"] === "running");
-  if (sessionRunning && !hasLiveWork) {
+  if (input.openTurn === true && sessionRunning && !hasLiveWork) {
     const settledAt = newestActivity(calls) ?? input.lastMessageAt;
     if (settledAt !== undefined) {
       const elapsedMs = now - settledAt;

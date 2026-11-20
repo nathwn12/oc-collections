@@ -157,6 +157,7 @@ One global file: `~/.config/opencode/flight-deck.jsonc`. The `.json` name is als
 | **`glyphs.watch`** | `"▲"` | The watch glyph, 1–2 chars. |
 | **`glyphs.caution`** | `"●"` | The caution glyph, 1–2 chars. |
 | **`glyphs.clear`** | `"○"` | Reserved, not drawn today. |
+| **`glyphs.paused`** | `"‖"` | The status row's paused mark, 1–2 chars. Draws `‖ paused` when a permission or a question tool waits on the person. |
 
 **Style**
 
@@ -172,7 +173,7 @@ Every name `sidebar.rows` accepts, what its number means, and whether it draws b
 | Row | What it shows | Default |
 | --- | --- | --- |
 | `caution` | Annunciator, opt-in with `caution.enabled`. Silent unless a tool or turn stops moving. Reports observations, never verdicts (`shell running 8m41s`). Never aborts, kills, retries, or blocks. `▲` watch, `●` caution, `○` reserved and not drawn. | opt-in |
-| `status` | `⠙ running` while anything works (this session, a subagent, or a shell); `○ idle` otherwise. | yes |
+| `status` | `‖ paused` when a permission or a `question` tool waits on the person; `⠙ running` with real evidence of work (a live tool, shell, child or open turn); `○ idle` otherwise. A stale host `running` flag with no evidence reads idle. | yes |
 | `agent` | Active agent name. | yes |
 | `model` | Model id, plus ` · variant` when one is present. | yes |
 | `branch` | Current git branch. Costs a VCS call. | opt-in |

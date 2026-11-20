@@ -176,6 +176,8 @@ export default Plugin.define({
       shellsOf,
       lastActivity,
       permsOf,
+      openTurnOf,
+      pausedOf,
       busy,
     } = reads;
 
@@ -193,6 +195,9 @@ export default Plugin.define({
         shells: shellsOf(sessionID),
         now,
         sessionRunning: statusOf(sessionID) === "running",
+        // The host flag alone can go stale; only an open turn may drive the
+        // silent clock.
+        openTurn: openTurnOf(sessionID),
         lastMessageAt: lastActivity(sessionID),
         thresholds: cautionThreshold,
       });
@@ -301,9 +306,10 @@ export default Plugin.define({
       const location = locationOf(context);
       const session = context.data.session.get(sessionID) as SessionLike | undefined;
       const isBusy = busy(sessionID);
-      // The fast tick exists for the spinner, and the spinner is only drawn while
-      // something is moving. Everything else on the rail reads in seconds.
-      spinnerNeeded = wants("status") && isBusy === true;
+      const paused = wants("status") ? pausedOf(sessionID) : false;
+      // The fast tick exists for the spinner, and the spinner is only drawn
+      // while something is moving and nobody is being asked a question.
+      spinnerNeeded = wants("status") && isBusy === true && !paused;
 
       // A "turn" is one prompt and the work it caused. The host's message list
       // also carries system, shell and switch records, so counting records
@@ -362,6 +368,7 @@ export default Plugin.define({
         project: wants("project") ? projectTotals(sessionID) : undefined,
         status: wants("status") ? statusOf(sessionID) : undefined,
         busy: isBusy,
+        paused,
         perms: wants("perms") ? permsOf(sessionID) : undefined,
         tps: wants("tps") ? sessionTps(sessionID, session) : undefined,
         spark: wants("spark") ? sparkValues(sessionID) : undefined,

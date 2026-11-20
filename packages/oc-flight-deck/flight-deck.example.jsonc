@@ -409,13 +409,15 @@
   },
 
   // -- Glyphs ----------------------------------------------------------------
-  // The annunciator's characters. Change these if your terminal renders a
-  // default as a box or at the wrong width - an ugly but readable panel beats
-  // an unreadable one. One or two characters each.
+  // The rail's status marks. Change these if your terminal renders a default
+  // as a box or at the wrong width - an ugly but readable panel beats an
+  // unreadable one. One or two characters each.
   "glyphs": {
     "watch": "▲",
     "caution": "●",
-    "clear": "○"
+    "clear": "○",
+    // The status row's paused mark: one glyph plus the word `paused`.
+    "paused": "‖"
   },
 
   // -- Style -----------------------------------------------------------------
