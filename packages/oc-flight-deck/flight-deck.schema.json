@@ -184,13 +184,13 @@
         "persist": {
           "type": "boolean",
           "default": true,
-          "description": "Render named fields persistently. Most show zero skeletons before data arrives; `tps` and `updated` use `sidebar.placeholder` when unavailable, while `caution` stays silent. False omits fields without data."
+          "description": "Render named fields persistently. Numeric rows now draw a sane zero before data arrives; only `updated` (no honest zero timestamp) and a few text rows with no zero use `sidebar.placeholder`, while `caution` stays silent. False omits fields without data."
         },
         "placeholder": {
           "type": "string",
           "minLength": 1,
-          "default": "—",
-          "description": "Fallback value for a persistent row with no data that has no skeleton. Used only when `sidebar.persist` is true. Must be a non-empty string; anything else falls back to the default em dash. `caution` never draws it because its silence is the design, and `updated` uses it until the host records an action — there is no honest zero timestamp."
+          "default": "0",
+          "description": "Fallback value for a persistent row with no zero of its own. Used only when `sidebar.persist` is true. Must be a non-empty string; anything else falls back to the default `0`. Numeric rows never use it: they draw a real zero instead. `caution` stays silent, and `updated` uses it until the host records an action because there is no honest zero timestamp."
         },
         "maxLines": {
           "type": "integer",

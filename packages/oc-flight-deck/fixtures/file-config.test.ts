@@ -124,7 +124,16 @@ describe("flight deck config file", () => {
     expect(loaded.source).toContain("flight-deck.jsonc");
     const { config } = resolveConfig(mergeOptions(loaded.options, undefined));
     expect(footerLine(config)).toBe("jsonc");
-    expect(sidebarLines(config)).toEqual(["jsonc line"]);
+    expect(sidebarLines(config)).toEqual([
+      "jsonc line",
+      "cost      $0.000",
+      "project   $0.000",
+      "tokens    0 in · 0 out",
+      "cache     0 read",
+      "context   ~0 used",
+      "elapsed   0s",
+      "tps       0 tok/s",
+    ]);
   });
 
   test("reads flight-deck.json when there is no .jsonc beside it", () => {
@@ -187,6 +196,15 @@ describe("flight deck config file", () => {
     const loaded = loadConfigFile(directory);
     const { config } = resolveConfig(mergeOptions(loaded.options, { footer: { text: "host footer" } }));
     expect(footerLine(config)).toBe("host footer");
-    expect(sidebarLines(config)).toEqual(["file"]);
+    expect(sidebarLines(config)).toEqual([
+      "file",
+      "cost      $0.000",
+      "project   $0.000",
+      "tokens    0 in · 0 out",
+      "cache     0 read",
+      "context   ~0 used",
+      "elapsed   0s",
+      "tps       0 tok/s",
+    ]);
   });
 });

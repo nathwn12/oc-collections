@@ -22,14 +22,14 @@ const SKELETONS: Readonly<Record<string, string>> = {
   model: "none",
   branch: "no branch",
   cost: "$0.000",
-  total: "$0.000",
+  total: "$0.000 · 0 subagents",
   project: "$0.000",
   tokens: "0 in · 0 out",
   cache: "0 read",
-  context: "░░░░░░░░░░ ~0%",
+  context: "~0 used",
   perms: "0 waiting",
   elapsed: "0s",
-  tps: "—",
+  tps: "0 tok/s",
   spark: "▁▁▁▁▁▁▁▁▁▁▁▁",
   reasoning: "0",
   turns: "0",
@@ -53,14 +53,16 @@ function skeletonRow(field: string, labelWidth: number): string {
 describe("persistent sidebar rows", () => {
   test("default persist renders a zero skeleton with the same label padding", () => {
     expect(DEFAULT_CONFIG.sidebar.persist).toBe(true);
-    expect(DEFAULT_CONFIG.sidebar.placeholder).toBe("—");
-    expect(DEFAULT_PLACEHOLDER).toBe("—");
+    expect(DEFAULT_CONFIG.sidebar.placeholder).toBe("0");
+    expect(DEFAULT_PLACEHOLDER).toBe("0");
 
-    // `statLine` keeps its contract: no data means `undefined`, not a row —
-    // it never draws skeletons, whatever the field.
-    for (const field of [...Object.keys(SKELETONS), "caution"]) {
+    // Text fields with no data still hide. Numeric fields now draw their own
+    // zero directly, so the persist layer never has to invent one for them.
+    for (const field of ["status", "agent", "model", "branch", "perms", "caution"]) {
       expect(statLine(field, {})).toBeUndefined();
     }
+    expect(statLine("tps", {})).toBe("tps       0 tok/s");
+    expect(statLine("tokens", {})).toBe("tokens    0 in · 0 out");
 
     // `statRows` with persist layers the skeleton on top, padded exactly
     // like a live row (`cache` + five spaces at the default width of 10).
@@ -88,13 +90,14 @@ describe("persistent sidebar rows", () => {
     expect(statRows(["ses"], {}, { persist: true, labelWidth: 8 })).toEqual(["session none"]);
     expect(statRows(["reasoning"], {}, { persist: true, labelWidth: 8 })).toEqual(["reasoning 0"]);
     expect(statRows(["go"], {}, { persist: true })).toEqual(["go        ○ 0 ○ 0 ○ 0"]);
-    expect(statRows(["context"], {}, { persist: true })).toEqual(["context   ░░░░░░░░░░ ~0%"]);
+    expect(statRows(["context"], {}, { persist: true })).toEqual(["context   ~0 used"]);
   });
 
   test("skeletons follow the row's geometry hints", () => {
-    // A narrow fuel gauge and sparkline shrink the skeleton with them.
+    // With no occupancy the context row draws its `~0 used` zero, whatever
+    // width the gauge would have; a narrow spark skeleton still shrinks.
     expect(statRows(["context"], {}, { persist: true, barWidth: 6 })).toEqual([
-      "context   ░░░░░░ ~0%",
+      "context   ~0 used",
     ]);
     expect(statRows(["spark"], {}, { persist: true, sparkWidth: 4 })).toEqual(["spark     ▁▁▁▁"]);
     // The elapsed skeleton threads the duration style, like the live row.
@@ -103,28 +106,36 @@ describe("persistent sidebar rows", () => {
     ]);
   });
 
-  test("missing tps uses the placeholder in every display mode", () => {
-    expect(statRows(["tps"], {}, { persist: true })).toEqual(["tps       —"]);
-    expect(statRows(["tps"], {}, { persist: true, tpsDisplay: "rt" })).toEqual(["tps       —"]);
-    expect(statRows(["tps"], {}, { persist: true, tpsDisplay: "both" })).toEqual(["tps       —"]);
+  test("missing tps draws an honest zero in every display mode", () => {
+    expect(statRows(["tps"], {}, { persist: true })).toEqual(["tps       0 tok/s"]);
+    expect(statRows(["tps"], {}, { persist: true, tpsDisplay: "rt" })).toEqual(["tps       0 tok/s"]);
+    expect(statRows(["tps"], {}, { persist: true, tpsDisplay: "both" })).toEqual(["tps       0 rt · 0 avg"]);
+    // A configured label rides the zero too.
+    expect(statRows(["tps"], {}, { persist: true, tpsLabel: "rt" })).toEqual(["tps       0 rt"]);
   });
 
-  test("the both-mode skeleton rides the resolved display from the config", () => {
+  test("the both-mode zero rides the resolved display from the config", () => {
     const both = resolveConfig({ sidebar: { tps: { display: "both" } } }).config;
-    expect(sidebarLines(both, {})).toContain("tps       —");
+    expect(sidebarLines(both, {})).toContain("tps       0 rt · 0 avg");
     // ... and the default config keeps the single figure.
-    expect(sidebarLines(DEFAULT_CONFIG, {})).toContain("tps       —");
-    expect(sidebarLines(DEFAULT_CONFIG, {})).not.toContain("0 rt");
+    expect(sidebarLines(DEFAULT_CONFIG, {})).toContain("tps       0 tok/s");
+    expect(sidebarLines(DEFAULT_CONFIG, {})).not.toContain("—");
   });
 
-  test("persist:false omits rows with no data", () => {
-    expect(statRows(["cache"], { tokens: {} }, { persist: false })).toEqual([]);
-    // Omitting is also the default when calling `statRows` directly.
-    expect(statRows(["agent", "cost"], {})).toEqual([]);
+  test("persist:false omits text rows with no data, never numeric zeros", () => {
+    expect(statRows(["cache"], { tokens: {} }, { persist: false })).toEqual(["cache     0 read"]);
+    expect(statRows(["agent", "cost"], {})).toEqual(["cost      $0.000"]);
     const config = resolveConfig({ sidebar: { persist: false } }).config;
-    // The top rail has no fixed lines by default since 0.8.0: with no data and
-    // no persistence, nothing renders.
-    expect(sidebarLines(config, {})).toEqual([]);
+    // Numeric rows always have a zero to draw, so only the text rows vanish.
+    expect(sidebarLines(config, {})).toEqual([
+      "cost      $0.000",
+      "project   $0.000",
+      "tokens    0 in · 0 out",
+      "cache     0 read",
+      "context   ~0 used",
+      "elapsed   0s",
+      "tps       0 tok/s",
+    ]);
   });
 
   test("every default row renders exactly once when persist is on", () => {

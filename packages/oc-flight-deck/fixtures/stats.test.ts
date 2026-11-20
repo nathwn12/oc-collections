@@ -102,9 +102,9 @@ describe("flight deck live rows", () => {
   });
 
   test("draws the family total with its subagent count, childless included", () => {
-    // No family data at all: the persist layer still owns the skeleton, so the
-    // row stays absent rather than inventing a figure.
-    expect(statLine("total", { cost: 0.2 })).toBeUndefined();
+    // No family data at all: the lifetime row still draws its honest zero with
+    // zero subagents, never a blank or a placeholder.
+    expect(statLine("total", { cost: 0.2 })).toBe("total     $0.000 · 0 subagents");
     // A childless session's true family total is its own cost, and it reads
     // `0 subagents` rather than blanking - the row must never have a hole.
     expect(statLine("total", { cost: 0.2, tree: { cost: 0.2, count: 0 } })).toBe("total     $0.200 · 0 subagents");
@@ -119,19 +119,22 @@ describe("flight deck live rows", () => {
       "context   ██░░░░░░░░ ~22%",
     );
     // A window the host never reports still shows the honest half of the answer.
-    expect(statLine("context", { context: { used: 0 } })).toBeUndefined();
+    expect(statLine("context", { context: { used: 0 } })).toBe("context   ~0 used");
+    expect(statLine("context", {})).toBe("context   ~0 used");
   });
 
-  test("shows elapsed and turns only when they are meaningful", () => {
+  test("shows elapsed as a zero rate until a turn is recorded", () => {
     expect(statLine("elapsed", { elapsedMs: 2 * 3_600_000 + 14 * 60_000 })).toBe("elapsed   2h14m00s");
-    expect(statLine("elapsed", { elapsedMs: 0 })).toBeUndefined();
+    expect(statLine("elapsed", { elapsedMs: 0 })).toBe("elapsed   0s");
+    expect(statLine("elapsed", {})).toBe("elapsed   0s");
     expect(statLine("turns", { turns: 42 })).toBe("turns     42");
     expect(statLine("turns", { turns: 0 })).toBeUndefined();
   });
 
-  test("shows reasoning tokens only when the model produced any", () => {
+  test("shows reasoning tokens, including the zero when the model emitted none", () => {
     expect(statLine("reasoning", { tokens: { reasoning: 174857 } })).toBe("reasoning 175k");
-    expect(statLine("reasoning", { tokens: { reasoning: 0 } })).toBeUndefined();
+    expect(statLine("reasoning", { tokens: { reasoning: 0 } })).toBe("reasoning 0");
+    expect(statLine("reasoning", {})).toBe("reasoning 0");
   });
 
   test("falls back to a raw cache read when the hit ratio is underivable", () => {
@@ -151,8 +154,8 @@ describe("flight deck live rows", () => {
       "cache     0% hit · 0 read",
     );
     expect(statLine("cache", { tokens: { cache: { read: 0 } } })).toBe("cache     0 read");
-    expect(statLine("cache", { tokens: {} })).toBeUndefined();
-    expect(statLine("cache", {})).toBeUndefined();
+    expect(statLine("cache", { tokens: {} })).toBe("cache     0 read");
+    expect(statLine("cache", {})).toBe("cache     0 read");
   });
 
   test("omits a row instead of inventing a placeholder", () => {
@@ -160,8 +163,8 @@ describe("flight deck live rows", () => {
     expect(statLine("agent", {})).toBeUndefined();
     // Omission is `persist: false`: the default for a direct `statRows` call,
     // and the opt-out for `sidebarLines`.
-    expect(statRows(["agent", "cost"], {}, { persist: false })).toEqual([]);
-    expect(statRows(["agent", "cost"], {})).toEqual([]);
+    expect(statRows(["agent", "cost"], {}, { persist: false })).toEqual(["cost      $0.000"]);
+    expect(statRows(["agent", "cost"], {})).toEqual(["cost      $0.000"]);
   });
 
   test("shows the model without a variant when the host omits one", () => {
@@ -221,7 +224,7 @@ describe("flight deck live rows", () => {
     expect(statLine("project", { project: { cost: 0.5 } })).toBe("project   $0.500");
     expect(statLine("project", { project: { cost: 1.482, count: 12 } })).toBe("project   $1.48 · 12 sessions");
     expect(statLine("project", { project: { cost: 1.482, count: 1 } })).toBe("project   $1.48");
-    expect(statLine("project", {})).toBeUndefined();
+    expect(statLine("project", {})).toBe("project   $0.000");
   });
 
   test("reports the realtime estimate in rt mode", () => {
@@ -231,7 +234,7 @@ describe("flight deck live rows", () => {
     expect(statLine("tps", { tps: { rt: 106.3, avg: 41 } }, { tpsDisplay: "rt" })).toBe("tps       106 tok/s");
     expect(statLine("tps", { tps: { rt: 106, avg: 41 } }, { tpsDisplay: "rt" })).toBe("tps       106 tok/s");
     expect(statLine("tps", { tps: { rt: 106.5, avg: 41 } }, { tpsDisplay: "rt" })).toBe("tps       107 tok/s");
-    expect(statLine("tps", { tps: { rt: 0, avg: 41 } }, { tpsDisplay: "rt" })).toBeUndefined();
+    expect(statLine("tps", { tps: { rt: 0, avg: 41 } }, { tpsDisplay: "rt" })).toBe("tps       0 tok/s");
     // The average beside it never leaks into the realtime figure.
     expect(statLine("tps", { tps: { rt: 106, avg: 999 } }, { tpsDisplay: "rt" })).toBe("tps       106 tok/s");
   });
@@ -251,15 +254,18 @@ describe("flight deck live rows", () => {
     // The realtime half may round to zero while the average stands: idle right
     // now does not erase the session's mean speed.
     expect(statLine("tps", { tps: { rt: 0.4, avg: 41 } }, { tpsDisplay: "both" })).toBe("tps       0 rt · 41 avg");
-    // Without an average the realtime half stands alone — and only then: a
-    // present average that rounds to zero hides the whole row, like the
-    // avg mode's own hide rule.
-    expect(statLine("tps", { tps: { rt: 106, avg: undefined } }, { tpsDisplay: "both" })).toBe("tps       106 rt");
-    expect(statLine("tps", { tps: { rt: 106, avg: 0.4 } }, { tpsDisplay: "both" })).toBeUndefined();
-    expect(statLine("tps", { tps: { rt: 106, avg: 0 } }, { tpsDisplay: "both" })).toBeUndefined();
-    // Without either figure there is no row.
-    expect(statLine("tps", { tps: { rt: undefined, avg: undefined } }, { tpsDisplay: "both" })).toBeUndefined();
-    expect(statLine("tps", { tps: { rt: 0, avg: 0 } }, { tpsDisplay: "both" })).toBeUndefined();
+    // A missing or sub-half average draws as zero; both halves always stand,
+    // so the line has the same shape whatever the host knows.
+    expect(statLine("tps", { tps: { rt: 106, avg: undefined } }, { tpsDisplay: "both" })).toBe(
+      "tps       106 rt · 0 avg",
+    );
+    expect(statLine("tps", { tps: { rt: 106, avg: 0.4 } }, { tpsDisplay: "both" })).toBe("tps       106 rt · 0 avg");
+    expect(statLine("tps", { tps: { rt: 106, avg: 0 } }, { tpsDisplay: "both" })).toBe("tps       106 rt · 0 avg");
+    // Without either figure both halves are zero.
+    expect(statLine("tps", { tps: { rt: undefined, avg: undefined } }, { tpsDisplay: "both" })).toBe(
+      "tps       0 rt · 0 avg",
+    );
+    expect(statLine("tps", { tps: { rt: 0, avg: 0 } }, { tpsDisplay: "both" })).toBe("tps       0 rt · 0 avg");
   });
 
   test("appends the observed time to first token to the both line, and only then", () => {
@@ -276,39 +282,37 @@ describe("flight deck live rows", () => {
     expect(statLine("tps", { tps: { rt: 83, avg: 38, ttft: Number.NaN } }, { tpsDisplay: "both" })).toBe(
       "tps       83 rt · 38 avg",
     );
-    // The realtime-alone degrade stands: a missing average hides the ttft
-    // segment with it.
+    // TTFT rides only while a rate stands: a zero average drops the segment.
     expect(statLine("tps", { tps: { rt: 106, avg: undefined, ttft: 1.2 } }, { tpsDisplay: "both" })).toBe(
-      "tps       106 rt",
+      "tps       106 rt · 0 avg",
     );
-    // Single modes never draw it.
+    // Single modes draw it beside a positive figure, never as a fallback row.
     expect(statLine("tps", { tps: { rt: 83, avg: 38, ttft: 1.2 } }, { tpsDisplay: "rt" })).toBe("tps       83 tok/s · 1.2s ttft");
-    expect(statLine("tps", { tps: { rt: 0, ttft: 1.2 } }, { tpsDisplay: "rt" })).toBe("tps       1.2s ttft");
-    expect(statLine("tps", { tps: { ttft: 0 } }, { tpsDisplay: "rt" })).toBe("tps       0.0s ttft");
+    expect(statLine("tps", { tps: { rt: 0, ttft: 1.2 } }, { tpsDisplay: "rt" })).toBe("tps       0 tok/s");
+    expect(statLine("tps", { tps: { ttft: 0 } }, { tpsDisplay: "rt" })).toBe("tps       0 tok/s");
     expect(statLine("tps", { tps: { rt: 83, avg: 38, ttft: 1.2 } }, { tpsDisplay: "avg" })).toBe("tps       38 tok/s");
   });
 
-  test("hides the tps row rather than printing a zero rate, in every mode", () => {
-    expect(statLine("tps", { tps: { rt: 0, avg: 41 } }, { tpsDisplay: "rt" })).toBeUndefined();
-    expect(statLine("tps", { tps: { rt: Number.NaN, avg: 41 } }, { tpsDisplay: "rt" })).toBeUndefined();
-    // Below half a token/second rounds to zero, which hides rather than
-    // printing "0 tok/s".
-    expect(statLine("tps", { tps: { rt: 0.4, avg: 41 } }, { tpsDisplay: "rt" })).toBeUndefined();
+  test("draws an honest zero rate instead of hiding the tps row", () => {
+    expect(statLine("tps", { tps: { rt: 0, avg: 41 } }, { tpsDisplay: "rt" })).toBe("tps       0 tok/s");
+    expect(statLine("tps", { tps: { rt: Number.NaN, avg: 41 } }, { tpsDisplay: "rt" })).toBe("tps       0 tok/s");
+    // Below half a token/second rounds to zero, which draws "0 tok/s".
+    expect(statLine("tps", { tps: { rt: 0.4, avg: 41 } }, { tpsDisplay: "rt" })).toBe("tps       0 tok/s");
     expect(statLine("tps", { tps: { rt: 0.5, avg: 41 } }, { tpsDisplay: "rt" })).toBe("tps       1 tok/s");
-    // The average hides the same way: unknown, zero, or below half a token.
-    expect(statLine("tps", { tps: { rt: 106, avg: undefined } }, { tpsDisplay: "avg" })).toBeUndefined();
-    expect(statLine("tps", { tps: { rt: 106, avg: 0 } }, { tpsDisplay: "avg" })).toBeUndefined();
-    expect(statLine("tps", { tps: { rt: 106, avg: 0.4 } }, { tpsDisplay: "avg" })).toBeUndefined();
+    // The average draws the same zero: unknown, zero, or below half a token.
+    expect(statLine("tps", { tps: { rt: 106, avg: undefined } }, { tpsDisplay: "avg" })).toBe("tps       0 tok/s");
+    expect(statLine("tps", { tps: { rt: 106, avg: 0 } }, { tpsDisplay: "avg" })).toBe("tps       0 tok/s");
+    expect(statLine("tps", { tps: { rt: 106, avg: 0.4 } }, { tpsDisplay: "avg" })).toBe("tps       0 tok/s");
     expect(statLine("tps", { tps: { rt: 106, avg: 0.5 } }, { tpsDisplay: "avg" })).toBe("tps       1 tok/s");
-    // A bare number is no longer a figure: the reader hands over the pair.
-    expect(statLine("tps", { tps: 106 })).toBeUndefined();
-    expect(statLine("tps", {})).toBeUndefined();
+    // A bare number is no longer a figure, but the row still sticks at zero.
+    expect(statLine("tps", { tps: 106 })).toBe("tps       0 tok/s");
+    expect(statLine("tps", {})).toBe("tps       0 tok/s");
   });
 
   test("hides the ttft segment in every mode when the toggle is off", () => {
     // The toggle is the row's view of `sidebar.tps.ttft`. Off suppresses the
-    // observed time to first token everywhere — both mode's tail, and the
-    // realtime fallback row when the rate is unknown or rounds to zero.
+    // observed time to first token everywhere, including both mode's tail.
+    // The rate row itself always sticks at its honest zero.
     expect(
       statLine("tps", { tps: { rt: 83, avg: 38, ttft: 1.2 } }, { tpsDisplay: "both", tpsTtft: false }),
     ).toBe("tps       83 rt · 38 avg");
@@ -318,17 +322,19 @@ describe("flight deck live rows", () => {
     expect(
       statLine("tps", { tps: { rt: 83, avg: 38, ttft: 1.2 } }, { tpsDisplay: "avg", tpsTtft: false }),
     ).toBe("tps       38 tok/s");
-    // No rate and no ttft allowance means no row: never a ttft-only fallback.
-    expect(statLine("tps", { tps: { rt: 0, ttft: 1.2 } }, { tpsDisplay: "rt", tpsTtft: false })).toBeUndefined();
-    expect(statLine("tps", { tps: { ttft: 1.2 } }, { tpsDisplay: "rt", tpsTtft: false })).toBeUndefined();
+    // No rate draws `0 <label>`: never a blank and never a ttft-only fallback.
+    expect(statLine("tps", { tps: { rt: 0, ttft: 1.2 } }, { tpsDisplay: "rt", tpsTtft: false })).toBe(
+      "tps       0 tok/s",
+    );
+    expect(statLine("tps", { tps: { ttft: 1.2 } }, { tpsDisplay: "rt", tpsTtft: false })).toBe("tps       0 tok/s");
     // The toggle omits the segment, never prints a fabricated zero for it.
     expect(statLine("tps", { tps: { rt: 0, avg: 38, ttft: 1.2 } }, { tpsDisplay: "both", tpsTtft: false })).toBe(
       "tps       0 rt · 38 avg",
     );
   });
 
-  test("keeps the observed ttft and the rt fallback when the toggle is on", () => {
-    // The shipped default: today's output, unchanged.
+  test("keeps the observed ttft beside a positive rate when the toggle is on", () => {
+    // The shipped default: TTFT rides only while a rate stands.
     expect(
       statLine("tps", { tps: { rt: 83, avg: 38, ttft: 1.2 } }, { tpsDisplay: "both", tpsTtft: true }),
     ).toBe("tps       83 rt · 38 avg · 1.2s ttft");
@@ -336,9 +342,9 @@ describe("flight deck live rows", () => {
       statLine("tps", { tps: { rt: 83, avg: 38, ttft: 1.2 } }, { tpsDisplay: "rt", tpsTtft: true }),
     ).toBe("tps       83 tok/s · 1.2s ttft");
     expect(statLine("tps", { tps: { rt: 0, ttft: 1.2 } }, { tpsDisplay: "rt", tpsTtft: true })).toBe(
-      "tps       1.2s ttft",
+      "tps       0 tok/s",
     );
-    expect(statLine("tps", { tps: { ttft: 0 } }, { tpsDisplay: "rt", tpsTtft: true })).toBe("tps       0.0s ttft");
+    expect(statLine("tps", { tps: { ttft: 0 } }, { tpsDisplay: "rt", tpsTtft: true })).toBe("tps       0 tok/s");
   });
 
   test("labels both single-figure modes from the configured label", () => {
@@ -377,10 +383,10 @@ describe("flight deck live rows", () => {
   test("ignores host data of the wrong shape rather than throwing", () => {
     expect(statLine("agent", { agent: 42 })).toBeUndefined();
     expect(statLine("model", { model: "deepseek" })).toBeUndefined();
-    expect(statLine("cost", { cost: Number.NaN })).toBeUndefined();
-    expect(statLine("cost", { cost: -1 })).toBeUndefined();
-    expect(statLine("tokens", { tokens: { input: -5 } })).toBeUndefined();
-    expect(statLine("tokens", { tokens: "518k" })).toBeUndefined();
+    expect(statLine("cost", { cost: Number.NaN })).toBe("cost      $0.000");
+    expect(statLine("cost", { cost: -1 })).toBe("cost      $0.000");
+    expect(statLine("tokens", { tokens: { input: -5 } })).toBe("tokens    0 in · 0 out");
+    expect(statLine("tokens", { tokens: "518k" })).toBe("tokens    0 in · 0 out");
     expect(statLine("unknown-field", {})).toBeUndefined();
   });
 });

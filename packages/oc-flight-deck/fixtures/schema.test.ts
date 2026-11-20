@@ -99,7 +99,7 @@ describe("the schema describes the real config", () => {
     expect(props["sidebar"]!.properties.placeholder.default).toBe(DEFAULT_CONFIG.sidebar.placeholder);
     expect(props["sidebar"]!.properties.maxLines.default).toBe(DEFAULT_CONFIG.sidebar.maxLines);
     expect(DEFAULT_CONFIG.sidebar.persist).toBe(true);
-    expect(DEFAULT_CONFIG.sidebar.placeholder).toBe("—");
+    expect(DEFAULT_CONFIG.sidebar.placeholder).toBe("0");
     expect(props["footer"]!.properties.text.default).toBe(DEFAULT_CONFIG.footer.text);
 
     expect(props["caution"]!.properties.enabled.default).toBe(DEFAULT_CONFIG.caution.enabled);
@@ -331,7 +331,7 @@ describe("the shipped example validates against the shipped schema", () => {
     // The new knobs are written out at their defaults, like every other key.
     const sidebar = parsed["sidebar"] as Record<string, unknown>;
     expect(sidebar["persist"]).toBe(true);
-    expect(sidebar["placeholder"]).toBe("—");
+    expect(sidebar["placeholder"]).toBe("0");
     expect(sidebar["maxLines"]).toBe(DEFAULT_CONFIG.sidebar.maxLines);
     expect(sidebar["tps"]).toEqual({ scope: "family", display: "rt", label: "tok/s", ttft: true });
     const style = parsed["style"] as Record<string, unknown>;

@@ -359,11 +359,10 @@ export function statLine(
         treeCost > cost;
 
       if (!merge) {
-        // `cost` is the current model's spend and nothing else: when it is not
-        // known the row stays absent rather than borrowing the family figure
-        // under a label that promises one model.
-        if (cost === undefined) return undefined;
-        return row("cost", `${feeMark(source.costKind)}${formatCost(cost)}`);
+        // `cost` is the current model's spend and nothing else. With no spend
+        // on that model the row draws a sane zero, never a dash or a hole, and
+        // it still never borrows the family figure under a one-model label.
+        return row("cost", `${feeMark(source.costKind)}${formatCost(cost ?? 0)}`);
       }
 
       // The delta (`+$0.020`) used to be here and pushed the row to 40 columns,
@@ -381,20 +380,18 @@ export function statLine(
       // it is drawn even when no subagent has run — the true family total is then
       // the session's own cost, and the row reads `$0.000 · 0 subagents` rather
       // than blanking, because the row the owner renames to `lifetime` must never
-      // have a hole in it. Still `undefined` when there is no family data at all,
-      // so the persist layer keeps its zero skeleton for a session with no record.
+      // have a hole in it. With no family record at all it still draws the
+      // honest zero: this is a numeric row, so it never blanks or falls back
+      // to the placeholder.
       const tree = asRecord(source.tree);
-      if (tree === undefined) return undefined;
-      const cost = asCount(tree.cost);
-      if (cost === undefined) return undefined;
-      const count = asCount(tree.count) ?? 0;
+      const cost = asCount(tree?.cost) ?? 0;
+      const count = asCount(tree?.count) ?? 0;
       const plural = count === 1 ? "subagent" : "subagents";
-      return row("total", `${feeMark(tree.kind)}${formatCost(cost)} · ${count} ${plural}`);
+      return row("total", `${feeMark(tree?.kind)}${formatCost(cost)} · ${count} ${plural}`);
     }
     case "project": {
       const project = asRecord(source.project);
-      const cost = asCount(project?.cost);
-      if (cost === undefined) return undefined;
+      const cost = asCount(project?.cost) ?? 0;
       const count = asCount(project?.count);
       return row("project", `${formatCost(cost)}${count !== undefined && count > 1 ? ` · ${count} sessions` : ""}`);
     }
@@ -402,15 +399,16 @@ export function statLine(
       const tokens = asRecord(source.tokens);
       const input = asCount(tokens?.input);
       const output = asCount(tokens?.output);
-      if (input === undefined && output === undefined) return undefined;
+      // No token record is a measured zero, not missing data: the row always
+      // draws its honest `0 in · 0 out`.
       return row("tokens", `${formatCount(input ?? 0)} in · ${formatCount(output ?? 0)} out`);
     }
     case "cache": {
       const tokens = asRecord(source.tokens);
-      if (tokens === undefined) return undefined;
-      const cache = asRecord(tokens.cache);
-      const read = asCount(cache?.read);
-      if (read === undefined) return undefined;
+      const cache = asRecord(tokens?.cache);
+      // An absent token record draws `0 read` rather than blanking: a numeric
+      // row always has an honest zero to show.
+      const read = asCount(cache?.read) ?? 0;
       const input = asCount(tokens?.input);
       // Hit ratio is the whole point: it explains a cheap bill on a huge token
       // count, and it is the first thing to break when caching stops working.
@@ -437,8 +435,10 @@ export function statLine(
     case "context": {
       const context = asRecord(source.context);
       const used = asCount(context?.used);
-      if (used === undefined || used === 0) return undefined;
       const limit = asCount(context?.limit);
+      // No occupancy yet is a measured zero, drawn as `~0 used` with the same
+      // estimate mark as the populated row. A numeric row never blanks.
+      if (used === undefined || used === 0) return row("context", "~0 used");
       // `used` is an occupancy PROXY (last request's input + cache read +
       // cache write), not a host-reported figure, so both shapes below carry
       // a `~`: the row reads as the estimate it is, never as an exact count.
@@ -467,8 +467,9 @@ export function statLine(
       return row("perms", resource === undefined ? action : `${action} · ${clip(resource, 18)}`);
     }
     case "elapsed": {
-      const ms = asCount(source.elapsedMs);
-      if (ms === undefined || ms <= 0) return undefined;
+      // A session with no recorded turn time has spent zero active seconds.
+      // Draw that zero instead of hiding the numeric row.
+      const ms = asCount(source.elapsedMs) ?? 0;
       return row("elapsed", formatDuration(ms, layout.durationStyle));
     }
     case "updated": {
@@ -492,8 +493,7 @@ export function statLine(
       // is `layout.tpsDisplay` (the row's view of `sidebar.tps.display`,
       // default `"rt"`); presentation.ts feeds it from the resolved config.
       // `layout.tpsTtft` is `sidebar.tps.ttft`: off, `ttft` never draws in any
-      // mode, and the realtime fallback below hides instead of showing it.
-      // `layout.tpsLabel` is `sidebar.tps.label`: the suffix on the two
+      // mode. `layout.tpsLabel` is `sidebar.tps.label`: the suffix on the two
       // single-figure modes ("tok/s" shipped); "both" names its own halves.
       const pair = asRecord(source.tps);
       const rt = asCount(pair?.["rt"]);
@@ -502,43 +502,27 @@ export function statLine(
       const shownTtft = (layout.tpsTtft ?? true) ? ttft : undefined;
       const display = layout.tpsDisplay ?? "rt";
       const label = layout.tpsLabel ?? "tok/s";
+      // A numeric row never blanks. An absent or sub-half rate is a measured
+      // zero, so it draws `0 <label>` — never a placeholder and never a
+      // ttft-only fallback. Figures are whole tokens/second: the value is an
+      // EWMA over estimated delta samples, so a decimal would fake precision.
+      const rounded = (value: number | undefined): number => {
+        const value_ = value === undefined ? 0 : Math.round(value);
+        return value_ > 0 ? value_ : 0;
+      };
+      const current = rounded(rt);
+      const settled = rounded(avg);
+      const suffix = shownTtft === undefined ? "" : ` · ${shownTtft.toFixed(1)}s ttft`;
       if (display === "rt") {
-        // Whole tokens/second, honestly rounded — the value is already an
-        // EWMA over estimated delta samples, so a decimal would fake a
-        // precision the samples never had. Anything below half a
-        // token/second hides rather than printing a zero figure. The suffix
-        // is the configured label, so a new user still reads `N tok/s`.
-        const rounded = rt === undefined ? undefined : Math.round(rt);
-        if (rounded === undefined || rounded <= 0) {
-          return shownTtft === undefined ? undefined : row("tps", `${shownTtft.toFixed(1)}s ttft`);
-        }
-        const rate = `${rounded} ${label}`;
-        return row("tps", shownTtft === undefined ? rate : `${rate} · ${shownTtft.toFixed(1)}s ttft`);
+        return row("tps", current > 0 ? `${current} ${label}${suffix}` : `0 ${label}`);
       }
       if (display === "both") {
-        // Both figures on one line when the average stands — the realtime
-        // half may round to zero while the average stands (`0 rt · 41 avg`).
-        // The mean time to first token rides along only once observed
-        // (`83 rt · 38 avg · 1.2s ttft`); unknown is omitted, never zeroed,
-        // and `tpsTtft: false` omits it the same way. The realtime-alone
-        // degrade is only for a missing average; a present average that
-        // rounds to zero hides the whole row, like the avg mode's own hide
-        // rule. Without either figure there is no row.
-        if (avg !== undefined) {
-          if (Math.round(avg) <= 0) return undefined;
-          const head = `${rt === undefined ? 0 : Math.round(rt)} rt · ${Math.round(avg)} avg`;
-          return shownTtft === undefined ? row("tps", head) : row("tps", `${head} · ${shownTtft.toFixed(1)}s ttft`);
-        }
-        if (rt !== undefined && Math.round(rt) > 0) return row("tps", `${Math.round(rt)} rt`);
-        return undefined;
+        // Both halves keep their structural names, whatever `label` says.
+        // TTFT rides only when a rate stands; a zero rate never borrows it.
+        const head = `${current} rt · ${settled} avg`;
+        return row("tps", settled > 0 ? head + suffix : head);
       }
-      // The default: the settled-turn average over the scope, honestly
-      // rounded, with the same configured suffix as the realtime row. The
-      // hide rule is the realtime row's own: at or below half a token/second
-      // it hides rather than printing a zero figure. This mode has never
-      // drawn TTFT, so the toggle changes nothing here.
-      if (avg === undefined || Math.round(avg) <= 0) return undefined;
-      return row("tps", `${Math.round(avg)} ${label}`);
+      return row("tps", `${settled} ${label}`);
     }
     case "spark": {
       const values = Array.isArray(source.spark) ? source.spark.map((value) => asCount(value) ?? 0) : [];
@@ -549,8 +533,9 @@ export function statLine(
       return row("spark", sparkline(windowed));
     }
     case "reasoning": {
-      const reasoning = asCount(asRecord(source.tokens)?.reasoning);
-      if (reasoning === undefined || reasoning === 0) return undefined;
+      // A model that emits no reasoning tokens still reads `0` on the row;
+      // the count keeps the same unit as a populated figure.
+      const reasoning = asCount(asRecord(source.tokens)?.reasoning) ?? 0;
       return row("reasoning", formatCount(reasoning));
     }
     case "turns": {

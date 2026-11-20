@@ -94,8 +94,8 @@ One global file: `~/.config/opencode/flight-deck.jsonc`. The `.json` name is als
 | **`sidebar.lines`** | `[]` | Fixed lines above the rows. Max 24. These plus rows share the rail cap (`maxLines`); fixed lines render at full brightness while live rows are dimmed. |
 | **`sidebar.footer.lines`** | `[]` | Fixed lines in the host footer slot, outside the rail cap; max 24. |
 | **`sidebar.footer.go`** | `false` | `true` or an object draws the live Go usage panel. Object keys: `header` (`false`), `barWidth` (`10`, 1–40), `labelWidth` (`6`, 5–24, auto-widens), `percent` (`true`), `reset` (`true`), `align` (`"right"`, left, right, or center), `sweep` (`false`), `labels` (`{rolling,weekly,monthly}`, each 1–24 chars), `blink` (`true`), `blinkMs` (`700`, 200–5000). |
-| **`sidebar.persist`** | `true` | Every named row renders, drawing its zero skeleton until data arrives; `false` omits rows with no data. |
-| **`sidebar.placeholder`** | `"—"` | Non-empty string; only for a data-less row with no skeleton. `caution` never draws it, and `updated` draws it until the host records an action. |
+| **`sidebar.persist`** | `true` | Every named row renders, drawing an honest zero until data arrives; `false` omits rows with no data. |
+| **`sidebar.placeholder`** | `"0"` | Non-empty string; only for a data-less row with no zero of its own. Numeric rows never use it. `caution` stays silent, and `updated` draws it until the host records an action. |
 | **`sidebar.maxLines`** | `24` | Whole rail, fixed lines plus rows, 1–24. |
 | **`sidebar.tps.scope`** | `"family"` | `"family"` paces the open session plus subagents; `"session"` paces the open session alone. |
 | **`sidebar.tps.display`** | `"rt"` | `"rt"` estimated realtime throughput plus observed TTFT, `"avg"` settled-turn average, `"both"` both figures plus TTFT. |
@@ -184,7 +184,7 @@ Every name `sidebar.rows` accepts, what its number means, and whether it draws b
 | `perms` | Pending approvals. One names the action plus an 18-cell clipped resource (`bash · src/tui…`); several lead with the count (`3 waiting · bash`). | yes |
 | `elapsed` | Active generation time, recomputed from the assistant-turn spans the host recorded for this session and its subagents. Survives a restart, never steps backwards while the host reports those turns, and is not wall-clock since the session began. | yes |
 | `updated` | Absolute timestamp of the newest action the host recorded: the latest message's `completed`, else `streamed`, else `created` stamp. The host locale and time zone apply by default; `format.timestamp` sets the locale, date and time styles, the 12/24-hour clock, and an IANA zone or UTC offset. A Windows zone id is rejected and the host zone is used. | opt-in |
-| `tps` | Session speed. Default `rt`: estimated realtime throughput from streaming delta bytes and observed mean TTFT after steps settle; TTFT remains visible when no rate is available. `avg` selects the settled-turn average; `both` shows both rates. Scope `family` includes subagents; `session` covers the open session. With neither a rate nor TTFT, `persist: true` draws the placeholder and `persist: false` omits the row. | yes |
+| `tps` | Session speed. Default `rt`: estimated realtime throughput from streaming delta bytes and observed mean TTFT after steps settle; TTFT rides only while a rate stands. `avg` selects the settled-turn average; `both` shows both rates. Scope `family` includes subagents; `session` covers the open session. With no rate the row draws `0 <sidebar.tps.label>` (`0 tok/s` shipped), never a placeholder or a ttft-only fallback. | yes |
 | `spark` | Recent turn sizes as a sparkline; the newest samples are kept. | opt-in |
 | `reasoning` | Reasoning tokens, family scope. | opt-in |
 | `turns` | Prompts sent this session. | opt-in |
@@ -194,7 +194,7 @@ Every name `sidebar.rows` accepts, what its number means, and whether it draws b
 | `ses` | Clipped 18-cell preview of the session id (less when the label column is narrow, floored at 8), labelled `session`. Click copies the full id. A verified copy is silent: the host write reports `written`, or an exact clipboard read-back confirms an OSC52 dispatch. An unconfirmed dispatch is an advisory warning (paste to verify). Gate the failure toast with `notifications.copy`. | opt-in |
 | `session` | Alias for `ses`; accepted in `sidebar.rows` and folded to it. | opt-in |
 
-With `sidebar.persist` (the default) named rows render even without data. Most draw a zero skeleton: `$0.000` money rows, `0 in · 0 out`, `0 read`, empty gauge plus `~0%`, `0 waiting`, `0s`, flat `▁` spark, `0` reasoning and turns, `○ 0 ○ 0 ○ 0` go, `○ idle`, `none` agent, model, and ses, `no branch`, `unknown` guard. `caution` stays silent; `tps` and `updated` draw `sidebar.placeholder` (`—`) when unavailable. Set `persist: false` to omit rows with no data instead.
+With `sidebar.persist` (the default) named rows render even without data. Numeric rows draw an honest zero: `$0.000` money rows, `0 in · 0 out`, `0 read`, `~0 used`, `0s`, `0` reasoning and turns, `0 tok/s` tps, plus the zero forms of the gauge and spark. `caution` stays silent; `updated` draws `sidebar.placeholder` (`0` by default) because there is no honest zero timestamp. Set `persist: false` to omit rows with no data instead.
 
 ### Recipes
 

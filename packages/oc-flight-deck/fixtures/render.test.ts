@@ -427,8 +427,7 @@ test("draws the family total for a childless session, and under a renamed label"
     const { sidebar } = railClaims(claims);
     return frameOf(sidebar!.render, 40, 8);
   })();
-  expect(empty).toContain("total     $0.000");
-  expect(empty).not.toContain("0 subagents");
+  expect(empty).toContain("total     $0.000 · 0 subagents");
 });
 
 test("totals subagent sessions and reads context from the last request", async () => {
@@ -485,8 +484,9 @@ test("keeps the sidebar empty until the host supplies session data", async () =>
   // With `persist: false` there are no placeholders: a row appears only once
   // it has a value.
   expect(frame).not.toContain("agent");
-  // A default row with no data must stay absent, not render its placeholder.
-  expect(frame).not.toContain("cost");
+  // A text row with no data stays absent; a numeric row draws its zero.
+  expect(frame).toContain("cost      $0.000");
+  expect(frame).not.toContain("agent");
   // No footer slot by default: the empty `sidebar.footer.lines` registers
   // nothing, independent of the rail.
   expect(sidebarFooter).toBeUndefined();
@@ -846,7 +846,7 @@ test("reads rt as the session's own realtime estimate", async () => {
   flightDeck.setup(context);
   const { sidebar } = railClaims(claims);
   // No deltas yet: nothing streams, so no row (persist: false hides the zero).
-  expect(await frameOf(sidebar!.render, 40, 6)).not.toContain("tok/s");
+  expect(await frameOf(sidebar!.render, 40, 6)).toContain("tps       0 tok/s");
   emit("session.text.delta", "ses_test", "x".repeat(500), at);
   emit("session.text.delta", "ses_child", "x".repeat(5000), at);
   const frame = await frameOf(sidebar!.render, 40, 6);
@@ -946,8 +946,9 @@ test("both mode degrades to hiding when nothing settled and nothing generates", 
   flightDeck.setup(context);
   const { sidebar } = railClaims(claims);
   const frame = await frameOf(sidebar!.render, 40, 6);
-  expect(frame).not.toContain("tok/s");
-  expect(frame).not.toContain("rt");
+  // Both halves still draw, as zeros, with no ttft segment.
+  expect(frame).toContain("tps       0 rt · 0 avg");
+  expect(frame).not.toContain("ttft");
 });
 
 test("the average excludes the in-flight turn's tokens and time together", async () => {
@@ -1003,7 +1004,7 @@ test('scope "session" hides the row while only a child streams', async () => {
   flightDeck.setup(sessionHarness.context);
   const sessionSidebar = railClaims(sessionHarness.claims).sidebar;
   sessionHarness.emit("session.text.delta", "ses_child", "x".repeat(500), Date.now() - 1_000);
-  expect(await frameOf(sessionSidebar!.render, 40, 6)).not.toContain("tok/s");
+  expect(await frameOf(sessionSidebar!.render, 40, 6)).toContain("tps       0 tok/s");
   // Family scope on the same streams paces the child.
   const familyHarness = harness(
     { sidebar: { rows: ["tps"], persist: false, tps: { display: "rt" } } },
@@ -1079,7 +1080,7 @@ test("reads zero when the stream goes stale instead of holding the figure", asyn
   flightDeck.setup(context);
   const { sidebar } = railClaims(claims);
   emit("session.text.delta", "ses_test", "x".repeat(500), now - 10_000);
-  expect(await frameOf(sidebar!.render, 40, 6)).not.toContain("tok/s");
+  expect(await frameOf(sidebar!.render, 40, 6)).toContain("tps       0 tok/s");
   emit("session.text.delta", "ses_test", "x".repeat(500), Date.now() - 1_000);
   expect(await frameOf(sidebar!.render, 40, 6)).toContain("tps       100 tok/s");
 });
@@ -1208,7 +1209,7 @@ test("keeps reasoning on its own row while rt paces the stream", async () => {
   flightDeck.setup(context);
   const { sidebar } = railClaims(claims);
   // No deltas yet: the realtime figure is zero, which persist: false hides.
-  expect(await frameOf(sidebar!.render, 40, 6)).not.toContain("tok/s");
+  expect(await frameOf(sidebar!.render, 40, 6)).toContain("tps       0 tok/s");
   // A 1,000-token output delta a second ago paints 1000 tok/s, and the
   // reasoning tokens still ride their own row.
   emit("session.text.delta", "ses_test", "x".repeat(5000), Date.now() - 1_000);
@@ -1256,7 +1257,7 @@ test("hides an in-flight turn on first sight, before any delta exists", async ()
   flightDeck.setup(context);
   const { sidebar } = railClaims(claims);
   const frame = await frameOf(sidebar!.render, 40, 6);
-  expect(frame).not.toContain("tok/s");
+  expect(frame).toContain("tps       0 tok/s");
 });
 
 test("hides tps on an unstamped host instead of billing idle as work", async () => {
@@ -1277,7 +1278,7 @@ test("hides tps on an unstamped host instead of billing idle as work", async () 
   // No usable stamps means no span union, and the first poll over the active
   // clock only sets the baselines: there is no honest rate yet, so the row
   // hides rather than printing a lifetime average (30,000 / 60 s).
-  expect(frame).not.toContain("tok/s");
+  expect(frame).toContain("tps       0 tok/s");
 });
 
 test("hides tps until the host has proven it stamps or not", async () => {
@@ -1293,7 +1294,7 @@ test("hides tps until the host has proven it stamps or not", async () => {
   flightDeck.setup(context);
   const { sidebar } = railClaims(claims);
   const frame = await frameOf(sidebar!.render, 40, 6);
-  expect(frame).not.toContain("tok/s");
+  expect(frame).toContain("tps       0 tok/s");
 });
 
 test("a zero-output stamped turn proves the host stamps and is counted, but yields no rate", async () => {
@@ -1315,7 +1316,7 @@ test("a zero-output stamped turn proves the host stamps and is counted, but yiel
   flightDeck.setup(context);
   const { sidebar } = railClaims(claims);
   const frame = await frameOf(sidebar!.render, 40, 6);
-  expect(frame).not.toContain("tok/s");
+  expect(frame).toContain("tps       0 tok/s");
 });
 
 test("never falls back once the host is known to stamp, even if a read fails", async () => {
@@ -1346,14 +1347,14 @@ test("never falls back once the host is known to stamp, even if a read fails", a
   // The first poll only sets the baselines and draws nothing; the failing
   // read draws nothing either.
   const first = await frameOf(sidebar!.render, 40, 6);
-  expect(first).not.toContain("tok/s");
+  expect(first).toContain("tps       0 tok/s");
 
   // A different session is a cache miss, so the read is attempted again - and
   // fails. The capability is already known true, so the row hides rather than
   // reverting to a lifetime average over the session record (which would read
   // 500 tok/s here).
   const second = await frameOf(sidebar!.render, 40, 6, "ses_other");
-  expect(second).not.toContain("tok/s");
+  expect(second).toContain("tps       0 tok/s");
   expect(second).not.toContain("500 tok/s");
 });
 
@@ -1608,8 +1609,8 @@ test("renders zero skeletons through the real panel when the host has no data", 
   flightDeck.setup(context);
   const { sidebar } = railClaims(claims);
   const frame = await frameOf(sidebar!.render, 40, 8);
-  // Live-shaped zeroes, not dashes: each is byte-identical to a real zero.
-  expect(frame).toContain("tps       —");
+  // Real zeroes, not dashes: each is byte-identical to a populated figure.
+  expect(frame).toContain("tps       0 tok/s");
   expect(frame).toContain("elapsed   0s");
   expect(frame).toContain("cost      $0.000");
   expect(frame).toContain("tokens    0 in · 0 out");
@@ -1643,8 +1644,8 @@ test("reads 0 tok/s on an idle session through the real panel", async () => {
   );
   flightDeck.setup(context);
   const { sidebar } = railClaims(claims);
-  // Persist is on: the idle zero draws its skeleton instead of hiding.
-  expect(await frameOf(sidebar!.render, 40, 6)).toContain("tps       —");
+  // The idle rate draws its honest zero rather than a placeholder.
+  expect(await frameOf(sidebar!.render, 40, 6)).toContain("tps       0 tok/s");
 });
 
 test("rolls the family tokens and cache reads up to the token rows", async () => {

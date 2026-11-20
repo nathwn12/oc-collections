@@ -1,0 +1,24 @@
+{
+  // A config written before the zero-row, lifetime-total and clearer-name
+  // slices. Every key here still loads and renders the same as it did then.
+  "$schema": "./flight-deck.schema.json",
+  "sidebar": {
+    "persist": true,
+    "placeholder": "—",
+    "rows": [
+      "status",
+      "agent",
+      "model",
+      "cost",
+      "total",
+      "project",
+      "tokens",
+      "cache",
+      "context",
+      "perms",
+      "elapsed",
+      "tps"
+    ],
+    "tps": { "scope": "family", "display": "rt" }
+  }
+}

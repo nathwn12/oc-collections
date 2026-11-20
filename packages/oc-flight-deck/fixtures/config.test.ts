@@ -16,6 +16,18 @@ import {
 } from "../src/tui/config.js";
 import { footerLine, sidebarLines } from "../src/tui/presentation.js";
 
+// Numeric rows always draw an honest zero, even with `persist: false`, so a
+// rail that asks for no fixed lines still carries these seven figures.
+const ZERO_ROWS = [
+  "cost      $0.000",
+  "project   $0.000",
+  "tokens    0 in · 0 out",
+  "cache     0 read",
+  "context   ~0 used",
+  "elapsed   0s",
+  "tps       0 tok/s",
+];
+
 describe("flight deck config", () => {
   test("uses the sane defaults when no options are supplied", () => {
     const resolution = resolveConfig(undefined);
@@ -24,7 +36,7 @@ describe("flight deck config", () => {
     // Literal defaults, so a silent edit to the constants is still caught.
     // With no session data, every selected row renders its zero skeleton.
     expect(resolution.config.sidebar.persist).toBe(true);
-    expect(resolution.config.sidebar.placeholder).toBe("—");
+    expect(resolution.config.sidebar.placeholder).toBe("0");
     expect(sidebarLines(resolution.config)).toHaveLength(
       DEFAULT_SIDEBAR_LINES.length + resolution.config.sidebar.rows.length,
     );
@@ -34,9 +46,8 @@ describe("flight deck config", () => {
       ...resolution.config,
       sidebar: { ...resolution.config.sidebar, persist: false },
     };
-    // The top rail starts with the live rows since 0.8.0: the branding pair
-    // moved to the sidebar footer default.
-    expect(sidebarLines(omitted)).toEqual([]);
+    // Text rows with no data are omitted; numeric rows keep their honest zero.
+    expect(sidebarLines(omitted)).toEqual(ZERO_ROWS);
     expect(resolution.config.sidebar.rows).toEqual([
       "status",
       "agent",
@@ -181,7 +192,7 @@ describe("flight deck config", () => {
       footer: { text: " custom footer " },
     });
     expect(resolution.issues).toEqual([]);
-    expect(sidebarLines(resolution.config)).toEqual(["MY RAIL", "second"]);
+    expect(sidebarLines(resolution.config)).toEqual(["MY RAIL", "second", ...ZERO_ROWS]);
     expect(footerLine(resolution.config)).toBe("custom footer");
   });
 
@@ -197,7 +208,7 @@ describe("flight deck config", () => {
       sidebar: { enabled: "yes", lines: [123, "  ", "ok"], persist: false },
       footer: { enabled: "yes", text: "" },
     });
-    expect(sidebarLines(resolution.config)).toEqual(["ok"]);
+    expect(sidebarLines(resolution.config)).toEqual(["ok", ...ZERO_ROWS]);
     expect(footerLine(resolution.config)).toBe(DEFAULT_FOOTER_TEXT);
     expect(resolution.issues).toHaveLength(5);
     expect(resolution.issues.join(" ")).toContain("sidebar.enabled");
@@ -208,8 +219,8 @@ describe("flight deck config", () => {
 
   test("falls back to the default lines when every entry is unusable", () => {
     const resolution = resolveConfig({ sidebar: { lines: [42, "   ", null], persist: false } });
-    // The default is now empty: nothing usable means no fixed top lines.
-    expect(sidebarLines(resolution.config)).toEqual([]);
+    // The default top lines are empty; the numeric rows still draw their zeros.
+    expect(sidebarLines(resolution.config)).toEqual(ZERO_ROWS);
     expect(resolution.issues.join(" ")).toContain("no usable entries");
   });
 
@@ -270,7 +281,7 @@ describe("flight deck config", () => {
       sidebar: { lines: ["A\nB", "C\td"], persist: false },
       footer: { text: "x\u001b[31my" },
     });
-    expect(sidebarLines(resolution.config)).toEqual(["A B", "C d"]);
+    expect(sidebarLines(resolution.config)).toEqual(["A B", "C d", ...ZERO_ROWS]);
     expect(footerLine(resolution.config)).toBe("x [31my");
     expect(resolution.issues.join(" ")).toContain("control characters");
     for (const line of sidebarLines(resolution.config)) {
@@ -588,7 +599,7 @@ describe("flight deck option precedence", () => {
       mergeOptions({ sidebar: "nope" }, { sidebar: { lines: ["host"], persist: false } }),
     );
     expect(issues).toEqual([]);
-    expect(sidebarLines(config)).toEqual(["host"]);
+    expect(sidebarLines(config)).toEqual(["host", ...ZERO_ROWS]);
   });
 
   test("merges the nested tps keys leaf by leaf instead of replacing the section", () => {

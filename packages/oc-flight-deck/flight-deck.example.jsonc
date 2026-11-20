@@ -180,11 +180,11 @@
     //              the rename at every `layout.labelWidth`. Off by default; needs the host's mouse.
     //
     // Every named row renders persistently, so the rail keeps a stable shape:
-    // a row with no data yet draws a real-looking zero — `$0.000` for money
-    // rows and `0 in · 0 out` for tokens. `caution` stays silent; `tps` and
-    // `updated` draw `sidebar.placeholder` (`—`) when data is unavailable.
-    // The fixed lines and live rows share the maxLines budget below, and
-    // anything past it is dropped.
+    // a numeric row with no data yet draws an honest zero — `$0.000` for
+    // money rows, `0 in · 0 out` for tokens, `0 tok/s` for tps. `caution`
+    // stays silent; `updated` draws `sidebar.placeholder` because there is no
+    // honest zero timestamp. The fixed lines and live rows share the maxLines
+    // budget below, and anything past it is dropped.
     "rows": [
       "status",
       "agent",
@@ -251,10 +251,11 @@
     // instead.
     "persist": true,
 
-    // Fallback for a persistent row with no data that has no skeleton. Any
-    // non-empty string. `caution` never draws it (its silence is the design),
-    // and `tps` and `updated` draw it until data is available.
-    "placeholder": "—",
+    // Fallback for a persistent row with no zero of its own. Any non-empty
+    // string; `0` by default. Numeric rows never use it — they draw a real
+    // zero. `caution` stays silent (its silence is the design), and `updated`
+    // draws it until data is available.
+    "placeholder": "0",
 
     // Maximum total height, including fixed lines and live rows. Defaults to 24.
     "maxLines": 24

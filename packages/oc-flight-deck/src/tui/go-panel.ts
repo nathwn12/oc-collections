@@ -30,7 +30,9 @@ import { formatRemaining as formatCompactRemaining, goTone, type GoUsage, type G
 export { formatRemaining as formatCompactRemaining } from "./go-usage.js";
 import type { RailLine } from "./presentation.js";
 import type { StatSegment } from "./rows.js";
-import { DEFAULT_PLACEHOLDER } from "./stat-fields.js";
+// The panel's "no reading" mark is its own, not the sidebar row placeholder:
+// changing `sidebar.placeholder` must never rewrite the Go dials.
+const NO_READING = "\u2014";
 import type { StyleColor } from "./style.js";
 
 /** The panel's three windows, in canonical 5h -> 1w -> 1m order. Labels live in the look. */
@@ -482,7 +484,7 @@ function restingLine(
   }
   const tail =
     CELL.repeat(trackCells) +
-    (look.showPercent ? ` ${alignCell(DEFAULT_PLACEHOLDER, PANEL_PERCENT_WIDTH, look.align)}` : "");
+    (look.showPercent ? ` ${alignCell(NO_READING, PANEL_PERCENT_WIDTH, look.align)}` : "");
   segments.push({ text: tail, tone: "subdued" });
   return { field: "go", text: segments.map((segment) => segment.text).join(""), segments };
 }
@@ -535,7 +537,7 @@ function valueLine(
     appendRun(runs, CELL, "subdued");
   }
   if (look.showPercent) {
-    const percent = ratio === undefined ? DEFAULT_PLACEHOLDER : `${Math.round(ratio * 100)}%`;
+    const percent = ratio === undefined ? NO_READING : `${Math.round(ratio * 100)}%`;
     // The percent joins the meter's trailing run so a uniform meter stays one
     // span; the countdown is its own dim run (relief, not severity).
     appendRun(runs, ` ${alignCell(percent, PANEL_PERCENT_WIDTH, look.align)}`, tone);

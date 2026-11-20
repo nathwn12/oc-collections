@@ -199,11 +199,19 @@ describe("the rail fits", () => {
   });
 
   test("every single field fits on its own", () => {
-    // Omission is opt-in now: the default rail is persistent, so pin the
-    // silent start through an explicit `persist: false`.
+    // Numeric rows always draw a zero, even with `persist: false`; only the
+    // text rows with no data are omitted.
     const silent = { ...DEFAULT_CONFIG, sidebar: { ...DEFAULT_CONFIG.sidebar, persist: false } };
     const rows = sidebarLines(silent).slice(silent.sidebar.lines.length);
-    expect(rows).toEqual([]); // no data, no rows - the rail starts silent when not persistent
+    expect(rows).toEqual([
+      "cost      $0.000",
+      "project   $0.000",
+      "tokens    0 in · 0 out",
+      "cache     0 read",
+      "context   ~0 used",
+      "elapsed   0s",
+      "tps       0 tok/s",
+    ]);
     for (const field of DEFAULT_CONFIG.sidebar.rows) {
       expect(overBudget(FULL, [field])).toEqual([]);
     }

@@ -251,7 +251,7 @@ export interface LayoutHint {
 }
 
 /** Fallback placeholder for a persistent row with no data and no skeleton. */
-export const DEFAULT_PLACEHOLDER = "—";
+export const DEFAULT_PLACEHOLDER = "0";
 
 export const DEFAULT_LABEL_WIDTH = 10;
 export const DEFAULT_SPARK_WIDTH = 12;
@@ -285,9 +285,13 @@ export function skeletonValue(field: string, layout: LayoutHint): string | undef
       return "0 waiting";
     case "elapsed":
       return formatDuration(0, layout.durationStyle);
-    case "tps":
-      // An absent rate is not a measured zero.
-      return undefined;
+    case "tps": {
+      // Same zero the row itself draws: an absent rate is a measured zero,
+      // never a placeholder. Kept here for callers that ask for a skeleton
+      // directly, even though the row now always renders one.
+      const label = layout.tpsLabel ?? "tok/s";
+      return layout.tpsDisplay === "both" ? `0 rt · 0 avg` : `0 ${label}`;
+    }
     case "spark":
       return "▁".repeat(Math.max(0, Math.floor(layout.sparkWidth ?? DEFAULT_SPARK_WIDTH)));
     case "reasoning":

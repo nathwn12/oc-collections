@@ -30,7 +30,8 @@ Add the entry to the `plugins` array in your `opencode.jsonc`, then restart Open
 
 The rail draws up to 18 named rows in the order you choose. Among them are:
 
-- **Money** — this conversation plus its subagent tree, with project-wide spend on its own row.
+- **Honest zeros** — every numeric row draws a real zero when there is no data, never a dash or a blank.
+- **Money** — the current model's spend for this session, and a durable lifetime total for the subagent tree. The old `cost` and `total` row names still work as aliases.
 - **Tokens and cache** — input and output tokens, and a cache hit rate with writes excluded.
 - **Context gauge** — occupancy as a bar plus a percentage, marked `~` when estimated.
 - **Speed** — a settled-turn average, a realtime estimate, or both plus time to first token.

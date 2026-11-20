@@ -20,10 +20,10 @@ const baselineRail = [
   "project   $0.000",
   "tokens    1k in · 340 out",
   "cache     88% hit · 9k read",
-  "context   ░░░░░░░░░░ ~0%",
+  "context   ~0 used",
   "perms     0 waiting",
   "elapsed   0s",
-  "tps       —",
+  "tps       0 tok/s",
 ];
 
 describe("configurable rail styling", () => {
