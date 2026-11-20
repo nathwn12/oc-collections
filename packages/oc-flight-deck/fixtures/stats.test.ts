@@ -61,23 +61,23 @@ describe("flight deck live rows", () => {
     ]);
   });
 
-  test("cost merges the subagent total only when nothing else shows it", () => {
+  test("spend merges the subagent total only when nothing else shows it", () => {
     const source = { cost: 0.2246, tree: { cost: 0.2447, count: 2 } };
 
-    // No `total` row on the rail: cost carries the family figure itself.
-    expect(statLine("cost", source)).toBe("cost      $0.245 · 2 subagents");
-    // `total` row present: cost goes back to the session figure.
-    expect(statLine("cost", source, { hasTotalRow: true })).toBe("cost      $0.225");
+    // No lifetime row on the rail: spend carries the family figure itself.
+    expect(statLine("spend", source)).toBe("spend     $0.245 · 2 subagents");
+    // Lifetime row present: spend goes back to the session figure.
+    expect(statLine("spend", source, { hasLifetimeRow: true })).toBe("spend     $0.225");
 
     // Nothing to merge when no subagent ran, whichever way the rail is set up.
-    expect(statLine("cost", { cost: 0.1913 })).toBe("cost      $0.191");
-    expect(statLine("cost", { cost: 0.1913, tree: { cost: 0.1913, count: 0 } })).toBe("cost      $0.191");
-    expect(statLine("cost", { cost: 0.2, tree: { cost: 0.2, count: 1 } })).toBe("cost      $0.200");
-    expect(statLine("cost", { cost: 0.2, tree: { cost: 0.25, count: 1 } })).toBe("cost      $0.250 · 1 subagent");
+    expect(statLine("spend", { cost: 0.1913 })).toBe("spend     $0.191");
+    expect(statLine("spend", { cost: 0.1913, tree: { cost: 0.1913, count: 0 } })).toBe("spend     $0.191");
+    expect(statLine("spend", { cost: 0.2, tree: { cost: 0.2, count: 1 } })).toBe("spend     $0.200");
+    expect(statLine("spend", { cost: 0.2, tree: { cost: 0.25, count: 1 } })).toBe("spend     $0.250 · 1 subagent");
   });
 
   test("renames a row's label from the layout hint, in both renderers", () => {
-    const labels = { cost: "session", total: "lifetime" } as const;
+    const labels = { spend: "session", lifetime: "lifetime" } as const;
     const source = {
       cost: 0.1913,
       agent: "build",
@@ -86,9 +86,11 @@ describe("flight deck live rows", () => {
       go: { windows: [{ id: "5h", ratio: 0.1 }] },
     };
     // The plain path and the persistent-row path resolve through the same map.
-    expect(statLine("cost", source, { labels })).toBe("session   $0.191");
-    expect(statRows(["cost"], source, { labels })).toEqual(["session   $0.191"]);
-    expect(statLine("total", { tree: { cost: 0.9, count: 3 } }, { labels })).toBe("lifetime  $0.900 · 3 subagents");
+    expect(statLine("spend", source, { labels })).toBe("session   $0.191");
+    expect(statRows(["spend"], source, { labels })).toEqual(["session   $0.191"]);
+    expect(statLine("lifetime", { tree: { cost: 0.9, count: 3 } }, { labels })).toBe(
+      "lifetime  $0.900 · 3 subagents",
+    );
     // A row whose label is not in the map keeps its built-in text.
     expect(statLine("agent", source, { labels })).toBe("agent     build");
     // `ses` still draws its built-in `session` label when no override names it.
@@ -951,7 +953,16 @@ describe("the session-id row", () => {
     expect(isStatField("ses")).toBe(true);
     expect(canonicalField("session")).toBe("ses");
     expect(canonicalField("ses")).toBe("ses");
-    expect(canonicalField("cost")).toBe("cost");
+    expect(canonicalField("cost")).toBe("spend");
+    expect(canonicalField("total")).toBe("lifetime");
+    expect(isStatField("cost")).toBe(true);
+    expect(isStatField("total")).toBe(true);
+    // Aliases take the same behavioural path but keep their own label.
+    const money = { cost: 0.1913, tree: { cost: 0.1913, count: 0 } };
+    expect(statLine("cost", money)).toBe("cost      $0.191");
+    expect(statLine("spend", money)).toBe("spend     $0.191");
+    expect(statLine("total", { tree: { cost: 0.9, count: 3 } })).toBe("total     $0.900 · 3 subagents");
+    expect(statLine("lifetime", { tree: { cost: 0.9, count: 3 } })).toBe("lifetime  $0.900 · 3 subagents");
     const source = { sessionId: "ses_abcdefghijklmnopqrstuvwxyz" };
     expect(statLine("session", source, {})).toBe(statLine("ses", source, {}));
     expect(statLine("session", source, {})).toBe("session   ses_abcdefghijklm…");

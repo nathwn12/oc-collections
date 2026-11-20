@@ -126,7 +126,7 @@ describe("flight deck config file", () => {
     expect(footerLine(config)).toBe("jsonc");
     expect(sidebarLines(config)).toEqual([
       "jsonc line",
-      "cost      $0.000",
+      "spend     $0.000",
       "project   $0.000",
       "tokens    0 in · 0 out",
       "cache     0 read",
@@ -198,7 +198,7 @@ describe("flight deck config file", () => {
     expect(footerLine(config)).toBe("host footer");
     expect(sidebarLines(config)).toEqual([
       "file",
-      "cost      $0.000",
+      "spend     $0.000",
       "project   $0.000",
       "tokens    0 in · 0 out",
       "cache     0 read",

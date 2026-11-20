@@ -6,6 +6,7 @@
 // session state, and nothing leaves the process.
 
 import type { FlightDeckConfig } from "./config.js";
+import { canonicalField } from "./stat-fields.js";
 import { statLine, statRows, statSegments, type StatSource, type StatSegment } from "./stats.js";
 import { rowStyle, type LineStyle, type StyleColor, type StyleConfig } from "./style.js";
 
@@ -57,10 +58,10 @@ export function railLines(config: FlightDeckConfig, source: StatSource = {}): re
     tpsDisplay: config.sidebar.tps.display,
     tpsLabel: config.sidebar.tps.label,
     tpsTtft: config.sidebar.tps.ttft,
-    // Decided from the whole row list, the way `statRows` decides it: `cost`
-    // folds the subagent total into itself only when no `total` row was asked
-    // for, even if the cap later drops that row.
-    hasTotalRow: config.sidebar.rows.includes("total"),
+    // Decided from the whole row list, the way `statRows` decides it: `spend`
+    // folds the subagent total into itself only when no `lifetime` row (or its
+    // `total` alias) was asked for, even if the cap later drops that row.
+    hasLifetimeRow: config.sidebar.rows.some((field) => canonicalField(field) === "lifetime"),
   };
 
   const lines: RailLine[] = config.sidebar.lines.map((text) => ({ text }));

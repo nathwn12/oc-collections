@@ -286,7 +286,7 @@ describe("flight deck plugin", () => {
     expect(framed).toContain("model     gpt-5");
     // `branch` is off the default rail now: a VCS call is opt-in.
     expect(framed).not.toContain("branch");
-    expect(framed).toContain("cost      $0.250");
+    expect(framed).toContain("spend     $0.250");
     expect(framed).toContain("tokens    1k in · 340 out");
     // The prompt footer is opt-in; the sidebar already carries the data.
     expect(footerLine(DEFAULT_CONFIG)).toBeUndefined();

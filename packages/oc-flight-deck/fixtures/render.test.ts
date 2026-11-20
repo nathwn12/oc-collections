@@ -492,9 +492,9 @@ test("keeps the sidebar empty until the host supplies session data", async () =>
   // With `persist: false` there are no placeholders: a row appears only once
   // it has a value.
   expect(frame).not.toContain("agent");
-  // A text row with no data stays absent; a numeric row draws its zero.
-  expect(frame).toContain("cost      $0.000");
-  expect(frame).not.toContain("agent");
+  // A text row with no data stays absent; a numeric row draws its zero, and
+  // the default row now names that money row `spend`.
+  expect(frame).toContain("spend     $0.000");
   // No footer slot by default: the empty `sidebar.footer.lines` registers
   // nothing, independent of the rail.
   expect(sidebarFooter).toBeUndefined();

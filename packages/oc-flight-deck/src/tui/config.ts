@@ -488,7 +488,7 @@ export const DEFAULT_SIDEBAR_ROWS: readonly string[] = [
   "status",
   "agent",
   "model",
-  "cost",
+  "spend",
   "project",
   "tokens",
   "cache",
@@ -810,7 +810,20 @@ function readRows(value: unknown, issues: string[], maxLines: number): readonly 
       issues.push(`${path} is not a known field (${STAT_FIELDS.join(", ")}); skipping it`);
       return;
     }
-    rows.push(canonicalField(name));
+    // An alias and its key name one row. Keep the first spelling (so an old
+    // config keeps its old label) and report the second rather than drawing
+    // the same figure twice.
+    const canonical = canonicalField(name);
+    const duplicateOf = rows.find((entry) => canonicalField(entry) === canonical);
+    if (duplicateOf !== undefined) {
+      issues.push(`${path} duplicates ${duplicateOf}; rendering the row once`);
+      return;
+    }
+    // `session` keeps folding to `ses`; `cost` and `total` keep their spelling
+    // so old configs render byte-for-byte as they did before the rename.
+    // The guard above narrows to the canonical union, but the original string
+    // may still be an accepted alias; read it as a plain string here.
+    rows.push((name as string) === "session" ? "ses" : name);
   });
 
   if (rows.length === 0) {

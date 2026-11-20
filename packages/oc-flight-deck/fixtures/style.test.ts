@@ -16,7 +16,7 @@ const baselineRail = [
   "status    ○ idle",
   "agent     orchestrator",
   "model     gpt-5 · high",
-  "cost      $0.250",
+  "spend     $0.250",
   "project   $0.000",
   "tokens    1k in · 340 out",
   "cache     88% hit · 9k read",
@@ -73,11 +73,11 @@ describe("configurable rail styling", () => {
     expect(issues).toEqual([]);
 
     const lines = railLines(config, populatedSource);
-    const cost = lines.find((line) => line.field === "cost")!;
+    const spend = lines.find((line) => line.field === "spend")!;
     const status = lines.find((line) => line.field === "status")!;
-    expect(railLineStyle(config.style, cost)).toEqual({ color: "success", attributes: ["dim", "bold"] });
+    expect(railLineStyle(config.style, spend)).toEqual({ color: "success", attributes: ["dim", "bold"] });
     expect(railLineStyle(config.style, status)).toEqual({ color: "subdued", attributes: [] });
-    expect(Object.keys(config.style.rows.overrides)).toContain("cost");
+    expect(Object.keys(config.style.rows.overrides)).toContain("spend");
   });
 
   test("warns and safely ignores invalid colors, attributes, and row names", () => {
@@ -95,7 +95,7 @@ describe("configurable rail styling", () => {
 
       expect(config.style.lines).toEqual({ color: "default", attributes: ["bold"] });
       expect(config.style.rows.wildcard).toEqual({ color: "warning", attributes: ["dim"] });
-      expect(config.style.rows.overrides.cost).toEqual({ color: "warning", attributes: ["blink"] });
+      expect(config.style.rows.overrides.spend).toEqual({ color: "warning", attributes: ["blink"] });
       expect(config.style.rows.overrides.costly).toBeUndefined();
       expect(issues.join(" ")).toContain("style.lines.color");
       expect(issues.join(" ")).toContain("style.lines.attributes[0]");

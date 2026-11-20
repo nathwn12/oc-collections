@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
-import { resolveConfig } from "../src/tui/config.js";
+import { DEFAULT_CONFIG, resolveConfig } from "../src/tui/config.js";
 import { parseJsonc } from "../src/tui/file-config.js";
 import { sidebarLines } from "../src/tui/presentation.js";
 
@@ -43,6 +43,32 @@ describe("additive configuration", () => {
       "perms     bash",
       "elapsed   2h 14m 00s",
       "tps       106 tok/s · 1.2s ttft",
+    ]);
+  });
+
+  test("an old name and its new key together render once and report the duplicate", () => {
+    const { config, issues } = resolveConfig({ sidebar: { rows: ["cost", "spend", "total", "lifetime"] } });
+    // The first spelling wins, so an old config keeps its old label.
+    expect(config.sidebar.rows).toEqual(["cost", "total"]);
+    expect(issues.filter((issue) => issue.includes("duplicates"))).toHaveLength(2);
+    const lines = sidebarLines(config, { cost: 0.5, tree: { cost: 1, count: 1 } });
+    expect(lines).toEqual(["cost      $0.500", "total     $1.00 · 1 subagent"]);
+  });
+
+  test("the new defaults are present and every money label fits eight cells", () => {
+    expect(DEFAULT_CONFIG.sidebar.rows).toContain("spend");
+    expect(DEFAULT_CONFIG.sidebar.rows).not.toContain("cost");
+    const narrow = {
+      ...DEFAULT_CONFIG,
+      sidebar: { ...DEFAULT_CONFIG.sidebar, rows: ["spend", "lifetime", "cost", "total"], persist: false },
+      layout: { ...DEFAULT_CONFIG.layout, labelWidth: 8 },
+    };
+    const source = { cost: 0.5, tree: { cost: 1, count: 1 } };
+    expect(sidebarLines(narrow, source)).toEqual([
+      "spend   $0.500",
+      "lifetime $1.00 · 1 subagent",
+      "cost    $0.500",
+      "total   $1.00 · 1 subagent",
     ]);
   });
 });

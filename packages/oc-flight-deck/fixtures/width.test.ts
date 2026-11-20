@@ -204,7 +204,7 @@ describe("the rail fits", () => {
     const silent = { ...DEFAULT_CONFIG, sidebar: { ...DEFAULT_CONFIG.sidebar, persist: false } };
     const rows = sidebarLines(silent).slice(silent.sidebar.lines.length);
     expect(rows).toEqual([
-      "cost      $0.000",
+      "spend     $0.000",
       "project   $0.000",
       "tokens    0 in · 0 out",
       "cache     0 read",

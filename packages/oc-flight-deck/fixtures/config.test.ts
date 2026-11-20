@@ -19,7 +19,7 @@ import { footerLine, sidebarLines } from "../src/tui/presentation.js";
 // Numeric rows always draw an honest zero, even with `persist: false`, so a
 // rail that asks for no fixed lines still carries these seven figures.
 const ZERO_ROWS = [
-  "cost      $0.000",
+  "spend     $0.000",
   "project   $0.000",
   "tokens    0 in · 0 out",
   "cache     0 read",
@@ -52,7 +52,7 @@ describe("flight deck config", () => {
       "status",
       "agent",
       "model",
-      "cost",
+      "spend",
       "project",
       "tokens",
       "cache",
@@ -701,7 +701,7 @@ describe("option validation", () => {
       layout: { labels: { cost: "session", total: "lifetime" } },
     });
     expect(issues).toEqual([]);
-    expect(config.layout.labels).toEqual({ cost: "session", total: "lifetime" });
+    expect(config.layout.labels).toEqual({ spend: "session", lifetime: "lifetime" });
     expect(sidebarLines(config, { agent: "build", cost: 0.1913, tree: { cost: 0.1913, count: 0 } })).toEqual([
       "session   $0.191",
       "lifetime  $0.191 · 0 subagents",
@@ -725,7 +725,7 @@ describe("option validation", () => {
     const unknown = resolveConfig({ layout: { labels: { costt: "money" } } });
     expect(unknown.config.layout.labels).toBeUndefined();
     expect(unknown.issues.join(" ")).toContain("layout.labels.costt is not a known row");
-    expect(unknown.issues.join(" ")).toContain("cost, total");
+    expect(unknown.issues.join(" ")).toContain("spend, lifetime");
 
     const wrongType = resolveConfig({ layout: { labels: { cost: 5 } } });
     expect(wrongType.config.layout.labels).toBeUndefined();
@@ -741,7 +741,7 @@ describe("option validation", () => {
 
     // A good key beside a bad one survives: only the bad row falls back.
     const mixed = resolveConfig({ layout: { labels: { cost: "session", nope: "x" } } });
-    expect(mixed.config.layout.labels).toEqual({ cost: "session" });
+    expect(mixed.config.layout.labels).toEqual({ spend: "session" });
     expect(mixed.issues.join(" ")).toContain("layout.labels.nope");
   });
 

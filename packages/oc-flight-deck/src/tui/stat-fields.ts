@@ -95,8 +95,8 @@ export const STAT_FIELDS = [
   "agent",
   "model",
   "branch",
-  "cost",
-  "total",
+  "spend",
+  "lifetime",
   "project",
   "tokens",
   "cache",
@@ -133,23 +133,32 @@ type StatField = (typeof STAT_FIELDS)[number];
 export const ANIMATED_FIELDS = ["caution", "status", "elapsed", "tps"] as const;
 
 export function isStatField(value: string): value is StatField {
-  // `session` is the display alias for `ses`: accepted here and folded back by
+  // `session`, `cost` and `total` are accepted aliases, folded back by
   // `canonicalField`, but kept out of `STAT_FIELDS` on purpose — that array is
-  // the config vocabulary echoed in config error messages, and the key stays
-  // `ses`.
-  return value === "session" || STAT_FIELDS.some((field) => field === value);
+  // the canonical config vocabulary echoed in config error messages. The
+  // aliases stay accepted forever so no existing config breaks.
+  return (
+    value === "session" ||
+    value === "cost" ||
+    value === "total" ||
+    STAT_FIELDS.some((field) => field === value)
+  );
 }
 
 /**
  * The canonical config key for a field name.
  *
- * `session` is accepted as an alias for `ses` and folds back to it; every
- * other name is returned unchanged. The renderers canonicalize their field
- * argument at entry, so `statLine("session", …)` renders byte-identically to
- * `statLine("ses", …)`.
+ * `session` folds to `ses`, `cost` to `spend`, and `total` to `lifetime`.
+ * Every other name is returned unchanged. The renderers canonicalize their
+ * field argument at entry, so an alias and its key take the same behavioural
+ * path; the caller's original spelling is kept for the label, so an old config
+ * still draws the same bytes.
  */
 export function canonicalField(name: string): string {
-  return name === "session" ? "ses" : name;
+  if (name === "session") return "ses";
+  if (name === "cost") return "spend";
+  if (name === "total") return "lifetime";
+  return name;
 }
 
 /**
@@ -194,13 +203,13 @@ export interface LayoutHint {
    */
   readonly timestamp?: TimestampFormat;
   /**
-   * True when the rail already draws a `total` row.
+   * True when the rail already draws a `lifetime` row (or its `total` alias).
    *
-   * The `cost` row merges the subagent total into itself only when nothing else
-   * on the rail already shows it — which makes "do I want one money row or two"
-   * a property of `sidebar.rows`, not a separate setting to find.
+   * The `spend` row merges the subagent total into itself only when nothing
+   * else on the rail already shows it — which makes "one money row or two" a
+   * property of `sidebar.rows`, not a separate setting to find.
    */
-  readonly hasTotalRow?: boolean;
+  readonly hasLifetimeRow?: boolean;
   /**
    * Per-row label overrides, keyed by the canonical row name (`ses`, not
    * `session`). Carried here rather than read from config directly so both
@@ -276,8 +285,8 @@ export const DEFAULT_SPARK_WIDTH = 12;
  */
 export function skeletonValue(field: string, layout: LayoutHint): string | undefined {
   switch (canonicalField(field)) {
-    case "cost":
-    case "total":
+    case "spend":
+    case "lifetime":
     case "project":
       return formatCost(0);
     case "tokens":

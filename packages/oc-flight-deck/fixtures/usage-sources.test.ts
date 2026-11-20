@@ -65,7 +65,7 @@ describe("probe 1: gapped history is not exact", () => {
     const reads = createSessionReads(stub({ root: record }, { root: ["root"] }, messages, { hostCost: () => 3 }));
 
     expect(reads.sessionCost("root", record)).toEqual({ cost: 2, kind: "bounded" });
-    expect(statLine("cost", { cost: 2, costKind: "bounded" }, { hasTotalRow: true })).toBe(
+    expect(statLine("cost", { cost: 2, costKind: "bounded" }, { hasLifetimeRow: true })).toBe(
       `cost      ${FLOOR}$2.00`,
     );
   });

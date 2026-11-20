@@ -21,6 +21,8 @@ const SKELETONS: Readonly<Record<string, string>> = {
   agent: "none",
   model: "none",
   branch: "no branch",
+  spend: "$0.000",
+  lifetime: "$0.000 · 0 subagents",
   cost: "$0.000",
   total: "$0.000 · 0 subagents",
   project: "$0.000",
@@ -128,7 +130,7 @@ describe("persistent sidebar rows", () => {
     const config = resolveConfig({ sidebar: { persist: false } }).config;
     // Numeric rows always have a zero to draw, so only the text rows vanish.
     expect(sidebarLines(config, {})).toEqual([
-      "cost      $0.000",
+      "spend     $0.000",
       "project   $0.000",
       "tokens    0 in · 0 out",
       "cache     0 read",

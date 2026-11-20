@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Clearer row names `spend` and `lifetime` are now the defaults. `cost` and `total` remain accepted aliases with their old labels and meaning; naming both an alias and its key renders once and reports the duplicate.
 - The `total` row is now a durable high-water mark: the highest family figure seen for a session root is kept under `~/.local/share/opencode/flight-deck/totals.json`, so restarts and host pruning cannot lower it. The current-model spend row is unchanged.
 
 ### Changed

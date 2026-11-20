@@ -15,7 +15,7 @@ import { loadConfigFile } from "./file-config.js";
 import { createGoLookReader } from "./go-look.js";
 import { footerLine, railLineSpans, railLines, railLineStyle, type RailLine } from "./presentation.js";
 import { goPanelLines } from "./go-panel.js";
-import { ANIMATED_FIELDS, type StatSource } from "./stats.js";
+import { ANIMATED_FIELDS, canonicalField, type StatSource } from "./stats.js";
 import { attributeMask, themeColor } from "./style.js";
 import { startGuardBridge } from "./guard.js";
 import { startGoBridge } from "./go.js";
@@ -55,7 +55,12 @@ export default Plugin.define({
     // Only the rows actually on the rail are worth deriving: the rail re-runs on
     // every tick, and a figure nobody asked to see should not cost a walk of the
     // session database or the model catalog.
-    const rows = config.sidebar.enabled ? new Set(config.sidebar.rows) : new Set<string>();
+    // Canonical keys for the "is this row on screen" checks: `cost` and
+    // `total` are accepted aliases of `spend` and `lifetime`, and every one of
+    // them must ask for the same underlying read.
+    const rows = config.sidebar.enabled
+      ? new Set(config.sidebar.rows.map(canonicalField))
+      : new Set<string>();
     const wants = (name: string): boolean => rows.has(name);
 
     if (file.issue !== undefined && file.source !== undefined) {
@@ -316,7 +321,7 @@ export default Plugin.define({
       // roll-up. Neither reads the other's source, so no hand-off can make the
       // lifetime figure inherit a per-model one.
       const wantsUsage =
-        wants("cost") || wants("total") || wants("tokens") || wants("cache") || wants("reasoning");
+        wants("spend") || wants("lifetime") || wants("tokens") || wants("cache") || wants("reasoning");
       const ownCost = wantsUsage ? sessionCost(sessionID, session as SessionLike | undefined) : undefined;
       const tree = wantsUsage ? treeTotals(sessionID) : undefined;
 

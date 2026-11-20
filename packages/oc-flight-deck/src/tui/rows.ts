@@ -340,7 +340,7 @@ export function statLine(
       const branch = asText(source.branch);
       return branch === undefined ? undefined : row("branch", branch);
     }
-    case "cost": {
+    case "spend": {
       const cost = asCount(source.cost);
       const tree = asRecord(source.tree);
       const treeCost = asCount(tree?.cost);
@@ -348,34 +348,33 @@ export function statLine(
       const family = count !== undefined && count > 0 ? count : 0;
 
       // Merge only when subagents actually ran, and only when the rail is not
-      // already showing a `total` row. Two rows holding a number and its own
-      // superset was the thing worth fixing; a setting to choose between them
-      // would just be that duplication with extra steps.
+      // already showing a `lifetime` row (or its `total` alias). Two rows
+      // holding a number and its own superset was the thing worth fixing; a
+      // setting to choose between them would just be that duplication.
       const merge =
-        layout.hasTotalRow !== true &&
+        layout.hasLifetimeRow !== true &&
         cost !== undefined &&
         treeCost !== undefined &&
         family > 0 &&
         treeCost > cost;
 
       if (!merge) {
-        // `cost` is the current model's spend and nothing else. With no spend
+        // `spend` is the current model's spend and nothing else. With no spend
         // on that model the row draws a sane zero, never a dash or a hole, and
         // it still never borrows the family figure under a one-model label.
-        return row("cost", `${feeMark(source.costKind)}${formatCost(cost ?? 0)}`);
+        // `field` keeps the caller's spelling, so the `cost` alias still draws
+        // its old label.
+        return row(field, `${feeMark(source.costKind)}${formatCost(cost ?? 0)}`);
       }
 
       // The delta (`+$0.020`) used to be here and pushed the row to 40 columns,
       // wide enough to wrap in a normal sidebar. It was real information that
       // did not earn its width: the count already explains why the figure is
-      // higher, and this form is the same width as the old `total` row.
+      // higher, and this form is the same width as the lifetime row.
       const plural = family === 1 ? "subagent" : "subagents";
-      return row(
-        "cost",
-        `${feeMark(tree?.kind)}${formatCost(treeCost as number)} · ${family} ${plural}`,
-      );
+      return row(field, `${feeMark(tree?.kind)}${formatCost(treeCost as number)} · ${family} ${plural}`);
     }
-    case "total": {
+    case "lifetime": {
       // The family figure: this session plus its subagent sessions. Since 0.20.0
       // it is drawn even when no subagent has run — the true family total is then
       // the session's own cost, and the row reads `$0.000 · 0 subagents` rather
@@ -391,7 +390,7 @@ export function statLine(
       const cost = asCount(durable?.cost) ?? asCount(live?.cost) ?? 0;
       const count = asCount(live?.count) ?? 0;
       const plural = count === 1 ? "subagent" : "subagents";
-      return row("total", `${feeMark(durable?.kind ?? live?.kind)}${formatCost(cost)} · ${count} ${plural}`);
+      return row(field, `${feeMark(durable?.kind ?? live?.kind)}${formatCost(cost)} · ${count} ${plural}`);
     }
     case "project": {
       const project = asRecord(source.project);
@@ -640,18 +639,22 @@ export function statRows(
   source: StatSource,
   layout: LayoutHint = {},
 ): readonly string[] {
-  // The rows list decides whether `cost` merges the subagent total into itself.
-  // Passing that down means the choice lives in `sidebar.rows`, where someone
-  // is already deciding what the rail shows.
-  const hint: LayoutHint = { ...layout, hasTotalRow: fields.includes("total") };
+  // The rows list decides whether `spend` merges the subagent total into
+  // itself. Both `lifetime` and its `total` alias count, so an old config keeps
+  // its one-money-row-per-figure shape.
+  const hint: LayoutHint = {
+    ...layout,
+    hasLifetimeRow: fields.some((field) => canonicalField(field) === "lifetime"),
+  };
   const persist = hint.persist === true;
   const placeholder = hint.placeholder ?? DEFAULT_PLACEHOLDER;
   const labelWidth = hint.labelWidth ?? DEFAULT_LABEL_WIDTH;
   const rows: string[] = [];
   for (const field of fields) {
-    // Canonicalized once, so the alias and the key take the same path below.
+    // The renderer canonicalizes internally; the original spelling is kept so
+    // an alias still draws its old label byte-for-byte.
     const name = canonicalField(field);
-    const line = statLine(name, source, hint);
+    const line = statLine(field, source, hint);
     if (line !== undefined) {
       rows.push(line);
       continue;

@@ -42,6 +42,7 @@ The rail draws up to 18 named rows in the order you choose. Among them are:
 
 All settings live in one global file; there are no per-project files. Start from the [example config](https://github.com/nathwn12/oc-collections/blob/main/packages/oc-flight-deck/flight-deck.example.jsonc) and check the [schema](https://github.com/nathwn12/oc-collections/blob/main/packages/oc-flight-deck/flight-deck.schema.json) for each key and its default.
 
+
 ## Requirements
 
 - OpenCode 2.1.1 or newer.

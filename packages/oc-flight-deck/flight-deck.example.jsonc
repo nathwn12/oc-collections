@@ -122,25 +122,23 @@
     //   agent      which agent is running (orchestrator, build, plan, ...)
     //   model      model id, plus the variant when there is one
     //   branch     current git branch. Off by default — costs a VCS call
-    //   cost       this conversation, plus every subagent session in its tree
-    //              (the host links those by parentID); with `total` on the
-    //              rail, the session figure alone. It cannot see spend from an
-    //              independently spawned top-level session: the rollup follows
-    //              the host's parentID link only (family()), a session spawned
-    //              as an independent top-level session carries no parentID,
-    //              and the host returned no metadata field for the sessions
-    //              probed during this work — so there is no automatic creator
-    //              link today. The `project` row is the surface that covers
-    //              every session in the project, spawned included
-    //   total      the family total and subagent count on a row of its own —
-    //              the session's own cost with `0 subagents` when it spawned
-    //              none, never a blank row
+    //   spend      the current model's spend for this session only. `cost` is
+    //              an accepted alias and renders the same row. It cannot see
+    //              spend from an independently spawned top-level session: the
+    //              rollup follows the host's parentID link only (family()),
+    //              and a session spawned as an independent top-level session
+    //              carries no parentID. `project` covers every session in the
+    //              project, spawned included
+    //   lifetime   the durable family total and subagent count on a row of its
+    //              own — all models, this session plus its subagents, kept as
+    //              a high-water mark across restarts. `total` is an accepted
+    //              alias. `0 subagents` when it spawned none, never a blank
     //   project    every session in this project, not just the one on screen
-    //   tokens     input and output, in the same family scope as `cost`: this
+    //   tokens     input and output, in the same family scope as `spend`: this
     //              conversation plus its subagent sessions when any exist,
     //              the session alone when there are none
     //   cache      cache hit rate, then cache reads, in the same family scope
-    //              as `cost`
+    //              as `spend`
     //   context    a gauge of how full the context window is
     //   perms      what is waiting for approval, not just how many
     //   elapsed    active time recomputed from the assistant-turn spans the host
@@ -164,7 +162,7 @@
     //              `both` draws both on one line
     //   spark      recent turn sizes as a sparkline
     //   reasoning  reasoning tokens, when the model emits them, in the same
-    //              family scope as `cost`
+    //              family scope as `spend`
     //   turns      how many prompts you have sent this session
     //   guard      harness status from oc-harness-guard: breaches, orphans,
     //              findings, or ok. Available, off by default.
@@ -194,7 +192,7 @@
       "status",
       "agent",
       "model",
-      "cost",
+      "spend",
       "project",
       "tokens",
       "cache",
