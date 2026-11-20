@@ -491,44 +491,54 @@ export function statLine(
       // boundary, so all re-coerced like every other field. Which one draws
       // is `layout.tpsDisplay` (the row's view of `sidebar.tps.display`,
       // default `"rt"`); presentation.ts feeds it from the resolved config.
+      // `layout.tpsTtft` is `sidebar.tps.ttft`: off, `ttft` never draws in any
+      // mode, and the realtime fallback below hides instead of showing it.
+      // `layout.tpsLabel` is `sidebar.tps.label`: the suffix on the two
+      // single-figure modes ("tok/s" shipped); "both" names its own halves.
       const pair = asRecord(source.tps);
       const rt = asCount(pair?.["rt"]);
       const avg = asCount(pair?.["avg"]);
       const ttft = asCount(pair?.["ttft"]);
+      const shownTtft = (layout.tpsTtft ?? true) ? ttft : undefined;
       const display = layout.tpsDisplay ?? "rt";
+      const label = layout.tpsLabel ?? "tok/s";
       if (display === "rt") {
         // Whole tokens/second, honestly rounded — the value is already an
         // EWMA over estimated delta samples, so a decimal would fake a
         // precision the samples never had. Anything below half a
-        // token/second hides rather than printing "0 tok/s".
+        // token/second hides rather than printing a zero figure. The suffix
+        // is the configured label, so a new user still reads `N tok/s`.
         const rounded = rt === undefined ? undefined : Math.round(rt);
         if (rounded === undefined || rounded <= 0) {
-          return ttft === undefined ? undefined : row("tps", `${ttft.toFixed(1)}s ttft`);
+          return shownTtft === undefined ? undefined : row("tps", `${shownTtft.toFixed(1)}s ttft`);
         }
-        const rate = `${rounded} tok/s`;
-        return row("tps", ttft === undefined ? rate : `${rate} · ${ttft.toFixed(1)}s ttft`);
+        const rate = `${rounded} ${label}`;
+        return row("tps", shownTtft === undefined ? rate : `${rate} · ${shownTtft.toFixed(1)}s ttft`);
       }
       if (display === "both") {
         // Both figures on one line when the average stands — the realtime
         // half may round to zero while the average stands (`0 rt · 41 avg`).
         // The mean time to first token rides along only once observed
-        // (`83 rt · 38 avg · 1.2s ttft`); unknown is omitted, never zeroed.
-        // The realtime-alone degrade is only for a missing average; a present
-        // average that rounds to zero hides the whole row, like the avg
-        // mode's own hide rule. Without either figure there is no row.
+        // (`83 rt · 38 avg · 1.2s ttft`); unknown is omitted, never zeroed,
+        // and `tpsTtft: false` omits it the same way. The realtime-alone
+        // degrade is only for a missing average; a present average that
+        // rounds to zero hides the whole row, like the avg mode's own hide
+        // rule. Without either figure there is no row.
         if (avg !== undefined) {
           if (Math.round(avg) <= 0) return undefined;
           const head = `${rt === undefined ? 0 : Math.round(rt)} rt · ${Math.round(avg)} avg`;
-          return ttft === undefined ? row("tps", head) : row("tps", `${head} · ${ttft.toFixed(1)}s ttft`);
+          return shownTtft === undefined ? row("tps", head) : row("tps", `${head} · ${shownTtft.toFixed(1)}s ttft`);
         }
         if (rt !== undefined && Math.round(rt) > 0) return row("tps", `${Math.round(rt)} rt`);
         return undefined;
       }
       // The default: the settled-turn average over the scope, honestly
-      // rounded. The hide rule is the realtime row's own: at or below half a
-      // token/second it hides rather than printing "0 tok/s".
+      // rounded, with the same configured suffix as the realtime row. The
+      // hide rule is the realtime row's own: at or below half a token/second
+      // it hides rather than printing a zero figure. This mode has never
+      // drawn TTFT, so the toggle changes nothing here.
       if (avg === undefined || Math.round(avg) <= 0) return undefined;
-      return row("tps", `${Math.round(avg)} tok/s`);
+      return row("tps", `${Math.round(avg)} ${label}`);
     }
     case "spark": {
       const values = Array.isArray(source.spark) ? source.spark.map((value) => asCount(value) ?? 0) : [];

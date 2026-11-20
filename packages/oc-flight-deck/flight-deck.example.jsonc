@@ -231,7 +231,19 @@
     // so a restart forgets them. `rt` also shows TTFT when available.
     // An unknown value falls back to `"rt"` and
     // is reported.
-    "tps": { "scope": "family", "display": "rt" },
+    //
+    // `"label"` is the suffix on the single-figure rows: `"rt"` draws
+    // `N <label>` and `"avg"` draws the same. The shipped `"tok/s"` keeps
+    // today's output; set it to `"rt"` to name the realtime figure after its
+    // half. `"both"` already names its two halves `rt` and `avg`, so it
+    // ignores this key. The value is trimmed; blank, non-string and overlong
+    // values fall back to `"tok/s"` and are reported.
+    //
+    // `"ttft"` controls the mean time to first token (`1.2s ttft`). On (the
+    // default) it rides along beside the figures, and is the whole fallback
+    // row when no rate can be drawn. Set it to false to hide that segment in
+    // every display mode: with no rate, the row hides instead.
+    "tps": { "scope": "family", "display": "rt", "label": "tok/s", "ttft": true },
 
     // Every named row renders persistently: with no data yet it draws its
     // zero skeleton or placeholder, in the

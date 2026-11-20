@@ -8,6 +8,8 @@ import {
   DEFAULT_SIDEBAR_LINES,
   DEFAULT_TPS_SCOPE,
   DEFAULT_TPS_DISPLAY,
+  DEFAULT_TPS_LABEL,
+  DEFAULT_TPS_TTFT,
   MIN_REFRESH_MS,
   mergeOptions,
   resolveConfig,
@@ -68,23 +70,28 @@ describe("flight deck config", () => {
     // The shipped default is the one constant: a silent edit to it is caught
     // here, and the example file pins the same value in scaffold.test.ts.
     expect(DEFAULT_TPS_SCOPE).toBe("family");
-    expect(resolveConfig(undefined).config.sidebar.tps).toEqual({ scope: "family", display: "rt" });
-    expect(DEFAULT_CONFIG.sidebar.tps).toEqual({ scope: DEFAULT_TPS_SCOPE, display: DEFAULT_TPS_DISPLAY });
+    expect(resolveConfig(undefined).config.sidebar.tps).toEqual({ scope: "family", display: "rt", ttft: true, label: "tok/s" });
+    expect(DEFAULT_CONFIG.sidebar.tps).toEqual({
+      scope: DEFAULT_TPS_SCOPE,
+      display: DEFAULT_TPS_DISPLAY,
+      label: DEFAULT_TPS_LABEL,
+      ttft: DEFAULT_TPS_TTFT,
+    });
 
     const session = resolveConfig({ sidebar: { tps: { scope: "session" } } });
     expect(session.issues).toEqual([]);
-    expect(session.config.sidebar.tps).toEqual({ scope: "session", display: "rt" });
+    expect(session.config.sidebar.tps).toEqual({ scope: "session", display: "rt", ttft: true, label: "tok/s" });
 
     // No sensible repair for a misspelled scope: the default comes back and
     // the key is named, like every other invalid option.
     const bad = resolveConfig({ sidebar: { tps: { scope: "swarm" } } });
-    expect(bad.config.sidebar.tps).toEqual({ scope: "family", display: "rt" });
+    expect(bad.config.sidebar.tps).toEqual({ scope: "family", display: "rt", ttft: true, label: "tok/s" });
     expect(bad.issues.join(" ")).toContain("sidebar.tps.scope");
 
     // A string where an object belongs falls back whole rather than silently
     // becoming a scope.
     const malformed = resolveConfig({ sidebar: { tps: "family" } });
-    expect(malformed.config.sidebar.tps).toEqual({ scope: "family", display: "rt" });
+    expect(malformed.config.sidebar.tps).toEqual({ scope: "family", display: "rt", ttft: true, label: "tok/s" });
     expect(malformed.issues.join(" ")).toContain("sidebar.tps must be an object");
   });
 
@@ -97,21 +104,65 @@ describe("flight deck config", () => {
     for (const display of ["avg", "rt", "both"] as const) {
       const resolution = resolveConfig({ sidebar: { tps: { display } } });
       expect(resolution.issues).toEqual([]);
-      expect(resolution.config.sidebar.tps).toEqual({ scope: "family", display });
+      expect(resolution.config.sidebar.tps).toEqual({ scope: "family", display, ttft: true, label: "tok/s" });
     }
 
     // No sensible repair for a misspelled display: the default comes back and
     // the key is named, like every other invalid option.
     const bad = resolveConfig({ sidebar: { tps: { display: "turbo" } } });
-    expect(bad.config.sidebar.tps).toEqual({ scope: "family", display: "rt" });
+    expect(bad.config.sidebar.tps).toEqual({ scope: "family", display: "rt", ttft: true, label: "tok/s" });
     expect(bad.issues).toEqual(['sidebar.tps.display must be "avg", "rt" or "both"; using "rt"']);
 
     // The two knobs are independent: a bad display keeps a good scope, and a
     // bad scope keeps a good display.
     const mixed = resolveConfig({ sidebar: { tps: { scope: "session", display: "turbo" } } });
-    expect(mixed.config.sidebar.tps).toEqual({ scope: "session", display: "rt" });
+    expect(mixed.config.sidebar.tps).toEqual({ scope: "session", display: "rt", ttft: true, label: "tok/s" });
     expect(mixed.issues.join(" ")).toContain("sidebar.tps.display");
     expect(mixed.issues.join(" ")).not.toContain("sidebar.tps.scope");
+  });
+
+  test("keeps the tps ttft switch on by default and reads an explicit off", () => {
+    // The shipped default is the one constant, like its two siblings above.
+    expect(DEFAULT_TPS_TTFT).toBe(true);
+    expect(DEFAULT_CONFIG.sidebar.tps.ttft).toBe(true);
+    expect(resolveConfig(undefined).config.sidebar.tps.ttft).toBe(true);
+
+    const off = resolveConfig({ sidebar: { tps: { ttft: false } } });
+    expect(off.issues).toEqual([]);
+    expect(off.config.sidebar.tps).toEqual({ scope: "family", display: "rt", ttft: false, label: "tok/s" });
+
+    // No repair for a non-boolean: the default comes back and the key is named.
+    const bad = resolveConfig({ sidebar: { tps: { ttft: "no" } } });
+    expect(bad.config.sidebar.tps.ttft).toBe(true);
+    expect(bad.issues).toEqual(['sidebar.tps.ttft must be true or false; using true']);
+
+    // The switch is independent of the other two knobs.
+    const mixed = resolveConfig({ sidebar: { tps: { scope: "session", display: "both", ttft: false } } });
+    expect(mixed.issues).toEqual([]);
+    expect(mixed.config.sidebar.tps).toEqual({ scope: "session", display: "both", ttft: false, label: "tok/s" });
+  });
+
+  test("reads the tps label, trimming it and falling back when blank", () => {
+    // The shipped suffix keeps a new user's line unchanged.
+    expect(DEFAULT_TPS_LABEL).toBe("tok/s");
+    expect(DEFAULT_CONFIG.sidebar.tps.label).toBe("tok/s");
+    expect(resolveConfig(undefined).config.sidebar.tps.label).toBe("tok/s");
+
+    const renamed = resolveConfig({ sidebar: { tps: { label: "  rt  " } } });
+    expect(renamed.issues).toEqual([]);
+    expect(renamed.config.sidebar.tps.label).toBe("rt");
+
+    const blank = resolveConfig({ sidebar: { tps: { label: "   " } } });
+    expect(blank.config.sidebar.tps.label).toBe("tok/s");
+    expect(blank.issues).toEqual(["sidebar.tps.label must not be empty; using the default"]);
+
+    const bad = resolveConfig({ sidebar: { tps: { label: 42 } } });
+    expect(bad.config.sidebar.tps.label).toBe("tok/s");
+    expect(bad.issues).toEqual(["sidebar.tps.label must be a string; using the default"]);
+
+    const long = resolveConfig({ sidebar: { tps: { label: "x".repeat(17) } } });
+    expect(long.config.sidebar.tps.label).toBe("tok/s");
+    expect(long.issues.join(" ")).toContain("sidebar.tps.label was longer than 16 characters");
   });
 
   test("turns the footer on as soon as any footer setting is written", () => {
@@ -541,12 +592,15 @@ describe("flight deck option precedence", () => {
   });
 
   test("merges the nested tps keys leaf by leaf instead of replacing the section", () => {
-    // A host `{ display }` must not drop a file `{ scope }`, and vice versa:
-    // the two knobs ride the same nested merge the footer already uses.
-    const merged = mergeOptions({ sidebar: { tps: { scope: "session" } } }, { sidebar: { tps: { display: "rt" } } });
+    // A host `{ display, label }` must not drop a file `{ scope, ttft }`, and
+    // vice versa: all four knobs ride the same nested merge the footer uses.
+    const merged = mergeOptions(
+      { sidebar: { tps: { scope: "session", ttft: false } } },
+      { sidebar: { tps: { display: "rt", label: "rt" } } },
+    );
     const { config, issues } = resolveConfig(merged);
     expect(issues).toEqual([]);
-    expect(config.sidebar.tps).toEqual({ scope: "session", display: "rt" });
+    expect(config.sidebar.tps).toEqual({ scope: "session", display: "rt", ttft: false, label: "rt" });
   });
 
   // A tick now wakes the host's renderer, so a sub-frame interval is a way to

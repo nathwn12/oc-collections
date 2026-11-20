@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { DEFAULT_CONFIG, DEFAULT_GO_PANEL_LOOK, DEFAULT_TPS_DISPLAY, DEFAULT_TPS_SCOPE, resolveConfig } from "../src/tui/config.js";
+import { DEFAULT_CONFIG, DEFAULT_GO_PANEL_LOOK, DEFAULT_TPS_DISPLAY, DEFAULT_TPS_LABEL, DEFAULT_TPS_SCOPE, DEFAULT_TPS_TTFT, resolveConfig } from "../src/tui/config.js";
 import { parseJsonc } from "../src/tui/file-config.js";
 import { STAT_FIELDS } from "../src/tui/stats.js";
 
@@ -86,6 +86,15 @@ describe("the schema describes the real config", () => {
     expect(props["sidebar"]!.properties.tps.properties.display.default).toBe(DEFAULT_TPS_DISPLAY);
     expect(props["sidebar"]!.properties.tps.properties.display.default).toBe("rt");
     expect(props["sidebar"]!.properties.tps.properties.display.enum).toEqual(["avg", "rt", "both"]);
+    expect(props["sidebar"]!.properties.tps.properties.label.type).toBe("string");
+    expect(props["sidebar"]!.properties.tps.properties.label.maxLength).toBe(16);
+    expect(props["sidebar"]!.properties.tps.properties.label.default).toBe(DEFAULT_CONFIG.sidebar.tps.label);
+    expect(props["sidebar"]!.properties.tps.properties.label.default).toBe(DEFAULT_TPS_LABEL);
+    expect(props["sidebar"]!.properties.tps.properties.label.default).toBe("tok/s");
+    expect(props["sidebar"]!.properties.tps.properties.ttft.type).toBe("boolean");
+    expect(props["sidebar"]!.properties.tps.properties.ttft.default).toBe(DEFAULT_CONFIG.sidebar.tps.ttft);
+    expect(props["sidebar"]!.properties.tps.properties.ttft.default).toBe(DEFAULT_TPS_TTFT);
+    expect(props["sidebar"]!.properties.tps.properties.ttft.default).toBe(true);
     expect(props["sidebar"]!.properties.persist.default).toBe(DEFAULT_CONFIG.sidebar.persist);
     expect(props["sidebar"]!.properties.placeholder.default).toBe(DEFAULT_CONFIG.sidebar.placeholder);
     expect(props["sidebar"]!.properties.maxLines.default).toBe(DEFAULT_CONFIG.sidebar.maxLines);
@@ -324,7 +333,7 @@ describe("the shipped example validates against the shipped schema", () => {
     expect(sidebar["persist"]).toBe(true);
     expect(sidebar["placeholder"]).toBe("—");
     expect(sidebar["maxLines"]).toBe(DEFAULT_CONFIG.sidebar.maxLines);
-    expect(sidebar["tps"]).toEqual({ scope: "family", display: "rt" });
+    expect(sidebar["tps"]).toEqual({ scope: "family", display: "rt", label: "tok/s", ttft: true });
     const style = parsed["style"] as Record<string, unknown>;
     expect(resolveConfig(parsed).config.style).toEqual(DEFAULT_CONFIG.style);
     expect(style["rows"]).toEqual({ "*": { color: "subdued", attributes: [] } });

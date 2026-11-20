@@ -33,7 +33,7 @@ interface SidebarConfig {
   readonly footer: SidebarFooterConfig;
   /** Live session fields to render, top to bottom. Default `DEFAULT_SIDEBAR_ROWS`. */
   readonly rows: readonly string[];
-  /** Which sessions the `tps` row paces, and which figure it draws. Default `{ scope: DEFAULT_TPS_SCOPE, display: DEFAULT_TPS_DISPLAY }`. */
+  /** Which sessions the `tps` row paces, which figure it draws, its single-figure suffix, and whether TTFT may show. Default `{ scope: DEFAULT_TPS_SCOPE, display: DEFAULT_TPS_DISPLAY, label: DEFAULT_TPS_LABEL, ttft: DEFAULT_TPS_TTFT }`. */
   readonly tps: TpsConfig;
   /**
    * Render every named row even when the host has no data for it, using
@@ -157,11 +157,28 @@ export const DEFAULT_TPS_SCOPE: TpsScope = "family";
  */
 export const DEFAULT_TPS_DISPLAY: TpsDisplay = "rt";
 
+/**
+ * The shipped `tps` TTFT switch: `true`, so the observed time to first token
+ * keeps its place beside the figures until the owner turns it off.
+ */
+export const DEFAULT_TPS_TTFT = true;
+
+/**
+ * The shipped `tps` single-figure suffix: `"tok/s"`, so a new user sees the
+ * same line as before. `display: "both"` names its halves itself and ignores
+ * this key.
+ */
+export const DEFAULT_TPS_LABEL = "tok/s";
+
 interface TpsConfig {
   /** Which sessions the `tps` row paces. Default `DEFAULT_TPS_SCOPE`. */
   readonly scope: TpsScope;
   /** Which figure the `tps` row draws. Default `DEFAULT_TPS_DISPLAY`. */
   readonly display: TpsDisplay;
+  /** Suffix on the single-figure rows (`rt`, `avg`). Default `DEFAULT_TPS_LABEL`. */
+  readonly label: string;
+  /** Whether the observed time to first token may render. Default `DEFAULT_TPS_TTFT`. */
+  readonly ttft: boolean;
 }
 
 interface SidebarFooterConfig {
@@ -510,7 +527,12 @@ export const DEFAULT_CONFIG: FlightDeckConfig = {
     lines: DEFAULT_SIDEBAR_LINES,
     footer: { lines: DEFAULT_SIDEBAR_FOOTER_LINES, go: false },
     rows: DEFAULT_SIDEBAR_ROWS,
-    tps: { scope: DEFAULT_TPS_SCOPE, display: DEFAULT_TPS_DISPLAY },
+    tps: {
+      scope: DEFAULT_TPS_SCOPE,
+      display: DEFAULT_TPS_DISPLAY,
+      label: DEFAULT_TPS_LABEL,
+      ttft: DEFAULT_TPS_TTFT,
+    },
     persist: true,
     placeholder: DEFAULT_PLACEHOLDER,
     maxLines: MAX_LINES,
@@ -819,6 +841,45 @@ function readTpsDisplay(value: unknown, issues: string[]): TpsDisplay {
 }
 
 /**
+ * Whether the `tps` row may draw the observed time to first token.
+ *
+ * A boolean knob: `false` suppresses the TTFT segment in every display mode,
+ * including the realtime fallback row that otherwise appears when no rate can
+ * be drawn. A non-boolean falls back to the shipped default and is reported.
+ */
+function readTpsTtft(value: unknown, issues: string[]): boolean {
+  return readBoolean(value, DEFAULT_TPS_TTFT, "sidebar.tps.ttft", issues);
+}
+
+/** Longest suffix the single-figure `tps` rows accept before the rail gets silly. */
+const TPS_LABEL_MAX_LENGTH = 16;
+
+/**
+ * The suffix the single-figure `tps` rows print after the number.
+ *
+ * A short string, trimmed like the other text values. Blank means no label to
+ * draw, so the default comes back and the key is named; a non-string and an
+ * overlong value fall back the same way. `display: "both"` ignores it.
+ */
+function readTpsLabel(value: unknown, issues: string[]): string {
+  if (value === undefined) return DEFAULT_TPS_LABEL;
+  if (typeof value !== "string") {
+    issues.push("sidebar.tps.label must be a string; using the default");
+    return DEFAULT_TPS_LABEL;
+  }
+  const text = normalizeText(value, "sidebar.tps.label", issues);
+  if (text.length === 0) {
+    issues.push("sidebar.tps.label must not be empty; using the default");
+    return DEFAULT_TPS_LABEL;
+  }
+  if (text.length > TPS_LABEL_MAX_LENGTH) {
+    issues.push(`sidebar.tps.label was longer than ${TPS_LABEL_MAX_LENGTH} characters; using the default`);
+    return DEFAULT_TPS_LABEL;
+  }
+  return text;
+}
+
+/**
  * Which sessions the `tps` row paces.
  *
  * A malformed section falls back whole and is reported, like
@@ -829,10 +890,20 @@ function readTps(section: Record<string, unknown>, issues: string[]): TpsConfig 
   const raw = section["tps"];
   if (raw !== undefined && !isRecord(raw)) {
     issues.push("sidebar.tps must be an object; using defaults");
-    return { scope: DEFAULT_TPS_SCOPE, display: DEFAULT_TPS_DISPLAY };
+    return {
+      scope: DEFAULT_TPS_SCOPE,
+      display: DEFAULT_TPS_DISPLAY,
+      label: DEFAULT_TPS_LABEL,
+      ttft: DEFAULT_TPS_TTFT,
+    };
   }
   const tps = isRecord(raw) ? raw : {};
-  return { scope: readTpsScope(tps["scope"], issues), display: readTpsDisplay(tps["display"], issues) };
+  return {
+    scope: readTpsScope(tps["scope"], issues),
+    display: readTpsDisplay(tps["display"], issues),
+    label: readTpsLabel(tps["label"], issues),
+    ttft: readTpsTtft(tps["ttft"], issues),
+  };
 }
 
 /**

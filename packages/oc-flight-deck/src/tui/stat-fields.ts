@@ -216,6 +216,21 @@ export interface LayoutHint {
    */
   readonly tpsDisplay?: "avg" | "rt" | "both";
   /**
+   * Suffix printed after the number on the single-figure `tps` rows (`rt`
+   * and `avg`), from `sidebar.tps.label`. Default `"tok/s"`. `both` names
+   * its halves itself and ignores this. Structurally typed, never the
+   * config's own type: this module must not import config.
+   */
+  readonly tpsLabel?: string;
+  /**
+   * Whether the `tps` row may draw the observed mean time to first token
+   * (`1.2s ttft`). Off suppresses that segment in every display mode,
+   * including the realtime fallback row shown when no rate can be drawn.
+   * Default true. Carried here as the config's boolean, never its own type:
+   * like the other hints, this module must not import config.
+   */
+  readonly tpsTtft?: boolean;
+  /**
    * When true, `statRows` renders one row per named field even when the host
    * has no data for it, using `skeletonValue` (a live-shaped zero) and falling
    * back to `placeholder` for the fields that have no skeleton. Default off

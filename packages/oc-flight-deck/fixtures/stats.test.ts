@@ -305,6 +305,55 @@ describe("flight deck live rows", () => {
     expect(statLine("tps", {})).toBeUndefined();
   });
 
+  test("hides the ttft segment in every mode when the toggle is off", () => {
+    // The toggle is the row's view of `sidebar.tps.ttft`. Off suppresses the
+    // observed time to first token everywhere — both mode's tail, and the
+    // realtime fallback row when the rate is unknown or rounds to zero.
+    expect(
+      statLine("tps", { tps: { rt: 83, avg: 38, ttft: 1.2 } }, { tpsDisplay: "both", tpsTtft: false }),
+    ).toBe("tps       83 rt · 38 avg");
+    expect(
+      statLine("tps", { tps: { rt: 83, avg: 38, ttft: 1.2 } }, { tpsDisplay: "rt", tpsTtft: false }),
+    ).toBe("tps       83 tok/s");
+    expect(
+      statLine("tps", { tps: { rt: 83, avg: 38, ttft: 1.2 } }, { tpsDisplay: "avg", tpsTtft: false }),
+    ).toBe("tps       38 tok/s");
+    // No rate and no ttft allowance means no row: never a ttft-only fallback.
+    expect(statLine("tps", { tps: { rt: 0, ttft: 1.2 } }, { tpsDisplay: "rt", tpsTtft: false })).toBeUndefined();
+    expect(statLine("tps", { tps: { ttft: 1.2 } }, { tpsDisplay: "rt", tpsTtft: false })).toBeUndefined();
+    // The toggle omits the segment, never prints a fabricated zero for it.
+    expect(statLine("tps", { tps: { rt: 0, avg: 38, ttft: 1.2 } }, { tpsDisplay: "both", tpsTtft: false })).toBe(
+      "tps       0 rt · 38 avg",
+    );
+  });
+
+  test("keeps the observed ttft and the rt fallback when the toggle is on", () => {
+    // The shipped default: today's output, unchanged.
+    expect(
+      statLine("tps", { tps: { rt: 83, avg: 38, ttft: 1.2 } }, { tpsDisplay: "both", tpsTtft: true }),
+    ).toBe("tps       83 rt · 38 avg · 1.2s ttft");
+    expect(
+      statLine("tps", { tps: { rt: 83, avg: 38, ttft: 1.2 } }, { tpsDisplay: "rt", tpsTtft: true }),
+    ).toBe("tps       83 tok/s · 1.2s ttft");
+    expect(statLine("tps", { tps: { rt: 0, ttft: 1.2 } }, { tpsDisplay: "rt", tpsTtft: true })).toBe(
+      "tps       1.2s ttft",
+    );
+    expect(statLine("tps", { tps: { ttft: 0 } }, { tpsDisplay: "rt", tpsTtft: true })).toBe("tps       0.0s ttft");
+  });
+
+  test("labels both single-figure modes from the configured label", () => {
+    // The shipped label keeps today's output on rt and avg.
+    expect(statLine("tps", { tps: { rt: 106.3, avg: 41 } }, { tpsDisplay: "rt" })).toBe("tps       106 tok/s");
+    expect(statLine("tps", { tps: { rt: 106, avg: 41.4 } }, { tpsDisplay: "avg" })).toBe("tps       41 tok/s");
+    // A configured label renames both single-figure modes.
+    expect(statLine("tps", { tps: { rt: 106.3, avg: 41 } }, { tpsDisplay: "rt", tpsLabel: "rt" })).toBe("tps       106 rt");
+    expect(statLine("tps", { tps: { rt: 106, avg: 41.4 } }, { tpsDisplay: "avg", tpsLabel: "rt" })).toBe("tps       41 rt");
+    // "both" names its own halves, so the label never touches that line.
+    expect(statLine("tps", { tps: { rt: 106, avg: 41 } }, { tpsDisplay: "both", tpsLabel: "rt" })).toBe(
+      "tps       106 rt · 41 avg",
+    );
+  });
+
   test("draws recent turn sizes as a sparkline", () => {
     expect(sparkline([])).toBe("");
     expect(sparkline([0, 0])).toBe("▁▁");
