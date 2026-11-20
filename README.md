@@ -64,3 +64,5 @@ A merge to `main` is the release: `docs/RELEASE.md` derives each package's versi
 - [Migrations](docs/MIGRATIONS.md)
 - [Changelog](CHANGELOG.md)
 - [MIT licence](LICENSE)
+
+<p align="center"><sub>Built by nathwn12</sub></p>
