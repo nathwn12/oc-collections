@@ -9,6 +9,7 @@
 <p align="center">
   <a href="https://www.npmjs.com/package/oc-harness-setup"><img src="https://img.shields.io/npm/v/oc-harness-setup" alt="npm version"></a>
   <img src="https://img.shields.io/badge/platform-windows--64bit-2b3137?logo=windows&amp;logoColor=white" alt="platform">
+  <a href="https://github.com/nathwn12/oc-collections/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT"></a>
 </p>
 
 ## Why

@@ -5,6 +5,8 @@
 <p align="center">
   <a href="https://www.npmjs.com/package/@nathwn12/janua"><img src="https://img.shields.io/npm/v/@nathwn12/janua" alt="npm version"></a>
   <img src="https://img.shields.io/badge/platform-windows--linux-2b3137" alt="platform">
+  <img src="https://img.shields.io/badge/tools-6-brightgreen" alt="6 tools">
+  <a href="https://github.com/nathwn12/oc-collections/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT"></a>
 </p>
 
 ## Why
