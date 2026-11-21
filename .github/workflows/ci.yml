@@ -85,7 +85,7 @@ jobs:
       # a tracked-file fact, answered in about a second with no install.
       - name: Index files present
         if: steps.scope.outputs.code == 'true'
-        run: git ls-files --error-unmatch README.md LICENSE CHANGELOG.md assets/signature.svg
+        run: git ls-files --error-unmatch README.md LICENSE CHANGELOG.md assets/signature-glyph.svg
 
       - name: Index structure (offline)
         if: steps.scope.outputs.code == 'true'

@@ -177,7 +177,7 @@ function filesEntryMatches(entry, relPath) {
 
 // The house footer's canonical asset, package-relative. This one file is the
 // whole relative-image exception; nothing else may be carried relatively.
-const HOUSE_FOOTER_ASSET = "assets/signature.svg";
+const HOUSE_FOOTER_ASSET = "assets/signature-glyph.svg";
 
 // The one relative reference a front door may carry: the house footer asset.
 // npm renders the README out of the published tarball, so that relative <img src>

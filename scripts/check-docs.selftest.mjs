@@ -147,7 +147,7 @@ try {
     "- Guide: <https://github.com/nathwn12/oc-collections/blob/main/packages/rea-shim/docs/GUIDE.md>",
     "",
     "<!-- nathwn12 house footer: identical in every repo. Do not edit. -->",
-    '<p align="center"><a href="https://github.com/nathwn12"><img src="assets/signature.svg" width="96" alt="nathwn12" /></a></p>',
+    '<p align="center"><a href="https://github.com/nathwn12"><img src="assets/signature-glyph.svg" width="96" alt="nathwn12" /></a></p>',
     "",
   ].join("\n");
   writeFixture(shippedReadme, footer);
@@ -160,7 +160,7 @@ try {
 
   // 8. Same footer, asset absent from disk: npm would render a broken image, so
   //    it fails and names the source.
-  writeFixture(missingReadme, footer.replace("assets/signature.svg", "assets/missing-signature.svg"));
+  writeFixture(missingReadme, footer.replace("assets/signature-glyph.svg", "assets/missing-signature.svg"));
   const missingRun = spawnSync(process.execPath, [checker, "--file", missingReadme, "--pkg", "rea-shim"], { encoding: "utf8" });
   console.log(`front door with a missing relative asset: exit=${missingRun.status}`);
   if (missingRun.status === 0) {
@@ -176,7 +176,7 @@ try {
   //    not in the tarball, so it fails the same way.
   fs.mkdirSync(unshippedDir);
   writeFixture(unshippedAsset, "<svg xmlns=\"http://www.w3.org/2000/svg\"/>");
-  writeFixture(unshippedReadme, footer.replace("assets/signature.svg", unshippedSrc));
+  writeFixture(unshippedReadme, footer.replace("assets/signature-glyph.svg", unshippedSrc));
   const unshippedRun = spawnSync(process.execPath, [checker, "--file", unshippedReadme, "--pkg", "rea-shim"], { encoding: "utf8" });
   console.log(`front door with an unshipped relative asset: exit=${unshippedRun.status}`);
   if (unshippedRun.status === 0) {
