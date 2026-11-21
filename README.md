@@ -19,7 +19,7 @@ Open [`packages/`](packages), or take a row from the table below. Each package i
 | rea-shim | MCP | `0.2.3` | Launches the upstream `rea` reverse-engineering MCP and can bootstrap its JDK and Ghidra. | `npx -y rea-shim@latest --doctor` |
 | oc-collections | repo | — | This index and the npm-workspaces monorepo behind it. | — |
 
-An MCP goes into your client's server list, a plugin into `plugins` in your `opencode.jsonc`, and a CLI runs once. The `gladius` and `puppet` MCP servers keep their source here but publish from the repositories that build their engines; `oc-fallback`, `oc-graphify` and `oc-terminal` are private, so they load from this repo instead of the registry. None of the five carries a version row.
+An MCP goes into your client's server list, a plugin into `plugins` in your `opencode.jsonc`, and a CLI runs once. The `gladius` and `puppet` MCP servers keep their source here but publish from the repositories that build their engines; `oc-fallback`, `oc-graphify`, `oc-terminal` and `oc-dispatch` are private, so they load from this repo instead of the registry, by GitHub specifier such as `github:nathwn12/oc-collections#main::path:packages/oc-dispatch`. None of the six carries a version row.
 
 ## Requirements
 

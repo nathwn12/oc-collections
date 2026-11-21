@@ -1,0 +1,46 @@
+{
+  "name": "oc-dispatch",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Route each OpenCode request to the cheapest adequate live-catalog model, with a dormant default that changes nothing.",
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "plugin",
+    "model",
+    "routing",
+    "cost",
+    "tier",
+    "dispatch"
+  ],
+  "license": "MIT",
+  "author": "nathwn12",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nathwn12/oc-collections.git",
+    "directory": "packages/oc-dispatch"
+  },
+  "homepage": "https://github.com/nathwn12/oc-collections/tree/main/packages/oc-dispatch",
+  "bugs": "https://github.com/nathwn12/oc-collections/issues",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "src",
+    "routing.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "check": "node --check src/policy.mjs && node --check src/catalog.mjs && node --check src/grade.mjs && node --check src/config.mjs && node --check src/receipt.mjs && node --check src/resolve.mjs && node --check src/setup.mjs && node --check src/index.js && node --test \"test/**/*.test.js\"",
+    "test": "node --test \"test/**/*.test.js\""
+  },
+  "dependencies": {
+    "@opencode/plugin": "^2.3.2"
+  }
+}
