@@ -333,3 +333,45 @@ test('an override model outside the catalog warns and falls back to ranking', ()
   assert.equal(otherProvider.resolver.resolve(otherProvider.event()).model, 'p/free-a', 'a model on another provider is ignored');
   assert.ok(otherProvider.logs.some((line) => line.includes('override-model-unavailable')));
 });
+
+test('the confidentiality gate prices the band at the tier context ceiling', () => {
+  const mediumRole = { roles: { known: { build: 'medium' } } };
+  const dear = MODELS[2];
+
+  const paidAtCeiling = {
+    ...MODELS[0], id: 'paid-at-ceiling', family: 'alpha',
+    cost: [{ input: 0, output: 0, size: 32768 }, { input: 0.5, output: 0.5, size: 131072 }],
+  };
+  const kept = setup({ models: [dear, paidAtCeiling], policyPatch: mediumRole });
+  assert.equal(kept.resolver.resolve(kept.event())?.model, 'p/paid-at-ceiling', 'free in the first band but paid across the medium window is not gated');
+
+  const freeAtCeiling = {
+    ...MODELS[0], id: 'free-at-ceiling', family: 'alpha',
+    cost: [{ input: 0.5, output: 0.5, size: 32768 }, { input: 0, output: 0, size: 131072 }],
+  };
+  const dropped = setup({ models: [dear, freeAtCeiling], policyPatch: mediumRole });
+  assert.equal(dropped.resolver.resolve(dropped.event()), null, 'free across the medium window is gated');
+  assert.ok(dropped.logs.some((line) => line.includes('confidentiality-free-blocked')));
+});
+
+test('the spend estimate prices the band at the expected token count', () => {
+  // Small band is cheap, the band covering defaultContext is dear. Both pass
+  // the medium price caps; only the band chosen by the estimate decides the cap.
+  const banded = {
+    ...MODELS[0], id: 'banded', family: 'alpha',
+    cost: [{ input: 0.01, output: 0, size: 4096 }, { input: 0.5, output: 0.5, size: 32768 }],
+  };
+  const base = { confidentiality: { freeForCode: true }, caps: { defaultContext: 32768 } };
+
+  const overCap = setup({ models: [banded], policyPatch: { ...base, caps: { ...base.caps, spendPerTaskUsd: 0.02 } } });
+  const e = overCap.event();
+  assert.equal(overCap.resolver.resolve(e), null, 'the ceiling band pushes the estimate over the per-task cap');
+  assert.deepEqual(e.model, { providerID: 'p', id: 'dear' });
+  assert.ok(overCap.logs.some((line) => line.includes('per-task-cap-exceeded')));
+
+  const withinCap = setup({ models: [banded], policyPatch: { ...base, caps: { ...base.caps, spendPerTaskUsd: 0.05 } } });
+  const decision = withinCap.resolver.resolve(withinCap.event());
+  assert.equal(decision.model, 'p/banded');
+  const expected = 1.0 * 32768 / 1e6;
+  assert.ok(Math.abs(decision.spend - expected) < 1e-9, `expected ${expected}, got ${decision.spend}`);
+});

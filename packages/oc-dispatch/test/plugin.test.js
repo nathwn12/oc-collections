@@ -191,6 +191,7 @@ test('the resolve hook refreshes the catalog once caps.catalogTTLMs passes', asy
   assert.ok(resolveHook, 'the resolve hook must be registered');
   const event = { sessionID: 'ses_ttl', agent: 'build', kind: 'primary', model: { providerID: 'p', id: 'dear' } };
   assert.equal(ctrl.models.some((m) => m.modelID === 'fresh'), false, 'the snapshot starts unchanged');
+  assert.equal(ctrl.resolver.status().models, MODELS.length, 'the resolver snapshot starts unchanged');
 
   now = 1200;
   data = [{
@@ -200,5 +201,64 @@ test('the resolve hook refreshes the catalog once caps.catalogTTLMs passes', asy
   resolveHook.cb(event);
   await new Promise((resolve) => setImmediate(resolve));
   assert.ok(ctrl.models.some((m) => m.modelID === 'fresh'), 'the live hook refreshed the catalog after the TTL');
+  assert.equal(ctrl.resolver.status().models, 1, 'the resolver adopts the same refreshed snapshot');
+  ctrl.close();
+});
+
+test('a refresh persists the catalog cache file the CLI reads', async () => {
+  const mod = await load();
+  const logs = [];
+  const writes = [];
+  const { ctx } = host(logs);
+  const ctrl = await mod.setupDispatch(ctx, {
+    log: (line) => logs.push(line),
+    append: () => {},
+    write: (p, data) => writes.push([p, data]),
+    read: () => JSON.stringify({
+      mode: 'enforce',
+      caps: { catalogTTLMs: 100, catalogCachePath: '/tmp/oc-dispatch-catalog.json' },
+    }),
+    now: () => 1000,
+    watchFn: () => ({ close() {} }),
+  });
+
+  assert.deepEqual(writes, [], 'load alone does not write a cache file');
+  const status = await ctrl.refresh();
+  assert.equal(status.mode, 'enforce');
+  assert.equal(writes.length, 1, 'a successful refresh writes once');
+  assert.equal(writes[0][0], '/tmp/oc-dispatch-catalog.json');
+  const snapshot = JSON.parse(writes[0][1]);
+  assert.equal(snapshot.at, 1000);
+  assert.deepEqual(snapshot.models.map((m) => m.modelID), MODELS.map((m) => m.id));
+  ctrl.close();
+});
+
+test('mode off performs no catalog load from the resolve hook', async () => {
+  const mod = await load();
+  const logs = [];
+  let now = 1000;
+  let calls = 0;
+  const { ctx, hooks } = host(logs);
+  ctx.model.list = async () => {
+    calls += 1;
+    return { location: 'test', data: MODELS };
+  };
+  const ctrl = await mod.setupDispatch(ctx, {
+    log: (line) => logs.push(line),
+    append: () => {},
+    read: () => JSON.stringify({ mode: 'off', caps: { catalogTTLMs: 10 } }),
+    now: () => now,
+    watchFn: () => ({ close() {} }),
+  });
+  const afterLoad = calls;
+  const resolveHook = hooks.find((h) => h.name === 'experimental.model.resolve');
+  assert.ok(resolveHook, 'the resolve hook must be registered');
+
+  now = 2000; // well past the TTL: an enabled resolver would refresh here
+  const event = { sessionID: 'ses_off', agent: 'build', kind: 'primary', model: { providerID: 'p', id: 'dear' } };
+  assert.equal(resolveHook.cb(event), null);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(calls, afterLoad, 'mode off never calls ctx.model.list() from the hook');
+  assert.equal(ctrl.resolver.status().mode, 'off');
   ctrl.close();
 });

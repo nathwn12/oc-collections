@@ -1,7 +1,7 @@
 // The CLI is pure: every verb works from files and injected IO, with no server.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -49,6 +49,30 @@ test('status reports no catalog cache age when no cache is configured', async ()
   const result = await main(['status'], { read: () => JSON.stringify(routing), env: {} });
   assert.equal(result.code, 0);
   assert.match(result.text, /^catalog cache age: none$/m);
+});
+
+test('status reads the real cache file and reports none once it is deleted', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'oc-dispatch-cache-'));
+  const cache = path.join(dir, 'catalog.json');
+  const routing = JSON.parse(ROUTING);
+  routing.caps.catalogCachePath = cache;
+  writeFileSync(cache, JSON.stringify({ at: 1000, models: [] }));
+  const mtime = statSync(cache).mtimeMs;
+
+  const result = await main(['status'], {
+    read: () => JSON.stringify(routing),
+    env: {},
+    now: () => mtime + 45000,
+  });
+  assert.equal(result.code, 0);
+  assert.equal(result.data.catalogCacheAge, '45s');
+  assert.match(result.text, /^catalog cache age: 45s$/m);
+
+  unlinkSync(cache);
+  const gone = await main(['status'], { read: () => JSON.stringify(routing), env: {} });
+  assert.equal(gone.code, 0);
+  assert.equal(gone.data.catalogCacheAge, 'none');
+  assert.match(gone.text, /^catalog cache age: none$/m);
 });
 
 test('off is a validated, reversible text edit of routing.json', () => {
@@ -142,6 +166,7 @@ test('the bin runs status as a subprocess and prints a status line', () => {
   const run = spawnSync(process.execPath, [BIN, 'status'], { encoding: 'utf8' });
   assert.equal(run.status, 0, run.stderr);
   assert.match(run.stdout, /^mode: /m);
+  assert.match(run.stdout, /^catalog cache age: /m);
 });
 
 test('the bin writes the doctor unsupported-flag error to stderr', () => {
