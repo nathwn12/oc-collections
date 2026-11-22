@@ -1,0 +1,13 @@
+---
+project: oc-collections
+one_line: Install OpenCode plugins, MCP servers and CLIs one package at a time
+stack: [Rust]
+status: draft
+since: 2026-10
+capabilities: []
+limits: []
+updated: 2026-11-22
+draft: true
+---
+
+OpenCode plugins, MCP servers and CLIs that install one at a time, one folder each.
