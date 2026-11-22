@@ -113,7 +113,10 @@ export function createResolver({
           confidentiality.freeForCodeProviders.includes(incoming.providerID);
         if (!optedIn) {
           pool = pool.filter((m) => {
-            const unit = unitCost(m);
+            // Price at the tier ceiling, the same context filter and rank use.
+            // The first band alone would mislabel a model that is free only in
+            // a small window and paid across the tier's window.
+            const unit = unitCost(m, spec.contextCeiling);
             return !!unit && unit.input + unit.output > 0;
           });
           if (!pool.length) {
@@ -142,7 +145,7 @@ export function createResolver({
       // the estimated token count. No real cost exists on the live event, so
       // every spend figure is an estimate.
       const estimatedTokens = Number(caps.defaultContext ?? 0);
-      const increment = Number(tokenPrice(chosen) ?? 0) * estimatedTokens / 1e6;
+      const increment = Number(tokenPrice(chosen, estimatedTokens) ?? 0) * estimatedTokens / 1e6;
       const perTaskCap = Number(caps.spendPerTaskUsd ?? Infinity);
       if (increment > perTaskCap) {
         say(`[oc-dispatch] per-task-cap-exceeded tier=${tier} estimate=$${increment.toFixed(4)} cap=$${perTaskCap.toFixed(4)}`);

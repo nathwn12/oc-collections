@@ -8,7 +8,7 @@
 // a missing catalog, a bad policy, absent storage, hook or command domain all
 // degrade to "less plugin", never to a failed session. Setup apply is reachable
 // only through the exported `applySetup` seam, never from load.
-import { readFileSync, watch } from 'node:fs';
+import { readFileSync, watch, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -29,6 +29,7 @@ export async function setupDispatch(ctx, deps = {}) {
   const env = deps.env ?? process.env;
   const now = deps.now ?? Date.now;
   const read = deps.read ?? ((p) => readFileSync(p, 'utf8'));
+  const write = deps.write ?? ((p, data) => writeFileSync(p, data));
   const append = deps.append ?? ((p, line) => appendLine(p, line));
   const watchFn = deps.watchFn ?? ((p, cb) => watch(p, cb));
   const routingPath = env.OC_DISPATCH_ROUTING ?? ROUTING_FILE;
@@ -69,9 +70,18 @@ export async function setupDispatch(ctx, deps = {}) {
   const adopt = (list) => {
     models = list;
     resolver.setModels(list);
+    // The CLI reads cache age from this file's mtime, so every successful
+    // refresh must touch the same file the policy names. Unset means no file.
+    const cachePath = policy.caps?.catalogCachePath ?? env.OC_DISPATCH_CATALOG_CACHE ?? '';
+    if (!cachePath) return;
+    try {
+      write(cachePath, JSON.stringify({ at: now(), models: list }));
+    } catch {
+      /* observability only: a failed cache write never fails a resolve */
+    }
   };
   function ensureFresh() {
-    if (syncing || !catalog.stale()) return;
+    if (resolver.status().mode === 'off' || syncing || !catalog.stale()) return;
     syncing = true;
     void catalog.sync()
       .then((result) => adopt(result.models))

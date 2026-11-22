@@ -114,7 +114,8 @@ export async function main(argv = [], deps = {}) {
         try {
           cacheAge = cacheAgeText(now() - stat(data.catalogCachePath).mtimeMs);
         } catch {
-          cacheAge = 'unavailable';
+          // No file yet (or removed): the cache has never been written.
+          cacheAge = 'none';
         }
       }
       data.catalogCacheAge = cacheAge;

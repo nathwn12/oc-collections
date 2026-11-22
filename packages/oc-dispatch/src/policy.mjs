@@ -102,7 +102,7 @@ export function infer(agentConfig) {
   return TIERS.includes(candidate) ? candidate : null;
 }
 
-/** roles.known[agent] ?? infer(agent config) ?? roles.bare[agent] ?? medium. */
+/** roles.known[agent] ?? roles.bare[agent] ?? medium; infer(agent config) applies only where an agent config exists, at the setup seam. */
 export function resolveRole(policy, agent, agentConfig) {
   const roles = isPlain(policy?.roles) ? policy.roles : {};
   const known = isPlain(roles.known) ? roles.known[agent] : undefined;
