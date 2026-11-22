@@ -187,12 +187,56 @@ export function askFreshnessAsync(atlas, { timeout = 8000, runtime = runtimePath
   });
 }
 
-/** fresh | stale | unknown | missing. Commit equality is the fallback only. */
+/**
+ * Cheap corpus verdict from the build ledger, with no child process and no git.
+ * sync-corpus writes `graphify-out/.graphify_build.json` beside the graph: its
+ * `stamp` names the build commit and `inputs` maps each corpus input to the
+ * sha256 it had at build time. Hashing those files again proves the one claim
+ * this plugin makes - the published graph matches the corpus inputs - so a
+ * commit that touched no corpus input cannot call a good graph stale. A null
+ * means there is no ledger to judge; the hidden child stays the authoritative
+ * probe, and the state line reports unverified rather than guessing from HEAD.
+ */
+export function corpusFreshness(atlas, graph = null, { io = fs } = {}) {
+  if (!atlas) return null;
+  let ledger;
+  try {
+    const file = path.join(atlas, 'graphify-out', '.graphify_build.json');
+    ledger = JSON.parse(io.readFileSync(file, 'utf8'));
+  } catch {
+    return null;
+  }
+  const stamp = typeof ledger?.stamp === 'string' ? ledger.stamp : '';
+  const inputs = ledger?.inputs;
+  if (!stamp || !inputs || typeof inputs !== 'object' || Array.isArray(inputs)) return null;
+  // A ledger left by another build must not certify these graph bytes.
+  if (graph?.commit && !String(graph.commit).startsWith(stamp)) return null;
+  const entries = Object.entries(inputs);
+  if (!entries.length) return null;
+
+  const changed = entries.filter(([rel, recorded]) => {
+    let bytes;
+    try {
+      bytes = io.readFileSync(path.join(atlas, ...String(rel).split('/')));
+    } catch {
+      return true;
+    }
+    return createHash('sha256').update(bytes).digest('hex') !== recorded;
+  });
+  if (changed.length) {
+    return { state: 'stale', detail: `${changed.length} corpus input(s) changed since the build` };
+  }
+  return {
+    state: 'fresh',
+    detail: 'no corpus input changed; byte integrity verified against the build ledger',
+  };
+}
+
+/** fresh | stale | unknown | missing. A corpus verdict alone decides freshness. */
 export function verdict(graph, head, fresh = null) {
   if (!graph) return 'missing';
-  if (fresh?.state) return fresh.state;
-  if (!graph.commit || !head) return 'unknown';
-  return graph.commit === head ? 'fresh' : 'stale';
+  if (fresh?.state === 'fresh' || fresh?.state === 'stale') return fresh.state;
+  return 'unknown';
 }
 
 /** The last line of the block: the only part allowed to change between turns. */
@@ -204,7 +248,7 @@ export function stateLine(graph, head, fresh = null) {
     const why = fresh?.detail || `built ${short(graph.commit)}, HEAD ${short(head)}`;
     return `Graph state: STALE - ${why}. Rebuild before trusting it.`;
   }
-  return `Graph state: unverified - ${graph.commit ? 'HEAD unreadable' : 'the graph carries no build commit'}.`;
+  return `Graph state: unverified - ${fresh?.detail || 'no corpus verdict available'}.`;
 }
 
 /**

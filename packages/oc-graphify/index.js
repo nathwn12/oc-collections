@@ -23,7 +23,7 @@
  * tool editor all degrade to "less plugin", never to a failed request. Setup
  * never throws, so one bad file can never take down the host's generation.
  */
-import { MARKER, askFreshnessAsync, configPath, graphFile, headCommitAsync, readConfig, readGraph, render } from './lib.js';
+import { MARKER, askFreshnessAsync, configPath, corpusFreshness, graphFile, headCommitAsync, readConfig, readGraph, render } from './lib.js';
 import { readGraph as loadGraph } from './graph.js';
 import { toolDefinitions } from './tools.js';
 
@@ -100,7 +100,11 @@ export default {
                 .then(([head, fresh]) => {
                   const graph = readGraph(config.atlas);
                   const changed = before?.fingerprint !== graph?.fingerprint;
-                  return { graph, head, fresh: changed ? { state: 'unknown' } : fresh ?? { state: 'unknown' } };
+                  // The hidden child is authoritative; the ledger is the cheap
+                  // fallback when no child verdict exists. Both are read once
+                  // per refresh, never on a tool call or a per-request render.
+                  const source = fresh ?? corpusFreshness(config.atlas, graph);
+                  return { graph, head, fresh: changed ? { state: 'unknown' } : source ?? { state: 'unknown' } };
                 });
             }).then((next) => { cache = { ...next, at: Date.now() }; }).catch(() => {
               cache = { ...cache, at: Date.now(), fresh: { state: 'unknown' } };

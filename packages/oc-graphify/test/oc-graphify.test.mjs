@@ -19,6 +19,7 @@ import {
   MARKER,
   askFreshness,
   configPath,
+  corpusFreshness,
   graphFile,
   headCommit,
   isJsRuntime,
@@ -26,7 +27,6 @@ import {
   readGraph,
   render,
   runtimePath,
-  short,
   stateLine,
   summarize,
   verdict,
@@ -88,16 +88,21 @@ test('summarize: an empty object is four zeros, never a throw', () => {
   assert.deepEqual([s.nodes, s.edges, s.communities, s.commit, s.version], [0, 0, 0, null, null]);
 });
 
-test('verdict: four states, each named', () => {
+test('verdict: four states, each named; the stamp alone decides none of them', () => {
   assert.equal(verdict(null, 'a'.repeat(40)), 'missing');
-  assert.equal(verdict({ commit: null }, 'a'.repeat(40)), 'unknown');
-  assert.equal(verdict({ commit: 'a'.repeat(40) }, null), 'unknown');
-  assert.equal(verdict({ commit: 'a'.repeat(40) }, 'a'.repeat(40)), 'fresh');
-  assert.equal(verdict({ commit: 'b'.repeat(40) }, 'a'.repeat(40)), 'stale');
+  assert.equal(verdict({ commit: 'a'.repeat(40) }, 'a'.repeat(40)), 'unknown');
+  assert.equal(verdict({ commit: 'b'.repeat(40) }, 'a'.repeat(40)), 'unknown');
+  assert.equal(verdict({ commit: 'a'.repeat(40) }, null, { state: 'fresh', detail: 'ledger' }), 'fresh');
+  assert.equal(verdict({ commit: 'a'.repeat(40) }, 'b'.repeat(40), { state: 'fresh', detail: 'ledger' }), 'fresh');
+  assert.equal(verdict({ commit: 'a'.repeat(40) }, 'a'.repeat(40), { state: 'stale', detail: 'ledger' }), 'stale');
 });
 
-test('stateLine: a stale graph names both commits and says rebuild', () => {
-  const line = stateLine({ commit: 'bbbbbbb'.padEnd(40, 'b') }, 'aaaaaaa'.padEnd(40, 'a'));
+test('stateLine: a stale corpus verdict says why and says rebuild', () => {
+  const line = stateLine(
+    { commit: 'bbbbbbb'.padEnd(40, 'b') },
+    'aaaaaaa'.padEnd(40, 'a'),
+    { state: 'stale', detail: 'built from bbbbbbb, HEAD aaaaaaa; 2 corpus inputs changed' },
+  );
   assert.match(line, /STALE/);
   assert.match(line, /bbbbbbb/);
   assert.match(line, /aaaaaaa/);
@@ -136,8 +141,8 @@ test('render: identical inputs give identical bytes', () => {
 test('render: fresh and stale differ only in the state line', () => {
   const head = 'e'.repeat(40);
   const graph = { nodes: 1, edges: 1, communities: 1, commit: head, version: '0.9.105', file: 'g.json' };
-  const fresh = render({ graph, head, atlas: 'Q:\\v' });
-  const stale = render({ graph: { ...graph, commit: 'f'.repeat(40) }, head, atlas: 'Q:\\v' });
+  const fresh = render({ graph, head, atlas: 'Q:\\v', fresh: { state: 'fresh', detail: 'no corpus input changed' } });
+  const stale = render({ graph, head, atlas: 'Q:\\v', fresh: { state: 'stale', detail: '1 corpus input changed' } });
   const prefix = (block) => block.split('\n').slice(0, -1).join('\n');
   assert.equal(prefix(fresh), prefix(stale), 'the cached prefix must not move');
   assert.notEqual(fresh.split('\n').at(-1), stale.split('\n').at(-1));
@@ -403,10 +408,12 @@ test('live: the real graph parses and agrees with git', { skip: !hasHost }, () =
 
   const head = headCommit(atlas);
   assert.ok(head, 'git could not read HEAD of the atlas');
-  const state = verdict(graph, head);
+  const fresh = corpusFreshness(atlas, graph);
+  assert.ok(fresh, 'the live atlas has no build ledger to judge corpus bytes');
+  const state = verdict(graph, head, fresh);
   assert.ok(['fresh', 'stale'].includes(state), `unexpected state ${state}`);
   // A stale graph is an allowed outcome - it is reported, not hidden.
-  if (state === 'stale') console.log(`  note: atlas is stale (${short(graph.commit)} vs HEAD ${short(head)})`);
+  if (state === 'stale') console.log(`  note: atlas is stale (${fresh.detail})`);
 });
 
 function assertAtlasWiring(host, atlas) {
