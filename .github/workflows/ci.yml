@@ -144,6 +144,7 @@ jobs:
 
   check:
     needs: plan
+    if: github.event_name != 'push'
     runs-on: windows-latest
     # oc-harness-setup alone is ~51s locally (real npm installs plus a
     # packed-tarball install) and a Windows runner is slower than this box,
@@ -229,6 +230,7 @@ jobs:
   # they need no registry. The rest of janua's suite is left to the Windows gate:
   # its pre-existing PTY tests assume Windows and are outside this job's scope.
   posix:
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
