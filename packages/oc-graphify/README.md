@@ -4,6 +4,10 @@ An OpenCode plugin that puts the Graphify Atlas in front of every request, so
 orientation is automatic: how big the graph is, where its JSON lives, which verb
 answers a question, and whether it still matches `HEAD`.
 
+It is built for Obsidian + Graphify atlases and their four jobs — maintain,
+query, update and observe — and is distributed only through the GitHub path,
+never npm.
+
 ```
 <!-- oc-graphify -->
 Graphify Atlas (durable memory): 922 nodes, 1537 edges, 86 communities, graphify 0.9.105.
