@@ -24,16 +24,28 @@ function setup({ mode = 'enforce', models = MODELS, policyPatch = {}, grades } =
     logPath: '/tmp/oc-dispatch.log',
     now: () => 1000,
   });
-  const event = () => ({ sessionID: 'ses_1', agent: 'build', kind: 'primary', context: 200000, model: { providerID: 'p', id: 'dear' } });
+  // Exactly the four fields on SessionModelResolve (@opencode/plugin 2.3.2).
+  const event = (overrides = {}) => ({
+    sessionID: 'ses_1',
+    agent: 'build',
+    kind: 'primary',
+    model: { providerID: 'p', id: 'dear' },
+    ...overrides,
+  });
   return { resolver, logs, lines, event };
 }
 
 test('enforce substitutes a cheaper adequate model and writes one receipt', () => {
-  const { resolver, lines, event, logs } = setup({ policyPatch: { confidentiality: { freeForCode: true } } });
+  const { resolver, lines, event, logs } = setup({
+    policyPatch: {
+      confidentiality: { freeForCode: true },
+      roles: { known: { build: 'verify' } },
+    },
+  });
   const e = event();
   const decision = resolver.resolve(e);
   assert.equal(decision.model, 'p/free-a');
-  assert.equal(decision.tier, 'verify', 'a large context raises the choosing floor to verify, not opt-in heavy');
+  assert.equal(decision.tier, 'verify', 'the role tier decides the floor now that context is not on the event');
   assert.match(decision.reason, /^tier:/);
   assert.deepEqual(e.model, { providerID: 'p', id: 'free-a' }, 'only the model changes, same provider');
   assert.equal(lines.length, 1);
@@ -50,18 +62,13 @@ test('zero cost ranks by grade, then ttft, then context', () => {
   const grades = createGradeStore(null, { now: () => 1000 });
   grades.record('p/free-b#primary', { ok: true, ms: 50, costUsd: 0 });
   const { resolver, event } = setup({ grades, policyPatch: { confidentiality: { freeForCode: true } } });
-  const primary = () => {
-    const e = event();
-    e.context = 40000; // medium: no verifier-family rule in the way of this ranking test
-    return e;
-  };
-  assert.equal(resolver.resolve(primary()).model, 'p/free-b', 'a sampled free model with a better grade wins');
+  assert.equal(resolver.resolve(event()).model, 'p/free-b', 'a sampled free model with a better grade wins');
 
   const tied = createGradeStore(null, { now: () => 1000 });
   tied.record('p/free-a#primary', { ok: true, ms: 10, costUsd: 0 });
   tied.record('p/free-b#primary', { ok: true, ms: 90, costUsd: 0 });
   assert.equal(
-    setup({ grades: tied, policyPatch: { confidentiality: { freeForCode: true } } }).resolver.resolve(primary()).model,
+    setup({ grades: tied, policyPatch: { confidentiality: { freeForCode: true } } }).resolver.resolve(event()).model,
     'p/free-a',
     'lower ttft wins a grade tie',
   );
@@ -76,9 +83,7 @@ test('an empty catalog, a banked model and an empty budget all inherit', () => {
   const grades = createGradeStore(null, { now: () => 1000 });
   grades.bank('p/free-a#primary', 5000);
   const banked = setup({ grades, policyPatch: { confidentiality: { freeForCode: true } } });
-  const eBanked = banked.event();
-  eBanked.context = 40000;
-  assert.equal(banked.resolver.resolve(eBanked).model, 'p/free-b', 'a banked model is skipped');
+  assert.equal(banked.resolver.resolve(banked.event()).model, 'p/free-b', 'a banked model is skipped');
 
   const broke = setup({ policyPatch: { caps: { maxSpendUsd: 0 } } });
   const e2 = broke.event();
@@ -122,7 +127,7 @@ test('cosmetic kinds take the fast tier and an already-cheapest model inherits',
   assert.equal(decision.tier, 'fast');
   assert.equal(decision.model, 'p/free-a');
 
-  const cheapest = setup();
+  const cheapest = setup({ policyPatch: { confidentiality: { freeForCode: true } } });
   const e2 = cheapest.event();
   e2.model = { providerID: 'p', id: 'free-a' };
   assert.equal(cheapest.resolver.resolve(e2), null, 'no receipt for substituting a model with itself');
@@ -135,9 +140,7 @@ test('a role tier is a floor for choosing, and an override keeps its tier under 
   const openFree = { confidentiality: { freeForCode: true } };
 
   const floored = setup({ models: [freeFastOnly, mid], policyPatch: { ...openFree, roles: { known: { build: 'medium' } } } });
-  const e1 = floored.event();
-  e1.context = 1000; // context alone would choose fast
-  const d1 = floored.resolver.resolve(e1);
+  const d1 = floored.resolver.resolve(floored.event());
   assert.equal(d1.tier, 'medium', 'the role tier raises the chosen tier above the context tier');
   assert.equal(d1.model, 'p/mid', 'a model that only fits the fast tier is not chosen');
 
@@ -146,48 +149,17 @@ test('a role tier is a floor for choosing, and an override keeps its tier under 
     models: [overCap],
     policyPatch: { ...openFree, overrides: { build: { tier: 'heavy' } } },
   });
-  const e2 = heavyCapped.event();
-  assert.equal(heavyCapped.resolver.resolve(e2), null, 'a heavy override still obeys the tier cap');
-  assert.deepEqual(e2.model, { providerID: 'p', id: 'dear' });
+  assert.equal(heavyCapped.resolver.resolve(heavyCapped.event()), null, 'a heavy override still obeys the tier cap');
+  assert.deepEqual(heavyCapped.event().model, { providerID: 'p', id: 'dear' });
 
   const withinCap = { ...mid, id: 'heavy-ok', family: 'delta', cost: [{ input: 2, output: 8 }] };
   const heavyOk = setup({
     models: [withinCap],
-    policyPatch: { ...openFree, overrides: { build: { tier: 'heavy' } } },
+    policyPatch: { ...openFree, overrides: { build: { tier: 'heavy' } }, caps: { spendPerTaskUsd: 1 } },
   });
   const d2 = heavyOk.resolver.resolve(heavyOk.event());
   assert.equal(d2.tier, 'heavy');
   assert.equal(d2.model, 'p/heavy-ok');
-});
-
-test('spend is an estimate unless the event carries a real cost, and the ceiling still binds', () => {
-  const free = MODELS[0];
-  const priced = { ...free, id: 'priced', family: 'gamma', cost: [{ input: 0.1, output: 0.2 }] };
-  const openFree = { confidentiality: { freeForCode: true } };
-
-  const estimated = setup({ models: [free, priced], policyPatch: openFree });
-  const d1 = estimated.resolver.resolve(estimated.event());
-  assert.equal(d1.spendEstimate, 0);
-  assert.equal(d1.spendActual, null);
-  assert.match(d1.receiptText, /\test\. \$0\.0000$/);
-
-  const real = setup({ models: [free, priced], policyPatch: openFree });
-  const e2 = real.event();
-  e2.cost = 0.25;
-  const d2 = real.resolver.resolve(e2);
-  assert.equal(d2.spendActual, 0.25);
-  assert.equal(d2.spendEstimate, 0);
-  assert.match(d2.receiptText, /\t\$0\.2500$/, 'a real cost is printed without the estimate label');
-
-  const capped = setup({ models: [priced], policyPatch: { ...openFree, caps: { maxSpendUsd: 0.3 } } });
-  assert.notEqual(capped.resolver.resolve(capped.event()), null);
-  assert.equal(capped.resolver.resolve(capped.event()), null, 'the estimate still counts against the ceiling');
-
-  const realCapped = setup({ models: [priced], policyPatch: { ...openFree, caps: { maxSpendUsd: 0.3 } } });
-  const e3 = realCapped.event();
-  e3.message = { cost: 0.3 };
-  assert.notEqual(realCapped.resolver.resolve(e3), null);
-  assert.equal(realCapped.resolver.resolve(realCapped.event()), null, 'a real cost counts against the ceiling too');
 });
 
 test('confidentiality blocks zero cost on code-carrying tiers unless opted in', () => {
@@ -196,24 +168,17 @@ test('confidentiality blocks zero cost on code-carrying tiers unless opted in', 
   const catalog = [free, priced];
 
   const blocked = setup({ models: catalog });
-  const e1 = blocked.event();
-  e1.context = 40000; // medium, so this is code-carrying
-  assert.equal(blocked.resolver.resolve(e1).model, 'p/priced', 'a zero-cost model must not serve code by default');
+  assert.equal(blocked.resolver.resolve(blocked.event()).model, 'p/priced', 'a zero-cost model must not serve code by default');
 
   const allowed = setup({ models: catalog, policyPatch: { confidentiality: { freeForCode: true } } });
-  const e2 = allowed.event();
-  e2.context = 40000;
-  assert.equal(allowed.resolver.resolve(e2).model, 'p/free-a', 'an explicit opt-in allows free models');
+  assert.equal(allowed.resolver.resolve(allowed.event()).model, 'p/free-a', 'an explicit opt-in allows free models');
 
   const opted = setup({ models: catalog, policyPatch: { confidentiality: { freeForCodeProviders: ['p'] } } });
-  const e3 = opted.event();
-  e3.context = 40000;
-  assert.equal(opted.resolver.resolve(e3).model, 'p/free-a', 'a stored provider opt-in allows free models');
+  assert.equal(opted.resolver.resolve(opted.event()).model, 'p/free-a', 'a stored provider opt-in allows free models');
 
   const fastRead = setup({ models: catalog });
   const e4 = fastRead.event();
   e4.kind = 'title';
-  e4.context = 40000;
   assert.equal(fastRead.resolver.resolve(e4).model, 'p/free-a', 'fast reads are never gated');
 });
 
@@ -228,4 +193,143 @@ test('off and an explicit off command both stop substitutions', () => {
   const e2 = switched.event();
   assert.equal(switched.resolver.resolve(e2), null);
   assert.deepEqual(e2.model, { providerID: 'p', id: 'dear' });
+});
+
+test('an invented context or agent config cannot steer the tier', () => {
+  const base = setup({ policyPatch: { confidentiality: { freeForCode: true } } });
+  const plain = base.resolver.resolve(base.event());
+  const injected = base.resolver.resolve(base.event({ context: 200000, agentConfig: { tier: 'heavy' } }));
+  assert.equal(plain.tier, 'medium', 'role and policy decide the floor, not event extras');
+  assert.equal(injected.model, plain.model);
+  assert.equal(injected.tier, plain.tier, 'invented fields change nothing');
+});
+
+test('an invented cost on the event cannot turn an estimate into a real spend', () => {
+  const priced = { ...MODELS[0], id: 'priced', family: 'gamma', cost: [{ input: 0.1, output: 0.2 }] };
+  const open = setup({ models: [priced], policyPatch: { confidentiality: { freeForCode: true } } });
+  const clean = open.resolver.resolve(open.event({ sessionID: 'ses_clean' }));
+  const injected = open.resolver.resolve(open.event({
+    sessionID: 'ses_injected',
+    cost: 999,
+    costUsd: 999,
+    message: { cost: 999 },
+    usage: { cost: 999 },
+  }));
+  assert.match(clean.receiptText, /\test\. \$/);
+  assert.equal(injected.spend, clean.spend, 'the invented cost is not counted');
+  assert.match(injected.receiptText, /\test\. \$/);
+});
+
+test('a priced substitution adds a token-scaled estimate, not a raw per-million price', () => {
+  const executor = MODELS.find((m) => m.id === 'dear');
+  const priced = { ...executor, id: 'priced', family: 'alpha', cost: [{ input: 1, output: 1 }] };
+  const { resolver, event } = setup({
+    models: [executor, priced],
+    policyPatch: { overrides: { build: { tier: 'heavy' } }, caps: { spendPerTaskUsd: 1 } },
+  });
+  const decision = resolver.resolve(event());
+  assert.equal(decision.model, 'p/priced');
+  const expected = 2 * DEFAULTS.caps.defaultContext / 1e6;
+  assert.ok(Math.abs(decision.spend - expected) < 1e-9, `expected ${expected}, got ${decision.spend}`);
+  assert.match(decision.receiptText, /\test\. \$0\.0655$/);
+});
+
+test('a 3/9 model does not permanently exhaust the spend ceiling', () => {
+  const dear = MODELS.find((m) => m.id === 'dear');
+  const costly = { ...dear, id: 'costly', family: 'alpha' };
+  const { resolver, event } = setup({
+    models: [costly],
+    policyPatch: { overrides: { build: { tier: 'heavy' } }, caps: { maxSpendUsd: 5, spendPerTaskUsd: 1 } },
+  });
+  const decisions = Array.from({ length: 5 }, () => resolver.resolve(event()));
+  assert.ok(decisions.every(Boolean), 'each dispatch still routes');
+  const expected = 5 * 12 * DEFAULTS.caps.defaultContext / 1e6;
+  assert.ok(Math.abs(decisions.at(-1).spend - expected) < 1e-9, `expected ${expected}, got ${decisions.at(-1).spend}`);
+  assert.ok(decisions.at(-1).spend < 5, 'the ceiling is not exhausted by one priced dispatch');
+});
+
+test('a token-scaled estimate still counts against the spend ceiling', () => {
+  const priced = { ...MODELS[0], id: 'priced', family: 'gamma', cost: [{ input: 1, output: 1 }] };
+  const { resolver, event } = setup({
+    models: [priced],
+    policyPatch: { overrides: { build: { tier: 'heavy' } }, caps: { maxSpendUsd: 0.05, spendPerTaskUsd: 1 } },
+  });
+  assert.notEqual(resolver.resolve(event()), null);
+  assert.equal(resolver.resolve(event()), null, 'the estimate still counts against the ceiling');
+});
+
+test('a single dispatch above the per-task cap inherits and logs the reason', () => {
+  const dear = MODELS.find((m) => m.id === 'dear');
+  const costly = { ...dear, id: 'costly', family: 'alpha' };
+  const { resolver, event, logs, lines } = setup({
+    models: [costly],
+    policyPatch: { overrides: { build: { tier: 'heavy' } }, caps: { spendPerTaskUsd: 0.05 } },
+  });
+  const e = event();
+  assert.equal(resolver.resolve(e), null, 'the dispatch is refused');
+  assert.deepEqual(e.model, { providerID: 'p', id: 'dear' }, 'the current model is inherited');
+  assert.ok(logs.some((line) => line.includes('per-task-cap-exceeded')), 'a reason is logged');
+  assert.equal(lines.length, 0, 'no receipt without a substitution');
+});
+
+test('spend is per session and a second session starts clean', () => {
+  const dear = MODELS.find((m) => m.id === 'dear');
+  const costly = { ...dear, id: 'costly', family: 'alpha' };
+  const { resolver, event } = setup({
+    models: [costly],
+    policyPatch: { overrides: { build: { tier: 'heavy' } }, caps: { maxSpendUsd: 100, spendPerTaskUsd: 1 } },
+  });
+  const first = resolver.resolve(event({ sessionID: 'ses_a' }));
+  const second = resolver.resolve(event({ sessionID: 'ses_b' }));
+  const perDispatch = 12 * DEFAULTS.caps.defaultContext / 1e6;
+  assert.ok(Math.abs(first.spend - perDispatch) < 1e-9);
+  assert.ok(Math.abs(second.spend - perDispatch) < 1e-9, 'the new session does not inherit the first session spend');
+});
+
+test('a different-family tier with an unknown executor warns and inherits', () => {
+  const absent = setup({
+    models: MODELS.filter((m) => m.id !== 'dear'),
+    policyPatch: { roles: { known: { build: 'verify' } }, confidentiality: { freeForCode: true } },
+  });
+  const e = absent.event();
+  assert.equal(absent.resolver.resolve(e), null);
+  assert.deepEqual(e.model, { providerID: 'p', id: 'dear' });
+  assert.ok(absent.logs.some((line) => line.includes('different-family-unknown')), 'no false independence claim');
+
+  const blankFamily = setup({
+    models: MODELS.map((m) => (m.id === 'dear' ? { ...m, family: '' } : m)),
+    policyPatch: { roles: { known: { build: 'verify' } }, confidentiality: { freeForCode: true } },
+  });
+  assert.equal(blankFamily.resolver.resolve(blankFamily.event()), null);
+  assert.ok(blankFamily.logs.some((line) => line.includes('different-family-unknown')));
+});
+
+test('an override model in the catalog on the same provider wins over ranking', () => {
+  const { resolver, event } = setup({
+    policyPatch: {
+      confidentiality: { freeForCode: true },
+      overrides: { build: { tier: 'medium', model: 'free-b' } },
+    },
+  });
+  assert.equal(resolver.resolve(event()).model, 'p/free-b', 'the named model outranks the cheaper free-a');
+});
+
+test('an override model outside the catalog warns and falls back to ranking', () => {
+  const missing = setup({
+    policyPatch: {
+      confidentiality: { freeForCode: true },
+      overrides: { build: { model: 'ghost' } },
+    },
+  });
+  assert.equal(missing.resolver.resolve(missing.event()).model, 'p/free-a', 'ranking still picks the best candidate');
+  assert.ok(missing.logs.some((line) => line.includes('override-model-unavailable')));
+
+  const otherProvider = setup({
+    policyPatch: {
+      confidentiality: { freeForCode: true },
+      overrides: { build: { model: 'foreign' } },
+    },
+  });
+  assert.equal(otherProvider.resolver.resolve(otherProvider.event()).model, 'p/free-a', 'a model on another provider is ignored');
+  assert.ok(otherProvider.logs.some((line) => line.includes('override-model-unavailable')));
 });
