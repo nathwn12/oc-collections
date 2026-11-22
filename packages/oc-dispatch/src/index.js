@@ -14,15 +14,16 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Plugin } from '@opencode/plugin';
 import { DEFAULTS, loadPolicy, validate } from './policy.mjs';
-import { normalize } from './catalog.mjs';
+import { createCatalog } from './catalog.mjs';
 import { createGradeStore } from './grade.mjs';
 import { createResolver } from './resolve.mjs';
-import { snapshot } from './config.mjs';
+import { configDir, snapshot } from './config.mjs';
 import { appendLine } from './receipt.mjs';
 import { apply as applySetup, preview as previewSetup } from './setup.mjs';
 
 const ROUTING_FILE = fileURLToPath(new URL('../routing.json', import.meta.url));
 const DEFAULT_LOG = join(homedir(), '.local', 'share', 'opencode', 'log', 'oc-dispatch.log');
+const INSTALL = 'github:nathwn12/oc-collections#main::path:packages/oc-dispatch';
 
 export async function setupDispatch(ctx, deps = {}) {
   const env = deps.env ?? process.env;
@@ -44,15 +45,18 @@ export async function setupDispatch(ctx, deps = {}) {
     problem = 'routing-unreadable';
   }
 
-  async function readModels() {
+  async function loadModels() {
     try {
-      return normalize(await ctx?.model?.list?.());
+      return await ctx?.model?.list?.();
     } catch {
-      return [];
+      return null;
     }
   }
 
-  let models = await readModels();
+  // One catalog owns the snapshot for the whole plugin. Its TTL is checked on
+  // the live resolve path, so a long-running session refreshes on its own.
+  const catalog = await createCatalog({ load: loadModels, policy, now });
+  let models = catalog.models;
   const grades = createGradeStore(ctx?.storage, { now });
   let config = { sources: [], effectiveDepth: null, winner: null };
   try {
@@ -61,6 +65,21 @@ export async function setupDispatch(ctx, deps = {}) {
     /* the config view is read-only and optional */
   }
   const resolver = createResolver({ policy, models, grades, log, append, logPath, now });
+  let syncing = false;
+  const adopt = (list) => {
+    models = list;
+    resolver.setModels(list);
+  };
+  function ensureFresh() {
+    if (syncing || !catalog.stale()) return;
+    syncing = true;
+    void catalog.sync()
+      .then((result) => adopt(result.models))
+      .catch(() => {})
+      .finally(() => {
+        syncing = false;
+      });
+  }
 
   const ctrl = {
     policy,
@@ -106,12 +125,21 @@ export async function setupDispatch(ctx, deps = {}) {
         policy = loaded.policy;
         ctrl.policy = policy;
         resolver.setPolicy(policy);
+        catalog.setPolicy(policy);
       } catch {
         /* keep the last good policy */
       }
-      models = await readModels();
-      resolver.setModels(models);
+      adopt(await catalog.refresh());
       return ctrl.status();
+    },
+    setup: async (opts = {}) => {
+      const target = join(configDir(env, homedir()), 'opencode.jsonc');
+      const depth = config.effectiveDepth ?? 1;
+      const planned = previewSetup({ target, entry: INSTALL, depth, read });
+      if (!planned.ok) return { ok: false, reason: planned.reason };
+      if (opts !== '--yes' && opts?.yes !== true) return { ...planned, applied: false, target, depth };
+      const applied = applySetup({ target, entry: INSTALL, depth, env, read });
+      return applied.ok ? { ...applied, applied: true } : applied;
     },
     close: () => {},
   };
@@ -120,7 +148,10 @@ export async function setupDispatch(ctx, deps = {}) {
 
   try {
     if (typeof ctx?.session?.hook === 'function') {
-      Promise.resolve(ctx.session.hook('experimental.model.resolve', (event) => resolver.resolve(event))).catch(() => {});
+      Promise.resolve(ctx.session.hook('experimental.model.resolve', (event) => {
+        ensureFresh();
+        return resolver.resolve(event);
+      })).catch(() => {});
     }
   } catch {
     /* a host without this hook keeps the plugin's other surfaces */
@@ -131,6 +162,7 @@ export async function setupDispatch(ctx, deps = {}) {
     { name: 'dispatch-doctor', description: 'Report policy validity and the merged subagent depth with its winning source.', execute: async () => ctrl.doctor() },
     { name: 'dispatch-off', description: 'Stop model substitution for this running session.', execute: async () => ctrl.off() },
     { name: 'dispatch-refresh', description: 'Reload routing.json and the live model catalog now.', execute: async () => ctrl.refresh() },
+    { name: 'dispatch-setup', description: 'Preview the plugin entry and depth, or write them with --yes.', execute: async (opts) => ctrl.setup(opts) },
   ];
   try {
     if (typeof ctx?.command?.transform === 'function') {

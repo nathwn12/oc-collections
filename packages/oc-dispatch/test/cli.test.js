@@ -1,5 +1,6 @@
 // The CLI is pure: every verb works from files and injected IO, with no server.
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -7,6 +8,7 @@ import test from 'node:test';
 import { main, offPolicy } from '../bin/oc-dispatch.mjs';
 
 const INSTALL = 'github:nathwn12/oc-collections#main::path:packages/oc-dispatch';
+const BIN = path.join(import.meta.dirname, '..', 'bin', 'oc-dispatch.mjs');
 const ROUTING = JSON.stringify({
   version: 1,
   mode: 'enforce',
@@ -27,6 +29,26 @@ test('status reports mode, tiers, banked models and the catalog cache path', asy
   assert.equal(result.data.catalogCachePath, '/tmp/cache.json');
   assert.match(result.text, /mode: enforce/);
   assert.match(result.text, /fast, medium, verify, heavy/);
+});
+
+test('status prints the catalog cache age from the cache file mtime', async () => {
+  const result = await main(['status'], {
+    read: () => ROUTING,
+    stat: () => ({ mtimeMs: 1000 }),
+    now: () => 46000,
+    env: {},
+  });
+  assert.equal(result.code, 0);
+  assert.equal(result.data.catalogCacheAge, '45s');
+  assert.match(result.text, /^catalog cache age: 45s$/m);
+});
+
+test('status reports no catalog cache age when no cache is configured', async () => {
+  const routing = JSON.parse(ROUTING);
+  delete routing.caps.catalogCachePath;
+  const result = await main(['status'], { read: () => JSON.stringify(routing), env: {} });
+  assert.equal(result.code, 0);
+  assert.match(result.text, /^catalog cache age: none$/m);
 });
 
 test('off is a validated, reversible text edit of routing.json', () => {
@@ -89,4 +111,41 @@ test('doctor reports config precedence and the winning depth', async () => {
     banked: [],
   });
   assert.equal(bad.code, 1, 'a bad policy or absent depth fails --check');
+});
+
+test('doctor --check stays supported and passes on a valid policy', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'oc-dispatch-check-'));
+  writeFileSync(path.join(dir, 'opencode.jsonc'), '{ "experimental": { "subagent_depth": 2 } }');
+  const result = await main(['doctor', '--check'], {
+    env: { OPENCODE_CONFIG_DIR: dir },
+    read: readFileSync,
+    banked: [],
+  });
+  assert.equal(result.code, 0, result.error);
+});
+
+test('doctor --fix is rejected with a non-zero exit and an unsupported-flag error', async () => {
+  const result = await main(['doctor', '--fix'], { read: () => ROUTING, env: {} });
+  assert.equal(result.code, 2);
+  assert.equal(result.data.unsupported, '--fix');
+  assert.match(result.error, /^doctor: unsupported flag: --fix$/m);
+});
+
+test('doctor --yes is rejected with a non-zero exit and an unsupported-flag error', async () => {
+  const result = await main(['doctor', '--yes'], { read: () => ROUTING, env: {} });
+  assert.equal(result.code, 2);
+  assert.equal(result.data.unsupported, '--yes');
+  assert.match(result.error, /^doctor: unsupported flag: --yes$/m);
+});
+
+test('the bin runs status as a subprocess and prints a status line', () => {
+  const run = spawnSync(process.execPath, [BIN, 'status'], { encoding: 'utf8' });
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /^mode: /m);
+});
+
+test('the bin writes the doctor unsupported-flag error to stderr', () => {
+  const run = spawnSync(process.execPath, [BIN, 'doctor', '--fix'], { encoding: 'utf8' });
+  assert.notEqual(run.status, 0);
+  assert.match(run.stderr, /^doctor: unsupported flag: --fix$/m);
 });

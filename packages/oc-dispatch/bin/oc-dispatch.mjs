@@ -7,7 +7,7 @@
 // reports config precedence and the depth that won. Every IO seam is injectable
 // so the pure part of each verb is tested without touching a real config.
 import {
-  copyFileSync, existsSync, readFileSync, renameSync, unlinkSync, writeFileSync,
+  copyFileSync, existsSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -18,6 +18,16 @@ import { apply as applySetup, preview as previewSetup } from '../src/setup.mjs';
 
 export const INSTALL = 'github:nathwn12/oc-collections#main::path:packages/oc-dispatch';
 const ROUTING = fileURLToPath(new URL('../routing.json', import.meta.url));
+
+/** Human-readable age of the catalog cache file, for the status line. */
+function cacheAgeText(ms) {
+  if (!Number.isFinite(ms) || ms < 0) return 'unknown';
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
 
 /** Replace only the mode value, leaving comments and every other key intact. */
 export function offPolicy(text) {
@@ -76,9 +86,18 @@ export async function main(argv = [], deps = {}) {
   const routingPath = deps.routingPath ?? ROUTING;
   const configPath = deps.configPath ?? join(configDir(env, home), 'opencode.jsonc');
   const banked = Array.isArray(deps.banked) ? deps.banked : [];
+  const now = deps.now ?? Date.now;
+  const stat = deps.stat ?? statSync;
   const lines = [];
+  const errs = [];
   const say = (line) => lines.push(String(line));
-  const finish = (code, data = {}) => ({ code, data, text: lines.length ? lines.join('\n') + '\n' : '' });
+  const sayErr = (line) => errs.push(String(line));
+  const finish = (code, data = {}) => ({
+    code,
+    data,
+    text: lines.length ? lines.join('\n') + '\n' : '',
+    error: errs.length ? errs.join('\n') + '\n' : '',
+  });
 
   try {
     if (verb === 'status') {
@@ -90,10 +109,20 @@ export async function main(argv = [], deps = {}) {
         banked,
         catalogCachePath: policy.caps?.catalogCachePath ?? env.OC_DISPATCH_CATALOG_CACHE ?? null,
       };
+      let cacheAge = 'none';
+      if (data.catalogCachePath) {
+        try {
+          cacheAge = cacheAgeText(now() - stat(data.catalogCachePath).mtimeMs);
+        } catch {
+          cacheAge = 'unavailable';
+        }
+      }
+      data.catalogCacheAge = cacheAge;
       say(`mode: ${data.mode}`);
       say(`tiers: ${data.tiers.join(', ')}`);
       say(`banked: ${data.banked.length ? data.banked.join(', ') : 'none'}`);
       say(`catalog cache: ${data.catalogCachePath ?? 'none'}`);
+      say(`catalog cache age: ${cacheAge}`);
       return finish(0, data);
     }
 
@@ -138,6 +167,12 @@ export async function main(argv = [], deps = {}) {
     }
 
     if (verb === 'doctor') {
+      const unsupported = flags.find((flag) => flag === '--fix' || flag === '--yes');
+      if (unsupported) {
+        sayErr(`doctor: unsupported flag: ${unsupported}`);
+        sayErr('usage: oc-dispatch doctor [--check]');
+        return finish(2, { unsupported });
+      }
       const view = snapshot({ env, home, read });
       const loaded = loadPolicy(read(routingPath));
       const verdict = validate(loaded.policy);
@@ -163,6 +198,7 @@ export async function main(argv = [], deps = {}) {
 const invokedDirectly = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (invokedDirectly) {
   const result = await main(process.argv.slice(2));
+  if (result.error) process.stderr.write(result.error);
   process.stdout.write(result.text);
   process.exitCode = result.code;
 }

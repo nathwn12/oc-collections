@@ -6,6 +6,8 @@
 // Every other module is exercised through its own test file; this one is the
 // acceptance proof for "loads, logs once, changes nothing".
 import assert from 'node:assert/strict';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
@@ -54,8 +56,33 @@ test('the shipped policy is dormant: the plugin loads, logs once and changes no 
   assert.deepEqual(event.model, before, 'mode off never touches the model');
 
   assert.deepEqual(commands.map((c) => c.name).sort(), [
-    'dispatch-doctor', 'dispatch-off', 'dispatch-refresh', 'dispatch-status',
+    'dispatch-doctor', 'dispatch-off', 'dispatch-refresh', 'dispatch-setup', 'dispatch-status',
   ]);
+  ctrl.close();
+});
+
+test('dispatch-setup previews by default and writes through the setup seam with --yes', async () => {
+  const mod = await load();
+  const dir = mkdtempSync(path.join(tmpdir(), 'oc-dispatch-setup-'));
+  const target = path.join(dir, 'opencode.jsonc');
+  const source = '{\n  // keep\n  "plugins": []\n}\n';
+  writeFileSync(target, source);
+  const env = { OPENCODE_CONFIG_DIR: dir, OPENCODE_DISABLE_PROJECT_CONFIG: '1' };
+  const logs = [];
+  const { ctx, commands } = host(logs);
+  const ctrl = await mod.setupDispatch(ctx, {
+    env, log: (line) => logs.push(line), watchFn: () => ({ close() {} }),
+  });
+  const cmd = commands.find((c) => c.name === 'dispatch-setup');
+  assert.ok(cmd, 'dispatch-setup must be registered');
+
+  const preview = await cmd.execute();
+  assert.equal(preview.applied, false);
+  assert.equal(readFileSync(target, 'utf8'), source, 'preview never writes');
+
+  const applied = await cmd.execute('--yes');
+  assert.equal(applied.ok, true, JSON.stringify(applied));
+  assert.match(readFileSync(target, 'utf8'), /oc-dispatch/, 'apply writes the plugin entry');
   ctrl.close();
 });
 
@@ -113,5 +140,65 @@ test('the routing.json watcher reloads a changed policy', async () => {
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(ctrl.policy.mode, 'shadow');
   assert.equal(ctrl.resolver.status().mode, 'shadow');
+  ctrl.close();
+});
+
+test('the resolve hook prices candidates at the tier context ceiling', async () => {
+  const mod = await load();
+  const logs = [];
+  const { ctx, hooks } = host(logs);
+  const bump = {
+    providerID: 'p', id: 'bump', name: 'Bump', family: 'alpha', status: 'active', enabled: true,
+    limit: { context: 200000 }, tools: true,
+    cost: [{ input: 0, output: 0, size: 32768 }, { input: 0.5, output: 0.5, size: 131072 }],
+  };
+  const steady = {
+    providerID: 'p', id: 'steady', name: 'Steady', family: 'beta', status: 'active', enabled: true,
+    limit: { context: 100000 }, tools: true,
+    cost: [{ input: 0, output: 0, size: 32768 }, { input: 0.1, output: 0.1, size: 131072 }],
+  };
+  ctx.model.list = async () => ({ location: 'test', data: [bump, steady] });
+  const ctrl = await mod.setupDispatch(ctx, {
+    log: (line) => logs.push(line),
+    append: () => {},
+    read: () => JSON.stringify({ mode: 'enforce', confidentiality: { freeForCode: true } }),
+    watchFn: () => ({ close() {} }),
+  });
+  const resolveHook = hooks.find((h) => h.name === 'experimental.model.resolve');
+  assert.ok(resolveHook, 'the resolve hook must be registered');
+  const event = { sessionID: 'ses_rank', agent: 'build', kind: 'primary', model: { providerID: 'p', id: 'dear' } };
+  const decision = resolveHook.cb(event);
+  assert.equal(decision.model, 'p/steady', 'ranking uses the tier ceiling, not the first price row');
+  assert.equal(event.model.id, 'steady');
+  ctrl.close();
+});
+
+test('the resolve hook refreshes the catalog once caps.catalogTTLMs passes', async () => {
+  const mod = await load();
+  const logs = [];
+  let now = 1000;
+  let data = MODELS;
+  const { ctx, hooks } = host(logs);
+  ctx.model.list = async () => ({ location: 'test', data });
+  const ctrl = await mod.setupDispatch(ctx, {
+    log: (line) => logs.push(line),
+    append: () => {},
+    read: () => JSON.stringify({ mode: 'enforce', caps: { catalogTTLMs: 100 } }),
+    now: () => now,
+    watchFn: () => ({ close() {} }),
+  });
+  const resolveHook = hooks.find((h) => h.name === 'experimental.model.resolve');
+  assert.ok(resolveHook, 'the resolve hook must be registered');
+  const event = { sessionID: 'ses_ttl', agent: 'build', kind: 'primary', model: { providerID: 'p', id: 'dear' } };
+  assert.equal(ctrl.models.some((m) => m.modelID === 'fresh'), false, 'the snapshot starts unchanged');
+
+  now = 1200;
+  data = [{
+    providerID: 'p', id: 'fresh', name: 'Fresh', family: 'gamma', status: 'active', enabled: true,
+    limit: { context: 200000 }, tools: true, cost: [{ input: 0, output: 0 }],
+  }];
+  resolveHook.cb(event);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(ctrl.models.some((m) => m.modelID === 'fresh'), 'the live hook refreshed the catalog after the TTL');
   ctrl.close();
 });
