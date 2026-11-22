@@ -1,7 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { DEFAULTS } from '../src/policy.mjs';
-import { filterCandidates, findModel, normalize, pickTier, rank, unitCost } from '../src/catalog.mjs';
+import {
+  catalogIsStale,
+  createCatalog,
+  filterCandidates,
+  findModel,
+  normalize,
+  pickTier,
+  rank,
+  tokenPrice,
+  unitCost,
+} from '../src/catalog.mjs';
 
 const RAW = {
   location: { workspaceID: 'w', directory: '/work' },
@@ -97,4 +107,77 @@ test('rank puts free first, then grade, ttft and context', () => {
     get: (key) => (key === 'p/dear-b#primary' ? { taskCount: 10, costSum: 10 } : null),
   };
   assert.equal(rank([pricey, models[1]], { grades: graded, taskClass: 'primary' })[0].modelID, 'dear-b');
+});
+
+// Two sized cost rows: the cheap band covers a small tier, the dear band a
+// large one. A steady-priced rival makes the band choice decide the winner.
+const BANDED = normalize([
+  {
+    providerID: 'p', id: 'banded', status: 'active', enabled: true,
+    limit: { context: 200000 }, tools: true,
+    cost: [{ input: 1, output: 1, size: 32768 }, { input: 5, output: 5, size: 131072 }],
+  },
+  {
+    providerID: 'p', id: 'steady', status: 'active', enabled: true,
+    limit: { context: 200000 }, tools: true,
+    cost: [{ input: 3, output: 3, size: 32768 }],
+  },
+]);
+
+test('unitCost brackets the tier context and the price can flip the ranking', () => {
+  const [banded, steady] = BANDED;
+  assert.deepEqual(unitCost(banded), { input: 1, output: 1 }, 'no context keeps the first row');
+  assert.deepEqual(unitCost(banded, 32768), { input: 1, output: 1 });
+  assert.deepEqual(unitCost(banded, 131072), { input: 5, output: 5 });
+  assert.equal(tokenPrice(banded, 131072), 10);
+
+  const small = rank(BANDED, { contextCeiling: 32768 }).map((m) => m.modelID);
+  const large = rank(BANDED, { contextCeiling: 131072 }).map((m) => m.modelID);
+  assert.deepEqual(small, ['banded', 'steady'], 'the cheap band wins a small tier');
+  assert.deepEqual(large, ['steady', 'banded'], 'the dear band loses a large tier');
+  assert.deepEqual(rank(BANDED, { spec: { contextCeiling: 131072 } }).map((m) => m.modelID), large, 'a tier spec works too');
+});
+
+test('rank is stable when both tier ceilings land in the same price band', () => {
+  assert.deepEqual(rank(BANDED, { contextCeiling: 8192 }).map((m) => m.modelID), ['banded', 'steady']);
+  assert.deepEqual(rank(BANDED, { contextCeiling: 30000 }).map((m) => m.modelID), ['banded', 'steady']);
+  assert.deepEqual(rank(BANDED).map((m) => m.modelID), ['banded', 'steady'], 'callers with no tier keep the old order');
+});
+
+const rawModel = (id, input) => ({ providerID: 'p', id, enabled: true, cost: [{ input, output: 0 }] });
+
+test('catalog sync rebuilds after caps.catalogTTLMs so new, removed and re-priced models show', async () => {
+  let clock = 1000;
+  let raw = [rawModel('keep', 0), rawModel('gone', 0)];
+  const policy = { caps: { catalogTTLMs: 100 } };
+  const cat = await createCatalog({ load: () => raw, policy, now: () => clock });
+  assert.deepEqual(cat.models.map((m) => m.modelID), ['keep', 'gone']);
+
+  raw = [rawModel('keep', 1), rawModel('new', 0)];
+  clock += 100; // exactly at the TTL is still fresh: the check is strictly greater
+  assert.equal(catalogIsStale(cat.cacheAt, policy, () => clock), false);
+  assert.deepEqual((await cat.sync()).models.map((m) => m.modelID), ['keep', 'gone'], 'inside the TTL nothing changes');
+
+  clock += 1;
+  assert.equal(catalogIsStale(cat.cacheAt, policy, () => clock), true);
+  const out = await cat.sync();
+  assert.equal(out.stale, true);
+  assert.deepEqual(out.models.map((m) => m.modelID), ['keep', 'new'], 'a new model appears and a removed one goes');
+  assert.deepEqual(unitCost(out.models[0]), { input: 1, output: 0 }, 'a re-priced model shows the new price');
+  assert.equal(cat.cacheAt, clock, 'a rebuild restarts the TTL from the injected clock');
+});
+
+test('catalog sync keeps the cached models inside the TTL', async () => {
+  let clock = 500;
+  let raw = [rawModel('only', 0)];
+  const policy = { caps: { catalogTTLMs: 1000 } };
+  const cat = await createCatalog({ load: () => raw, policy, now: () => clock });
+  raw = [rawModel('other', 1)];
+  for (const advance of [0, 1, 999]) {
+    clock = 500 + advance;
+    assert.equal(catalogIsStale(cat.cacheAt, policy, () => clock), false);
+    const out = await cat.sync();
+    assert.equal(out.stale, false);
+    assert.deepEqual(out.models.map((m) => m.modelID), ['only'], 'a changed source is ignored until the TTL passes');
+  }
 });
