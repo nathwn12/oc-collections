@@ -403,10 +403,10 @@ test('live: the real graph parses and agrees with git', { skip: !hasHost }, () =
 
 function assertAtlasWiring(host, atlas) {
   const agents = fs.readFileSync(path.join(host, 'AGENTS.md'), 'utf8');
-  const system = fs.readFileSync(path.join(host, 'docs', 'SYSTEM.md'), 'utf8');
+  const system = fs.readFileSync(path.join(host, 'docs', 'SYSTEM.yaml'), 'utf8');
   const config = parseJsonc(fs.readFileSync(path.join(host, 'opencode.jsonc'), 'utf8'));
-  assert.match(agents, /docs\/SYSTEM\.md/, 'AGENTS.md must identify SYSTEM.md as the machine-facts authority');
-  const expectedSystem = canonicalWindowsPath(path.join(host, 'docs', 'SYSTEM.md'));
+  assert.match(agents, /docs\/SYSTEM\.yaml/, 'AGENTS.md must identify SYSTEM.yaml as the machine-facts authority');
+  const expectedSystem = canonicalWindowsPath(path.join(host, 'docs', 'SYSTEM.yaml'));
   assert.ok(
     Array.isArray(config.instructions) &&
       config.instructions.some((instruction) =>
@@ -415,9 +415,9 @@ function assertAtlasWiring(host, atlas) {
         !/^[a-z][a-z\d+.-]*:/i.test(instruction) &&
         canonicalWindowsPath(resolveInstruction(host, instruction)) === expectedSystem,
       ),
-    'opencode.jsonc instructions must include docs/SYSTEM.md',
+    'opencode.jsonc instructions must include docs/SYSTEM.yaml',
   );
-  assert.ok(system.includes(atlas), `docs/SYSTEM.md does not name ${atlas}: atlas config and machine facts drifted`);
+  assert.ok(system.includes(atlas), `docs/SYSTEM.yaml does not name ${atlas}: atlas config and machine facts drifted`);
 }
 
 function resolveInstruction(host, instruction) {
@@ -487,19 +487,19 @@ function parseJsonc(source) {
 test('atlas wiring: the machine-facts authority is referenced and injected', () => {
   const host = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-graphify-wiring-'));
   fs.mkdirSync(path.join(host, 'docs'));
-  fs.writeFileSync(path.join(host, 'AGENTS.md'), 'Machine facts: `docs/SYSTEM.md` is authoritative.');
-  fs.writeFileSync(path.join(host, 'opencode.jsonc'), '{\n "instructions": ["docs/SYSTEM.md",], // wired\n}');
-  fs.writeFileSync(path.join(host, 'docs', 'SYSTEM.md'), '`Q:\\vault\\graphify-out\\graph.json`');
+  fs.writeFileSync(path.join(host, 'AGENTS.md'), 'Machine facts: `docs/SYSTEM.yaml` is authoritative.');
+  fs.writeFileSync(path.join(host, 'opencode.jsonc'), '{\n "instructions": ["docs/SYSTEM.yaml",], // wired\n}');
+  fs.writeFileSync(path.join(host, 'docs', 'SYSTEM.yaml'), '`Q:\\vault\\graphify-out\\graph.json`');
   assertAtlasWiring(host, 'Q:\\vault\\graphify-out\\graph.json');
   assert.throws(() => assertAtlasWiring(host, 'Q:\\other\\graphify-out\\graph.json'), /does not name/);
   fs.writeFileSync(
     path.join(host, 'opencode.jsonc'),
-    '{\n // "instructions": ["docs/SYSTEM.md"]\n "instructions": ["docs/OTHER.md"],\n "note": "docs/SYSTEM.md",\n}',
+    '{\n // "instructions": ["docs/SYSTEM.yaml"]\n "instructions": ["docs/OTHER.md"],\n "note": "docs/SYSTEM.yaml",\n}',
   );
   assert.throws(() => assertAtlasWiring(host, 'Q:\\vault\\graphify-out\\graph.json'), /instructions must include/);
   fs.writeFileSync(
     path.join(host, 'opencode.jsonc'),
-    `{"instructions":["${path.join(os.tmpdir(), 'other', 'docs', 'SYSTEM.md').replaceAll('\\', '\\\\')}"]}`,
+    `{"instructions":["${path.join(os.tmpdir(), 'other', 'docs', 'SYSTEM.yaml').replaceAll('\\', '\\\\')}"]}`,
   );
   assert.throws(() => assertAtlasWiring(host, 'Q:\\vault\\graphify-out\\graph.json'), /instructions must include/);
   fs.rmSync(host, { recursive: true, force: true });
