@@ -47,7 +47,8 @@
     "catalogTTLMs": 30000
   },
   "confidentiality": {
-    "freeForCode": false
+    "freeForCode": false,
+    "freeForCodeProviders": []
   },
   "roles": {
     "known": {},

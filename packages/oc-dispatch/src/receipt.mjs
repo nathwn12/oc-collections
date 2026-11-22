@@ -9,7 +9,7 @@ import { dirname } from 'node:path';
 const num = (v, fallback = 0) => (typeof v === 'number' && Number.isFinite(v) ? v : fallback);
 const field = (value) => String(value ?? '-').replace(/[\t\r\n]+/g, ' ').trim() || '-';
 
-export function formatLine({ model, tier, reason, cacheAgeMs = 0, spend = 0, at = new Date() } = {}) {
+export function formatLine({ model, tier, reason, cacheAgeMs = 0, spend = 0, estimated = true, at = new Date() } = {}) {
   const when = at instanceof Date ? at.toISOString() : new Date(at).toISOString();
   return [
     when,
@@ -17,7 +17,7 @@ export function formatLine({ model, tier, reason, cacheAgeMs = 0, spend = 0, at 
     field(tier),
     field(reason),
     `${Math.max(0, Math.round(num(cacheAgeMs)))}ms`,
-    `$${num(spend).toFixed(4)}`,
+    `${estimated ? 'est. $' : '$'}${num(spend).toFixed(4)}`,
   ].join('\t');
 }
 

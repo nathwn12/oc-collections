@@ -27,8 +27,12 @@
   "exports": {
     ".": "./src/index.js"
   },
+  "bin": {
+    "oc-dispatch": "./bin/oc-dispatch.mjs"
+  },
   "files": [
     "src",
+    "bin",
     "routing.json",
     "README.md",
     "LICENSE"
@@ -37,7 +41,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "check": "node --check src/policy.mjs && node --check src/catalog.mjs && node --check src/grade.mjs && node --check src/config.mjs && node --check src/receipt.mjs && node --check src/resolve.mjs && node --check src/setup.mjs && node --check src/index.js && node --test \"test/**/*.test.js\"",
+    "check": "node --check src/policy.mjs && node --check src/catalog.mjs && node --check src/grade.mjs && node --check src/config.mjs && node --check src/receipt.mjs && node --check src/resolve.mjs && node --check src/setup.mjs && node --check src/index.js && node --check bin/oc-dispatch.mjs && node --test \"test/**/*.test.js\"",
     "test": "node --test \"test/**/*.test.js\""
   },
   "dependencies": {

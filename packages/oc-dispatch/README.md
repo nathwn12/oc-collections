@@ -32,9 +32,9 @@ Edit the shipped `routing.json` to switch modes, or set `OC_DISPATCH_ROUTING` to
 
 ## How a model is chosen
 
-The catalog is the only source of model ids — none are written in this package. A candidate must be enabled, not deprecated, tool-capable when its tier needs tools, inside its tier's context floor and price caps, not banked, and inside the spend ceiling. Tiers are `fast`, `medium`, `verify` and `heavy`; the cheapest tier that fits the expected context wins, and a verify tier must use a different model family from the executor. If no candidate qualifies, or the catalog is empty, the hook returns nothing and the agent's own model stands.
+The catalog is the only source of model ids — none are written in this package. A candidate must be enabled, not deprecated, tool-capable when its tier needs tools, inside its tier's context floor and price caps, not banked, and inside the spend ceiling. Tiers are `fast`, `medium`, `verify` and `heavy`; choosing order is `fast < medium < verify`, heavy is opt-in through a role or override and still capped, and a verify tier must use a different model family from the executor. If no candidate qualifies, or the catalog is empty, the hook returns nothing and the agent's own model stands.
 
-Roles resolve as `roles.known[agent] ?? infer(agent config) ?? roles.bare[agent] ?? medium`. Title, summary and compaction requests always take the fast tier. Zero-cost candidates rank by grade, then time to first token, then context; priced candidates rank by cost per accepted task when sampled, else token price.
+Roles resolve as `roles.known[agent] ?? infer(agent config) ?? roles.bare[agent] ?? medium` and act as a floor on the chosen tier. Title, summary and compaction requests always take the fast tier. With `confidentiality.freeForCode: false`, a zero-cost model cannot serve a primary request on a medium or verify tier unless its provider is listed in `confidentiality.freeForCodeProviders`; fast reads are never gated. Zero-cost candidates rank by grade, then time to first token, then context; priced candidates rank by cost per accepted task when sampled, else token price.
 
 ## Commands
 
@@ -45,13 +45,31 @@ Roles resolve as `roles.known[agent] ?? infer(agent config) ?? roles.bare[agent]
 
 The config view reads, in increasing precedence, the global config dir, the project config, the file named by `OPENCODE_CONFIG`, and the live host config. It never writes. A separate `applySetup` seam can add the plugin entry and `experimental.subagent_depth` to an explicit target file, preserving JSONC comments, with a backup and rollback; it runs only on an explicit call, never on load.
 
+## CLI
+
+`oc-dispatch` runs without a server. Four verbs: `status`, `off`, `init`, `doctor`.
+
+```sh
+oc-dispatch status              # mode, policy tiers, banked list, catalog cache path
+oc-dispatch off                 # write mode: off into routing.json, with a backup
+oc-dispatch init --dry-run      # preview the plugin entry and depth
+oc-dispatch init --yes          # apply them to the target config
+oc-dispatch doctor --check      # config precedence and the winning depth; fail on problems
+```
+
 ## The receipt
 
 One tab-separated line per substitution, in `~/.local/share/opencode/log/oc-dispatch.log` (override with `OC_DISPATCH_LOG`):
 
 ```text
-<timestamp>\t<model>\t<tier>\t<reason>\t<cache age>ms\t$<spend so far>
+<timestamp>\t<model>\t<tier>\t<reason>\t<cache age>ms\test. $<estimate so far>
 ```
+
+The last field is an **estimate** from token prices, marked `est. $x`, unless the resolve event carries a real message cost; then the exact `$x` is printed. The estimate still counts against the spend ceiling.
+
+## Grades
+
+The grade store exists on `ctx.storage` and is read for ranking — sampled grade, time to first token and cost per accepted task. Automatic recording of outcomes, auto-bank and auto-unbank are **not yet wired**: nothing writes a grade from a completed request and nothing lifts a banked model on a timer. That is the next slice. Do not read the banked list as a live health signal yet.
 
 ## Requirements
 

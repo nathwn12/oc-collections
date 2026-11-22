@@ -18,7 +18,7 @@ export const DEFAULTS = {
     heavy: { contextFloor: 131072, contextCeiling: 1000000, maxInput: 3, maxOutput: 12, requireTools: true, differentFamily: false },
   },
   caps: { defaultContext: 32768, maxSpendUsd: 5, spendPerTaskUsd: 0.05, catalogTTLMs: 30000 },
-  confidentiality: { freeForCode: false },
+  confidentiality: { freeForCode: false, freeForCodeProviders: [] },
   roles: { known: {}, bare: {} },
   seedTiers: [],
   overrides: {},
@@ -68,6 +68,13 @@ export function validate(policy) {
   if (!isPlain(p.quality)) errors.push('quality must be an object');
   if (!isPlain(p.confidentiality) || typeof p.confidentiality.freeForCode !== 'boolean') {
     errors.push('confidentiality.freeForCode must be a boolean');
+  }
+  if (
+    !isPlain(p.confidentiality) ||
+    !Array.isArray(p.confidentiality.freeForCodeProviders) ||
+    p.confidentiality.freeForCodeProviders.some((v) => typeof v !== 'string')
+  ) {
+    errors.push('confidentiality.freeForCodeProviders must be an array of provider ids');
   }
   if (!isPlain(p.roles) || !isPlain(p.roles.known) || !isPlain(p.roles.bare)) {
     errors.push('roles.known and roles.bare must be objects');

@@ -16,9 +16,18 @@ test('a receipt is one line with model, tier, reason, cache age and spend', () =
   });
   assert.equal(
     line,
-    '2026-11-22T10:20:30.000Z\tp/free-a\tfast\tkind:title\t1501ms\t$0.1250',
+    '2026-11-22T10:20:30.000Z\tp/free-a\tfast\tkind:title\t1501ms\test. $0.1250',
   );
   assert.equal(line.split('\n').length, 1);
+  const real = formatLine({
+    at: new Date('2026-11-22T10:20:30.000Z'),
+    model: 'p/free-a',
+    tier: 'fast',
+    reason: 'kind:title',
+    spend: 0.125,
+    estimated: false,
+  });
+  assert.match(real, /\t\$0\.1250$/, 'a real cost carries no estimate label');
 });
 
 test('a field with a newline or tab cannot split the line', () => {

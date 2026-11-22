@@ -4,8 +4,12 @@
 // file, re-validates the bytes, renames atomically and rolls back on failure.
 // Both edit the JSONC text in place, so comments and key order survive: parsing
 // and stringifying would erase them. Nothing here runs on plugin load.
-import { copyFileSync, existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
-import { stripJsonc } from './config.mjs';
+import {
+  copyFileSync, existsSync, lstatSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync,
+} from 'node:fs';
+import { homedir } from 'node:os';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { configDir, stripJsonc } from './config.mjs';
 
 function skipTrivia(s, i, end) {
   while (i < end) {
@@ -157,7 +161,10 @@ export function preview({ text, target, entry, depth, read = (p) => readFileSync
     if (plugins && source[plugins.valueStart] === '[') {
       let at = plugins.valueEnd - 1;
       while (at > plugins.valueStart && /\s/.test(source[at - 1])) at -= 1;
-      edits.push({ start: at, end: at, text: `${before.plugins.length ? ', ' : ''}${JSON.stringify(entry)}` });
+      // A trailing comma already separates the last item; adding another here
+      // would make the edited file invalid JSONC.
+      const separated = source[at - 1] === ',' || before.plugins.length === 0;
+      edits.push({ start: at, end: at, text: `${separated ? '' : ', '}${JSON.stringify(entry)}` });
     } else if (!plugins) {
       edits.push({ start: root.open + 1, end: root.open + 1, text: `\n  "plugins": [${JSON.stringify(entry)}],` });
     } else {
@@ -175,8 +182,8 @@ export function preview({ text, target, entry, depth, read = (p) => readFileSync
       } else {
         let at = inner.close - 1;
         while (at > inner.open && /\s/.test(source[at - 1])) at -= 1;
-        const comma = Object.keys(before.experimental ?? {}).length ? ',' : '';
-        edits.push({ start: at, end: at, text: `${comma}\n    "subagent_depth": ${depth}\n  ` });
+        const separated = source[at - 1] === ',' || Object.keys(before.experimental ?? {}).length === 0;
+        edits.push({ start: at, end: at, text: `${separated ? '' : ','}\n    "subagent_depth": ${depth}\n  ` });
       }
     } else if (!experimental) {
       edits.push({ start: root.open + 1, end: root.open + 1, text: `\n  "experimental": { "subagent_depth": ${depth} },` });
@@ -204,12 +211,17 @@ export function preview({ text, target, entry, depth, read = (p) => readFileSync
 
 /**
  * Apply an explicitly requested setup. Never called from plugin load.
- * A pre-existing `.bak` is left alone; a failed validation restores the bytes.
+ * The target must be a real file inside the config directory; symlinks are
+ * refused so a copy can never write through one. A pre-existing `.bak` is left
+ * alone; a failed validation restores the bytes read before the write, and a
+ * failed restore is named in the reason instead of being swallowed.
  */
 export function apply({
   target,
   entry,
   depth,
+  env = process.env,
+  home = homedir(),
   read = (p) => readFileSync(p, 'utf8'),
   write = (p, data) => writeFileSync(p, data),
   rename = (from, to) => renameSync(from, to),
@@ -218,6 +230,27 @@ export function apply({
   remove = (p) => unlinkSync(p),
 } = {}) {
   if (typeof target !== 'string' || !target) return { ok: false, reason: 'no-target' };
+  // Check the path itself before realpath: a symlink inside the config dir may
+  // point somewhere else, and must be refused as a symlink, not merely escape.
+  for (const candidate of [target, `${target}.bak`]) {
+    try {
+      if (lstatSync(candidate).isSymbolicLink()) {
+        return { ok: false, reason: candidate === target ? 'symlink-target' : 'symlink-backup' };
+      }
+    } catch {
+      /* an absent backup or target is handled by the preview and read below */
+    }
+  }
+  const allowed = resolve(configDir(env, home));
+  let inside = false;
+  try {
+    const resolved = resolve(realpathSync(target));
+    const rel = relative(allowed, resolved);
+    inside = rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+  } catch {
+    inside = false;
+  }
+  if (!inside) return { ok: false, reason: 'outside-config-dir' };
   const planned = preview({ target, entry, depth, read });
   if (!planned.ok) return { ok: false, reason: planned.reason };
   if (!planned.changed) return { ok: true, changed: false, path: target, backup: null };
@@ -238,16 +271,17 @@ export function apply({
     rename(temp, target);
     return { ok: true, changed: true, path: target, backup: exists(backup) ? backup : null };
   } catch {
+    let rollbackOk = true;
     try {
       write(target, original);
     } catch {
-      /* report the rollback failure through reason */
+      rollbackOk = false;
     }
     try {
       remove(temp);
     } catch {
       /* a stray temp is harmless next to a restored target */
     }
-    return { ok: false, reason: 'write-rolled-back' };
+    return { ok: false, reason: rollbackOk ? 'write-rolled-back' : 'rollback-failed', rollbackOk };
   }
 }
