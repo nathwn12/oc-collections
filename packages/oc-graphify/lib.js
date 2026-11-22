@@ -3,8 +3,8 @@
  *
  * The plugin's only job is orientation: say where the Atlas graph is, how big
  * it is, whether it still matches HEAD, and which verb answers a question. It
- * never wraps the CLI and never touches a command: the six reads answer from
- * graph.json, and the CLI owns the writes.
+ * never wraps the CLI and never touches a command: the three reads answer from
+ * graph.json, the CLI owns the writes, and GRAPH_REPORT.md owns the hub list.
  *
  * Everything here is pure except `readGraph` (one file), `headCommit` (one git
  * call) and `askFreshness` (one hidden child), all of which return null instead
@@ -226,7 +226,7 @@ export function render({ graph, head, atlas, fresh = null }) {
     MARKER,
     `Graphify Atlas (durable memory): ${bits.join(', ')}.`,
     `Graph: ${graph.file} - the same graph Obsidian shows as the harness-wiki vault (graph-room).`,
-    'Ask it before grepping: `graph_stats`, `graph_node`, `graph_neighbors`, `graph_path`, `graph_god_nodes`, `graph_query` - this plugin\'s own reads over the same file. `graphify query "<question>"` with cwd = the atlas is the CLI, for when an exact answer matters.',
+    'Ask it before grepping: `graph_node`, `graph_neighbors`, `graph_path` - this plugin\'s own reads over the same file. Search with `graphify query "<question>"` (cwd = the atlas) when an exact answer matters; the hub list is in `GRAPH_REPORT.md`.',
     'Rebuild with `node .graphify/tools/sync-corpus.mjs` from the atlas; never from the vault root, never a bare `graphify update`.',
     stateLine(graph, head, fresh),
   ].join('\n');

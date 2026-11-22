@@ -1,6 +1,6 @@
 /**
  * oc-graphify - OpenCode plugin: put the Atlas graph in front of every request,
- * automatically, and answer six reads over it.
+ * automatically, and answer three reads over it.
  *
  * What it replaces: `graphify install --platform opencode` writes a
  * `tool.execute.before` hook that rewrites the first shell command of a session
@@ -9,11 +9,11 @@
  * the same orientation as injected context instead, with the real numbers and
  * the freshness verdict the echo never had, and it never touches a command.
  *
- * What it does: the injection, plus `graph_stats`, `graph_node`,
- * `graph_neighbors`, `graph_path`, `graph_god_nodes` and `graph_query` - pure
- * reads over the same graph.json, so the block can name something that answers
- * even when no graphify MCP is configured. `graph_query` is label-token search,
- * not the CLI's heuristic, and says so in its own reply.
+ * What it does: the injection, plus `graph_node`, `graph_neighbors` and
+ * `graph_path` - pure reads over the same graph.json, so the block can name
+ * something that answers even when no graphify MCP is configured. Search stays
+ * with `graphify query` in the CLI, and the hub list stays in GRAPH_REPORT.md;
+ * the host owns only locating and relating nodes.
  *
  * What it still does not do: writes. Rebuild, cluster and label belong to the
  * CLI, because they need Python and a model.
@@ -58,7 +58,7 @@ export default {
                 if (typeof editor.namespace === 'function') {
                   editor.namespace({
                     name: 'graphify',
-                    description: 'Reads over the Graphify Atlas: counts, nodes, neighbours, paths, core abstractions, label search.',
+                    description: 'Reads over the Graphify Atlas: locate nodes, list neighbours, trace paths.',
                   });
                 }
               } catch {

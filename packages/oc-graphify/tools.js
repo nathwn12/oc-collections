@@ -1,4 +1,4 @@
-// The six graph reads, as host tools.
+// The three graph reads, as host tools.
 //
 // They exist so the injected block can name something that answers. The block
 // tells every request the atlas is there; without tools the instruction pointed
@@ -9,12 +9,10 @@
 
 import path from 'node:path'
 
-import { findNode, godNodes, neighbors, readGraph, search, shortestPath, stats } from './graph.js'
+import { findNode, neighbors, shortestPath } from './graph.js'
 
 const text = (value) => ({ content: value })
 const fail = (message) => ({ content: `error: ${message}` })
-
-const short = (id) => (id.length > 8 ? `${id.slice(0, 8)}…` : id)
 
 function label(node) {
   return node?.label ?? node?.id ?? '(unnamed)'
@@ -30,7 +28,7 @@ function nodeLine(node, extra = '') {
 }
 
 /**
- * Six tools over one atlas. `load` is passed in so the host decides where the
+ * Three tools over one atlas. `load` is passed in so the host decides where the
  * graph is and the tests decide what it is.
  */
 export function toolDefinitions({ graphFile, load }) {
@@ -43,25 +41,6 @@ export function toolDefinitions({ graphFile, load }) {
   }
 
   return [
-    {
-      name: 'graph_stats',
-      description:
-        'What the atlas holds: node, edge and community counts, the graphify version that built it, and the file it was read from. The first call when you need to know whether the graph is worth querying.',
-      input: { type: 'object', properties: {}, additionalProperties: false },
-      execute: async () => {
-        const { graph, error } = open()
-        if (error) return fail(error)
-        const s = stats(graph)
-        return text(
-          [
-            `nodes ${s.nodes} · edges ${s.edges} · communities ${s.communities}`,
-            `graphify ${s.version ?? 'unknown'} · ${s.directed ? 'directed' : 'undirected'}`,
-            s.file,
-          ].join('\n'),
-        )
-      },
-    },
-
     {
       name: 'graph_node',
       description:
@@ -148,53 +127,6 @@ export function toolDefinitions({ graphFile, load }) {
           [
             `${chain.length - 1} step(s):`,
             ...chain.map((id, index) => `${index === 0 ? '  ' : '->'} ${id}`),
-          ].join('\n'),
-        )
-      },
-    },
-
-    {
-      name: 'graph_god_nodes',
-      description:
-        'The most connected real entities - the core abstractions. File, concept and json-key nodes are excluded because they accumulate edges mechanically.',
-      input: {
-        type: 'object',
-        properties: { top: { type: 'number', description: 'How many. Default 10, max 50.' } },
-        additionalProperties: false,
-      },
-      execute: async (input) => {
-        const { graph, error } = open()
-        if (error) return fail(error)
-        const rows = godNodes(graph, Number(input.top ?? 10))
-        return text(rows.map((row) => `- ${row.degree}  ${row.id}\n  ${row.label}`).join('\n') || 'no nodes')
-      },
-    },
-
-    {
-      name: 'graph_query',
-      description:
-        'Search labels for the words in a question, then expand one hop around each hit. This is the plugin\'s own search, not graphify\'s CLI heuristic - it matches label tokens, and says so. Use `graphify query` when an exact answer matters.',
-      input: {
-        type: 'object',
-        properties: {
-          question: { type: 'string', description: 'What you are looking for, in words.' },
-          depth: { type: 'number', description: 'Hops around each hit, 0 to 2. Default 1.' },
-        },
-        required: ['question'],
-        additionalProperties: false,
-      },
-      execute: async (input) => {
-        const { graph, error } = open()
-        if (error) return fail(error)
-        const rows = search(graph, input.question, Number(input.depth ?? 1))
-        if (!rows.length) return text(`no label contains the words in "${input.question}"`)
-        return text(
-          [
-            `label-token search (not the CLI's heuristic) - ${rows.length} row(s):`,
-            ...rows.map(
-              (row) =>
-                `- ${short(row.id)}${row.score ? ` score ${row.score}` : ''}${row.distance ? ` +${row.distance}` : ''}\n  ${row.label}`,
-            ),
           ].join('\n'),
         )
       },

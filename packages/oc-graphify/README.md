@@ -8,7 +8,7 @@ answers a question, and whether it still matches `HEAD`.
 <!-- oc-graphify -->
 Graphify Atlas (durable memory): 922 nodes, 1537 edges, 86 communities, graphify 0.9.105.
 Graph: Q:\PROJECTS\PERSONAL\my-harness-vault\vault\graphify-out\graph.json - the same graph Obsidian shows as the harness-wiki vault (graph-room).
-Ask it before grepping: `graph_stats`, `graph_node`, `graph_neighbors`, `graph_path`, `graph_god_nodes`, `graph_query` - this plugin's own reads over the same file. `graphify query "<question>"` with cwd = the atlas is the CLI, for when an exact answer matters.
+Ask it before grepping: `graph_node`, `graph_neighbors`, `graph_path` - this plugin's own reads over the same file. Search with `graphify query "<question>"` (cwd = the atlas) when an exact answer matters; the hub list is in `GRAPH_REPORT.md`.
 Rebuild with `node .graphify/tools/sync-corpus.mjs` from the atlas; never from the vault root, never a bare `graphify update`.
 Graph state: fresh - built from 6517ef3; no corpus input changed through HEAD.
 ```
@@ -30,9 +30,12 @@ again re-adds the file; the check below fails by name when that happens.
 
 ## What it deliberately does not do
 
-- **No write verbs.** The six reads answer from `graph.json`; the CLI owns the
+- **No write verbs.** The three reads answer from `graph.json`; the CLI owns the
   writes (`update`, `cluster-only`, `label`, `export`). A second write surface
   would drift from the CLI.
+- **No search or hub list.** `graphify query "<question>"` (cwd = the atlas) is
+  the one search route; `GRAPH_REPORT.md` is the one hub list. A second copy of
+  either would drift from the CLI and the published report.
 - **No rebuild.** Rebuilding costs an extraction pass; the block names the
   sanctioned command instead of running it.
 - **No third-party module.** It imports only `node:` built-ins and its own
@@ -65,9 +68,10 @@ again re-adds the file; the check below fails by name when that happens.
 ## Graph direction and freshness
 
 Directed Atlas links are traversed from `source` to `target`; paths do not
-reverse them. Neighbour results identify the stored link orientation, and
-`graph_god_nodes` ranks directed nodes by total degree (incoming plus outgoing).
-Undirected graphs remain traversable from either endpoint.
+reverse them. Neighbour results identify the stored link orientation. The most
+connected entities are published in `GRAPH_REPORT.md`, ranked by total degree
+(incoming plus outgoing) for directed graphs. Undirected graphs remain
+traversable from either endpoint.
 
 Freshness probes run asynchronously and coalesce while one refresh is in flight.
 The first request, and any request while a refresh is pending, uses the cached
@@ -99,18 +103,16 @@ in step.
 
 ## Tools
 
-Six reads over the same graph.json, so the injected block names something that
+Three reads over the same graph.json, so the injected block names something that
 answers without a graphify MCP configured:
 
 | Tool | Answers |
 |---|---|
-| graph_stats | nodes, edges, communities, graphify version, file |
 | graph_node | one node by id, exact label, or fragment; candidates when ambiguous |
 | graph_neighbors | adjacency, one to three hops, with the relation |
 | graph_path | shortest chain between two nodes |
-| graph_god_nodes | most connected real entities, file/concept nodes excluded |
-| graph_query | label-token search plus one hop; **not** the CLI heuristic |
 
-graph_query says in its own reply that it is label-token search, because
-graphify's \query\ resolves seeds with heuristics of its own and answering
-differently while pretending parity would be worse than answering plainly.
+The host owns locating and relating nodes only. Search is the CLI's job:
+`graphify query "<question>"` with cwd = the atlas, which resolves seeds with
+its own heuristics. The hub list is in `GRAPH_REPORT.md`; keeping it published
+there avoids a second ranking that could drift from the atlas build.
