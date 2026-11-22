@@ -8,13 +8,16 @@ It is built for Obsidian + Graphify atlases and their four jobs — maintain,
 query, update and observe — and is distributed only through the GitHub path,
 never npm.
 
+The block below is an illustration: `<n>`, `<version>` and `<freshness detail>`
+are placeholders, not readings from any build.
+
 ```
 <!-- oc-graphify -->
-Graphify Atlas (durable memory): 922 nodes, 1537 edges, 86 communities, graphify 0.9.105.
+Graphify Atlas (durable memory): <n> nodes, <n> edges, <n> communities, graphify <version>.
 Graph: Q:\PROJECTS\PERSONAL\my-harness-vault\vault\graphify-out\graph.json - the same graph Obsidian shows as the harness-wiki vault (graph-room).
 Ask it before grepping: `graph_node`, `graph_neighbors`, `graph_path` - this plugin's own reads over the same file. Search with `graphify query "<question>"` (cwd = the atlas) when an exact answer matters; the hub list is in `GRAPH_REPORT.md`.
 Rebuild with `node .graphify/tools/sync-corpus.mjs` from the atlas; never from the vault root, never a bare `graphify update`.
-Graph state: fresh - graph-freshness: extraction cache: 0 cached, 219 seed-covered, 0 unaccounted.
+Graph state: fresh - <freshness detail>.
 ```
 
 Under the 1200-byte budget the check pins, injected once per request through
