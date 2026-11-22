@@ -143,14 +143,19 @@ test('render: fresh and stale differ only in the state line', () => {
   assert.notEqual(fresh.split('\n').at(-1), stale.split('\n').at(-1));
 });
 
-test('render: one marker, under the byte budget, and it names the real verbs', () => {
+test('render: one marker, under the byte budget, and it names only the three real verbs', () => {
   const graph = { nodes: 922, edges: 1537, communities: 86, commit: 'a'.repeat(40), version: '0.9.105', file: 'Q:\\v\\graphify-out\\graph.json' };
   const block = render({ graph, head: 'a'.repeat(40), atlas: 'Q:\\v' });
   assert.equal(block.split(MARKER).length - 1, 1);
   assert.ok(block.length < 1200, `block is ${block.length} chars, budget is 1200`);
-  for (const verb of ['graph_stats', 'graph_node', 'graph_neighbors', 'graph_path', 'graph_god_nodes', 'graph_query']) {
+  for (const verb of ['graph_node', 'graph_neighbors', 'graph_path']) {
     assert.ok(block.includes(verb), `missing verb ${verb}`);
   }
+  for (const verb of ['graph_stats', 'graph_god_nodes', 'graph_query']) {
+    assert.ok(!block.includes(verb), `removed verb ${verb} is still advertised`);
+  }
+  assert.match(block, /graphify query "<question>"/, 'the block must route search to the CLI');
+  assert.match(block, /GRAPH_REPORT\.md/, 'the block must name the published hub list');
   assert.ok(block.startsWith(MARKER));
 });
 
@@ -275,7 +280,7 @@ test('setup: a host without the hook, a hostile ctx, and no config are all silen
   assert.doesNotThrow(() => plugin.setup({ session: { hook: () => { throw new Error('refused'); } } }));
 });
 
-test('setup: six reads registered, and the hooks land when the tool editor refuses', async () => {
+test('setup: three reads registered, and the hooks land when the tool editor refuses', async () => {
   // Same reason as the hook test above: a clean runner has no atlas record, and
   // setup returns early without one. Point it at a fixture so this asserts
   // registration, not whether this machine happens to be configured.
@@ -294,7 +299,10 @@ test('setup: six reads registered, and the hooks land when the tool editor refus
       },
     });
     await new Promise((resolve) => setImmediate(resolve));
-    assert.deepEqual(added.sort(), ['graph_god_nodes', 'graph_neighbors', 'graph_node', 'graph_path', 'graph_query', 'graph_stats']);
+    assert.deepEqual(added.sort(), ['graph_neighbors', 'graph_node', 'graph_path']);
+    for (const removed of ['graph_stats', 'graph_god_nodes', 'graph_query']) {
+      assert.ok(!added.includes(removed), `${removed} is still registered`);
+    }
     assert.deepEqual(hooks.sort(), ['compaction', 'context', 'generate']);
 
     const stillHooked = [];

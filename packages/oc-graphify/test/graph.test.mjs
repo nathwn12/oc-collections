@@ -99,16 +99,13 @@ test('search: label tokens, then one hop around each hit', () => {
   assert.deepEqual(search(graph, 'zzz', 1), [])
 })
 
-test('tools: six reads, each answering text, none throwing on a bad file', async () => {
+test('tools: three reads, each answering text, none throwing on a bad file', async () => {
   const defs = toolDefinitions({ graphFile: file, load: readGraph })
-  assert.deepEqual(defs.map((d) => d.name).sort(), [
-    'graph_god_nodes',
-    'graph_neighbors',
-    'graph_node',
-    'graph_path',
-    'graph_query',
-    'graph_stats',
-  ])
+  const names = defs.map((d) => d.name).sort()
+  assert.deepEqual(names, ['graph_neighbors', 'graph_node', 'graph_path'])
+  for (const removed of ['graph_stats', 'graph_god_nodes', 'graph_query']) {
+    assert.ok(!names.includes(removed), `${removed} is still registered`)
+  }
 
   const call = async (name, input = {}) => {
     const def = defs.find((d) => d.name === name)
@@ -117,12 +114,9 @@ test('tools: six reads, each answering text, none throwing on a bad file', async
     return result.content
   }
 
-  assert.match(await call('graph_stats'), /nodes 6/)
   assert.match(await call('graph_node', { name: 'alpha' }), /Alpha/)
   assert.match(await call('graph_neighbors', { name: 'hub' }), /2 neighbour/)
   assert.match(await call('graph_path', { from: 'hub', to: 'c' }), /2 step/)
-  assert.match(await call('graph_god_nodes', { top: 2 }), /Alpha/)
-  assert.match(await call('graph_query', { question: 'alpha' }), /label-token search/)
 })
 
 test('tools: a missing graph is a sentence, not an exception', async () => {
