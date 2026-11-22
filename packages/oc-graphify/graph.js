@@ -8,8 +8,7 @@
 // Deliberately absent: `query` parity with the CLI. graphify's query resolves
 // seeds with token heuristics (Chinese segmentation, diacritic folding, name
 // segments) that are its own; reimplementing them badly would answer
-// differently from the tool the user trusts. `search` here is label token
-// overlap, and every result says so.
+// differently from the tool the user trusts. Search stays with the CLI.
 
 import fs from 'node:fs'
 
@@ -54,18 +53,6 @@ export function readGraph(file) {
 }
 
 const graphDirected = (data) => data.directed === true
-
-/** One line a reader can use without opening the file. */
-export function stats(graph) {
-  return {
-    nodes: graph.nodes.length,
-    edges: graph.links.length,
-    communities: graph.communityCount,
-    version: graph.version,
-    directed: graph.directed,
-    file: graph.file,
-  }
-}
 
 const norm = (value) => String(value ?? '').trim().toLowerCase()
 
@@ -146,63 +133,4 @@ export function shortestPath(graph, from, to) {
     }
   }
   return null
-}
-
-/**
- * The most connected entities, excluding the node kinds graphify excludes:
- * file, concept and json-key nodes accumulate edges mechanically.
- */
-export function godNodes(graph, top = 10) {
-  const NOISE = new Set(['file', 'concept', 'json_key', 'json'])
-  const directedDegree = new Map()
-  if (graph.directed) {
-    for (const edge of graph.links) {
-      directedDegree.set(edge.source, (directedDegree.get(edge.source) ?? 0) + 1)
-      directedDegree.set(edge.target, (directedDegree.get(edge.target) ?? 0) + 1)
-    }
-  }
-  const degree = (id) => graph.directed ? (directedDegree.get(id) ?? 0) : (graph.adjacency.get(id) ?? []).length
-  const ranked = graph.nodes
-    .filter((node) => !NOISE.has(String(node.file_type ?? '').toLowerCase()))
-    .map((node) => ({ id: node.id, label: node.label ?? node.id, degree: degree(node.id), community: node.community ?? null }))
-    .sort((a, b) => b.degree - a.degree)
-  return ranked.slice(0, Math.max(1, Math.min(top, 50)))
-}
-
-const tokens = (text) =>
-  String(text ?? '')
-    .toLowerCase()
-    .split(/[^a-z0-9_]+/)
-    .filter((token) => token.length >= 3)
-
-/**
- * Label-token search followed by a bounded BFS. This is ours, not graphify's:
- * it ranks by how many query tokens a label contains, and says so in the reply.
- */
-export function search(graph, question, depth = 1, limit = 8) {
-  const wanted = tokens(question)
-  if (!wanted.length) return []
-  const scored = []
-  for (const node of graph.nodes) {
-    const label = norm(node.label)
-    let score = 0
-    for (const token of wanted) if (label.includes(token)) score++
-    if (score > 0) scored.push({ node, score })
-  }
-  scored.sort((a, b) => b.score - a.score)
-  const seeds = scored.slice(0, Math.max(1, Math.min(limit, 20)))
-
-  const seen = new Set()
-  const rows = []
-  for (const { node, score } of seeds) {
-    if (seen.has(node.id)) continue
-    seen.add(node.id)
-    rows.push({ id: node.id, label: node.label ?? node.id, relation: null, distance: 0, score })
-    for (const hit of neighbors(graph, node.id, depth) ?? []) {
-      if (seen.has(hit.id)) continue
-      seen.add(hit.id)
-      rows.push({ ...hit, score: 0 })
-    }
-  }
-  return rows
 }

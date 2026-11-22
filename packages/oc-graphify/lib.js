@@ -2,9 +2,10 @@
  * oc-graphify - helpers.
  *
  * The plugin's only job is orientation: say where the Atlas graph is, how big
- * it is, whether it still matches HEAD, and which verb answers a question. It
- * never wraps the CLI and never touches a command: the three reads answer from
- * graph.json, the CLI owns the writes, and GRAPH_REPORT.md owns the hub list.
+ * it is, whether it matches the corpus inputs the build recorded, and which
+ * verb answers a question. It never wraps the CLI and never touches a command:
+ * the three reads answer from graph.json, the CLI owns the writes, and
+ * GRAPH_REPORT.md owns the hub list.
  *
  * Everything here is pure except `readGraph` (one file), `headCommit` (one git
  * call) and `askFreshness` (one hidden child), all of which return null instead
@@ -190,12 +191,15 @@ export function askFreshnessAsync(atlas, { timeout = 8000, runtime = runtimePath
 /**
  * Cheap corpus verdict from the build ledger, with no child process and no git.
  * sync-corpus writes `graphify-out/.graphify_build.json` beside the graph: its
- * `stamp` names the build commit and `inputs` maps each corpus input to the
- * sha256 it had at build time. Hashing those files again proves the one claim
- * this plugin makes - the published graph matches the corpus inputs - so a
- * commit that touched no corpus input cannot call a good graph stale. A null
- * means there is no ledger to judge; the hidden child stays the authoritative
- * probe, and the state line reports unverified rather than guessing from HEAD.
+ * `stamp` names the build commit, `graph.sha256` digests the published graph,
+ * and `inputs` maps each corpus input to the sha256 it had at build time.
+ * Hashing those bytes again proves the one claim this plugin makes - the
+ * published graph and the corpus it was built from are unchanged - so a commit
+ * that touched no corpus input cannot call a good graph stale, and a hand-edited
+ * graph.json cannot pass as fresh. A null means there is no ledger, no graph
+ * digest in it, or no verdict to judge; the hidden child stays the authoritative
+ * probe, the ledger is the cheap fallback, and the state line reports
+ * unverified rather than guessing from HEAD.
  */
 export function corpusFreshness(atlas, graph = null, { io = fs } = {}) {
   if (!atlas) return null;
@@ -208,7 +212,8 @@ export function corpusFreshness(atlas, graph = null, { io = fs } = {}) {
   }
   const stamp = typeof ledger?.stamp === 'string' ? ledger.stamp : '';
   const inputs = ledger?.inputs;
-  if (!stamp || !inputs || typeof inputs !== 'object' || Array.isArray(inputs)) return null;
+  const graphSha = typeof ledger?.graph?.sha256 === 'string' ? ledger.graph.sha256 : '';
+  if (!stamp || !inputs || typeof inputs !== 'object' || Array.isArray(inputs) || !graphSha) return null;
   // A ledger left by another build must not certify these graph bytes.
   if (graph?.commit && !String(graph.commit).startsWith(stamp)) return null;
   const entries = Object.entries(inputs);
@@ -223,12 +228,21 @@ export function corpusFreshness(atlas, graph = null, { io = fs } = {}) {
     }
     return createHash('sha256').update(bytes).digest('hex') !== recorded;
   });
-  if (changed.length) {
-    return { state: 'stale', detail: `${changed.length} corpus input(s) changed since the build` };
+  let graphBytes;
+  try {
+    graphBytes = io.readFileSync(graphFile(atlas));
+  } catch {
+    return null;
   }
+  const graphMatches = createHash('sha256').update(graphBytes).digest('hex') === graphSha;
+  const why = [
+    changed.length ? `${changed.length} corpus input(s) changed since the build` : '',
+    graphMatches ? '' : 'graph.json bytes differ from the build ledger',
+  ].filter(Boolean);
+  if (why.length) return { state: 'stale', detail: `ledger fallback: ${why.join('; ')}` };
   return {
     state: 'fresh',
-    detail: 'no corpus input changed; byte integrity verified against the build ledger',
+    detail: 'ledger fallback: no corpus input changed; graph bytes match the build ledger',
   };
 }
 

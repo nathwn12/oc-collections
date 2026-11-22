@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { createHash } from 'node:crypto'
 import { configPath, MARKER } from '../lib.js'
 import plugin from '../index.js'
 
@@ -127,6 +128,34 @@ test('request hooks return immediately, share one slow probe, and refresh stale/
     process.off('unhandledRejection', onUnhandled)
     fs.rmSync(fixture.root, { recursive: true, force: true })
   }
+})
+
+test('a failed child falls back to the ledger, and the state line names that source', async () => {
+  const fixture = atlasFixture()
+  const graphOut = path.join(fixture.atlas, 'graphify-out')
+  const graphBytes = fs.readFileSync(path.join(graphOut, 'graph.json'))
+  const noteBytes = '# ledged note\n'
+  fs.writeFileSync(path.join(fixture.atlas, 'note.md'), noteBytes)
+  fs.writeFileSync(path.join(graphOut, '.graphify_build.json'), JSON.stringify({
+    stamp: 'a'.repeat(8),
+    graph: { sha256: createHash('sha256').update(graphBytes).digest('hex') },
+    inputs: { 'note.md': createHash('sha256').update(noteBytes).digest('hex') },
+  }))
+  // The child fails without a verdict (exit 2), so only the ledger can answer.
+  fs.writeFileSync(fixture.modeFile, 'unknown')
+  const hook = installHooks(fixture.config).get('context')
+  hook(event())
+  await waitFor(() => fs.readFileSync(fixture.countFile, 'utf8') === '1', 'probe did not start')
+  await waitFor(() => fs.readFileSync(path.join(fixture.root, 'done'), 'utf8') === '1', 'probe did not finish')
+  let request
+  await waitFor(() => {
+    request = event()
+    hook(request)
+    return /fresh/.test(state(request))
+  }, 'ledger fallback did not answer fresh')
+  assert.match(state(request), /ledger fallback/, 'the state line must name the source that answered')
+  assert.doesNotMatch(state(request), /fixture/, 'the failed child did not answer')
+  fs.rmSync(fixture.root, { recursive: true, force: true })
 })
 
 test('a stuck freshness child does not block hook delivery', () => {

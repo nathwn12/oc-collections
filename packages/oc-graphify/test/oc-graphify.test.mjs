@@ -14,6 +14,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import {
   MARKER,
@@ -97,16 +98,35 @@ test('verdict: four states, each named; the stamp alone decides none of them', (
   assert.equal(verdict({ commit: 'a'.repeat(40) }, 'a'.repeat(40), { state: 'stale', detail: 'ledger' }), 'stale');
 });
 
-test('stateLine: a stale corpus verdict says why and says rebuild', () => {
-  const line = stateLine(
-    { commit: 'bbbbbbb'.padEnd(40, 'b') },
-    'aaaaaaa'.padEnd(40, 'a'),
-    { state: 'stale', detail: 'built from bbbbbbb, HEAD aaaaaaa; 2 corpus inputs changed' },
-  );
-  assert.match(line, /STALE/);
-  assert.match(line, /bbbbbbb/);
-  assert.match(line, /aaaaaaa/);
-  assert.match(line, /Rebuild/);
+test('stateLine: a real stale corpus verdict says why and says rebuild', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-graphify-state-'));
+  const rel = 'note.md';
+  fs.writeFileSync(path.join(dir, rel), '# note\n');
+  const out = path.join(dir, 'graphify-out');
+  fs.mkdirSync(out, { recursive: true });
+  const graphBody = JSON.stringify({
+    nodes: [{ id: 'n', community: 1 }],
+    links: [],
+    built_at_commit: 'b'.repeat(40),
+  });
+  fs.writeFileSync(path.join(out, 'graph.json'), graphBody);
+  fs.writeFileSync(path.join(out, '.graphify_build.json'), JSON.stringify({
+    stamp: 'b'.repeat(8),
+    graph: { sha256: createHash('sha256').update(graphBody).digest('hex') },
+    inputs: { [rel]: createHash('sha256').update('# old note\n').digest('hex') },
+  }));
+  try {
+    const graph = readGraph(dir);
+    const fresh = corpusFreshness(dir, graph);
+    assert.equal(fresh?.state, 'stale');
+    const line = stateLine(graph, 'a'.repeat(40), fresh);
+    assert.match(line, /STALE/);
+    assert.match(line, /ledger fallback/, 'the real corpus detail must survive into the state line');
+    assert.match(line, /corpus input\(s\) changed/, 'the stale detail names changed corpus inputs');
+    assert.match(line, /Rebuild/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('headCommit: a 40-hex answer is kept, anything else is null', () => {

@@ -9,6 +9,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - Six read tools over the atlas: graph_stats, graph_node, graph_neighbors, graph_path, graph_god_nodes, graph_query. The injected block named MCP verbs this host does not configure; it now names these. graph_query is label-token search and says so, rather than claiming the CLI's heuristic.
+- The six-verb list above was retired in `cf344da`; only `graph_node`, `graph_neighbors` and `graph_path` ship now.
 
 ### Fixed
 

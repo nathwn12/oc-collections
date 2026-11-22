@@ -2,7 +2,7 @@
 
 An OpenCode plugin that puts the Graphify Atlas in front of every request, so
 orientation is automatic: how big the graph is, where its JSON lives, which verb
-answers a question, and whether it still matches `HEAD`.
+answers a question, and whether it matches the corpus inputs the build recorded.
 
 It is built for Obsidian + Graphify atlases and their four jobs — maintain,
 query, update and observe — and is distributed only through the GitHub path,
@@ -14,7 +14,7 @@ Graphify Atlas (durable memory): 922 nodes, 1537 edges, 86 communities, graphify
 Graph: Q:\PROJECTS\PERSONAL\my-harness-vault\vault\graphify-out\graph.json - the same graph Obsidian shows as the harness-wiki vault (graph-room).
 Ask it before grepping: `graph_node`, `graph_neighbors`, `graph_path` - this plugin's own reads over the same file. Search with `graphify query "<question>"` (cwd = the atlas) when an exact answer matters; the hub list is in `GRAPH_REPORT.md`.
 Rebuild with `node .graphify/tools/sync-corpus.mjs` from the atlas; never from the vault root, never a bare `graphify update`.
-Graph state: fresh - built from 6517ef3; no corpus input changed through HEAD.
+Graph state: fresh - graph-freshness: extraction cache: 0 cached, 219 seed-covered, 0 unaccounted.
 ```
 
 Under the 1200-byte budget the check pins, injected once per request through
@@ -82,7 +82,12 @@ The first request, and any request while a refresh is pending, uses the cached
 snapshot; until a verdict is available it says `unverified`. If `graph.json`
 changes during a probe, the new counts are loaded but that probe's verdict is
 discarded as `unknown` rather than being applied to different graph bytes.
-Probe failures are `unverified`, never implicitly `fresh`.
+
+The hidden child probe is the first source of truth; the build ledger is the
+second. When the child fails or gives no verdict, the ledger's recorded corpus
+inputs and graph digest decide, and the state line names that fallback. Only
+when neither source answers does the block say `unverified` - a failed probe is
+never implicitly `fresh`, but a valid ledger is a real verdict.
 
 ## Check
 
@@ -102,8 +107,8 @@ package and that `AGENTS.md` and `graphify.json` name the same atlas.
 The manifest is `private: true` and the package is **not** in
 `scripts/release-target.mjs`'s `ALLOWED` list, so no tag or dispatch can publish
 it. Admitting it is a one-line change there plus the dispatch choice list in
-`.github/workflows/release.yml`; the check enforces that the two decisions stay
-in step.
+`.github/workflows/release.yml`; the check only pins the manifest's `private`
+flag against that allowlist.
 
 ## Tools
 

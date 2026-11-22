@@ -10,7 +10,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import { findNode, godNodes, neighbors, readGraph, search, shortestPath, stats } from '../graph.js'
+import { findNode, neighbors, readGraph, shortestPath } from '../graph.js'
 import { toolDefinitions } from '../tools.js'
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-graphify-graph-'))
@@ -51,14 +51,6 @@ test('readGraph: indexes nodes, links, adjacency and communities', () => {
   assert.equal(graph.directed, true)
 })
 
-test('stats: counts and provenance', () => {
-  const s = stats(graph)
-  assert.deepEqual(
-    { nodes: s.nodes, edges: s.edges, communities: s.communities, version: s.version },
-    { nodes: 6, edges: 5, communities: 2, version: '9.9.9' },
-  )
-})
-
 test('findNode: id first, then exact label, then candidates', () => {
   assert.equal(findNode(graph, 'hub').match.id, 'hub')
   assert.equal(findNode(graph, 'a').match.id, 'a', 'an exact id wins before any label search')
@@ -82,21 +74,6 @@ test('shortestPath: the chain, or null when disconnected', () => {
   assert.deepEqual(shortestPath(graph, 'hub', 'c'), ['hub', 'a', 'c'])
   assert.deepEqual(shortestPath(graph, 'hub', 'hub'), ['hub'])
   assert.equal(shortestPath(graph, 'hub', 'missing'), null)
-})
-
-test('godNodes: ranks by degree and drops file and concept nodes', () => {
-  const rows = godNodes(graph, 10)
-  assert.ok(!rows.some((r) => r.id === 'f'), 'file nodes accumulate edges mechanically')
-  assert.ok(!rows.some((r) => r.id === 'concept'), 'concept nodes are excluded too')
-  assert.equal(rows[0].id, 'a') // one incoming plus one outgoing edge
-  assert.equal(rows[0].degree, 3) // hub, gamma and file node
-})
-
-test('search: label tokens, then one hop around each hit', () => {
-  const rows = search(graph, 'alpha', 1)
-  assert.ok(rows.some((r) => r.id === 'a' && r.score === 1))
-  assert.ok(rows.some((r) => r.id === 'c'), 'the seed expands one outgoing hop')
-  assert.deepEqual(search(graph, 'zzz', 1), [])
 })
 
 test('tools: three reads, each answering text, none throwing on a bad file', async () => {
@@ -137,17 +114,6 @@ test('undirected graphs expose each edge from either endpoint', () => {
   assert.deepEqual(neighbors(undirected, 'a').map((row) => row.id), ['b'])
   assert.deepEqual(neighbors(undirected, 'b').map((row) => row.id), ['a'])
   assert.deepEqual(shortestPath(undirected, 'b', 'a'), ['b', 'a'])
-})
-
-test('godNodes counts incoming and outgoing edges in directed total degree', () => {
-  const directed = readGraph(writeFixture({
-    directed: true,
-    links: [{ source: 'b', target: 'a', relation: 'points_to' }],
-  }))
-  assert.deepEqual(godNodes(directed, 2).map(({ id, degree }) => ({ id, degree })), [
-    { id: 'a', degree: 1 },
-    { id: 'b', degree: 1 },
-  ])
 })
 
 function writeFixture(value) {
