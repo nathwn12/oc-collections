@@ -13,8 +13,11 @@ if the rendered text changes, that sample and the byte budget line change here.
 - **No command rewriting.** The plugin registers only `session.hook`. A
   `tool.execute.before` that mutates `input.command` is the vendor behaviour this
   package exists to replace. Do not reintroduce it.
-- **No rebuild.** The CLI owns the writes; the six reads answer from
-  `graph.json`. Do not add a write verb.
+- **No rebuild.** The CLI owns the writes; three reads answer from `graph.json`:
+  `graph_node` finds one node, `graph_neighbors` walks one to three hops with the
+  relation, `graph_path` gives the shortest chain. Word search is the CLI's
+  `graphify query`; the hub list is `GRAPH_REPORT.md`. Do not add a write verb, a
+  second search, or a second ranking.
 - **`node:` imports only.** Zero dependencies, zero build step. The plugin is
   loaded by the host exactly as committed.
 - **One record of the atlas path.** `graphify.json` in the host config directory
