@@ -46,25 +46,14 @@ try {
     fail++;
   }
 
-  // 1. The real tree is checked before the ignored fixture creates dist/.
-  //    The widened front door exposes two version pins in READMEs owned by a
-  //    different slice (janua:23, oc-talk:17). They are real, reported out of
-  //    scope, and must stay detected; any other failure is a regression.
+  // 1. The real tree passes (run before the ignored fixture creates dist/).
+  //    No exception list: a pin in any front-door README, restored or new,
+  //    must fail this control.
   const realRun = spawnSync(process.execPath, [checker], { cwd: ROOT, encoding: "utf8" });
   const summary = (realRun.stdout || "").trim().split(/\r?\n/).pop();
-  const realFailures = (realRun.stdout || "").split(/\r?\n/).filter((line) => line.startsWith("FAIL "));
-  const knownOutOfScope = [
-    "FAIL packages/janua/README.md:23: version literal beside the package name: @nathwn12/janua@0.5.2",
-    "FAIL packages/oc-talk/README.md:17: version literal beside the package name: oc-talk@0.6.2",
-  ];
-  const unexpected = realFailures.filter((line) => !knownOutOfScope.includes(line));
-  console.log(`real tree: exit=${realRun.status}; ${summary}; known-pins=${realFailures.length}; unexpected=${unexpected.length}`);
-  if (realRun.status !== 0 && realRun.status !== 1) {
-    console.log(`FAIL: the real-tree check crashed (exit=${realRun.status})`);
-    fail++;
-  }
-  if (unexpected.length) {
-    console.log(`FAIL: unexpected real-tree failures:\n${unexpected.join("\n")}`);
+  console.log(`real tree: exit=${realRun.status}; ${summary}`);
+  if (realRun.status !== 0) {
+    console.log("FAIL: the real tree did not pass");
     fail++;
   }
   if (!/front-doors=7\b/.test(summary)) {
