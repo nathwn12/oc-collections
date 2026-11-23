@@ -16,6 +16,12 @@ concurrency:
 jobs:
   audit:
     runs-on: ubuntu-26.04
+    # Least privilege for reporting: v2.0.0 opens issues on cron and check runs
+    # on dispatch, with no report-only input. Workflow default stays read-only.
+    permissions:
+      contents: read   # actions/checkout
+      issues: write    # schedule -> advisory issue
+      checks: write    # workflow_dispatch -> check run
     steps:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
