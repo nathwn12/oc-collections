@@ -14,7 +14,7 @@
 Add the plugin to `~/.config/opencode/opencode.jsonc` and restart OpenCode:
 
 ```json
-{ "plugins": ["oc-talk@0.6.2"] }
+{ "plugins": ["oc-talk"] }
 ```
 
 The plugin reads the harness service state and needs no other config.

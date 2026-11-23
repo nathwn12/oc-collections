@@ -20,7 +20,7 @@ The MCP surface is six tools for long-lived sessions. One-shot commands stay in 
 ## Install
 
 ```powershell
-npx -y @nathwn12/janua@0.5.2
+npx -y @nathwn12/janua
 ```
 
 Point your MCP client at the same package:
