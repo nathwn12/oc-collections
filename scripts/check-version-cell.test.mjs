@@ -102,11 +102,17 @@ test("this checker and check-index.ps1 name the same failure for the same cell",
   const probe = spawnSync("pwsh", ["-NoProfile", "-Command", "exit 0"], { encoding: "utf8" })
   if (probe.error || probe.status !== 0) return t.skip("pwsh is not installed")
 
-  const root = fixture({ manifest: "0.3.0", pin: "0.2.2" })
+  const repo = path.resolve(import.meta.dirname, "..")
+  // check-index.ps1's structural half reads this repo's live workspace
+  // inventory, so the fixture must name that same manifest version. A literal
+  // here compares two different numbers and the halves can never agree.
+  const liveVersion = JSON.parse(
+    fs.readFileSync(path.join(repo, "packages", "oc-talk", "package.json"), "utf8"),
+  ).version
+  const root = fixture({ manifest: liveVersion, pin: "0.2.2" })
   const mine = checkVersionCells({ root }).failures[0]
 
   // Hand the PowerShell half this repo's own README, with one stale cell in it.
-  const repo = path.resolve(import.meta.dirname, "..")
   const stale = fs
     .readFileSync(path.join(repo, "README.md"), "utf8")
     .replace(/(\| oc-talk \| plugin \| `)[^`]+(`)/, "$10.2.2$2")
