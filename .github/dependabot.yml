@@ -26,13 +26,20 @@ updates:
         versions: [">7.2.0"]
 
   - package-ecosystem: "cargo"
-    directory: "/"
+    # The root Cargo.toml is an empty virtual workspace (members = []) with no
+    # Cargo.lock. These two package directories are the only Cargo lockdirs;
+    # Dependabot's native `directories` key covers both in one entry.
+    directories:
+      - "/packages/oc-gladius"
+      - "/packages/oc-puppet"
     schedule:
       interval: "weekly"
       day: "monday"
       time: "03:30"
       timezone: "Asia/Manila"
-    open-pull-requests-limit: 5
+    # One grouped minor/patch PR per real lockdir is the low-noise steady state;
+    # security updates use their own separate limit.
+    open-pull-requests-limit: 2
     groups:
       minor-and-patch:
         patterns:
