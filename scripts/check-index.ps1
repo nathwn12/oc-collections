@@ -80,19 +80,12 @@ $ua = @{ 'User-Agent' = 'oc-collections-index-check/1.0' }
 # This is a reasoned omission, not an allowlist of names to skip: each one must
 # still exist in the tree (a vanish is a failure), and a table row for one is a
 # failure too, so the table and this list can never both claim the same package.
-# Empty since 2026-10-29: nothing in the tree is withheld from the table. The
-# guard stays for a future private package.
+# One entry remains: a private package a stranger cannot install. The guard
+# stays for any future private package.
 $Omitted = @{
     # Private, absent from the registry, and deliberately not in the release
     # allowlist. A row would claim an install target that does not exist.
-    'oc-fallback' = 'private: true; source-only plugin, loaded from the repo path'
     'oc-graphify' = 'private: true; source-only; GitHub-path install only, never npm; built for Obsidian + Graphify atlases'
-    'oc-terminal' = 'private: true; source-only spawn guard, installed by junction'
-    # Source is imported here; the npm package is released from the repository
-    # that builds its engine, so a version row here would claim a release this
-    # repo does not perform.
-    'oc-gladius' = 'source-only here; released from the repository that builds its engine'
-    'oc-puppet' = 'source-only here; released from the repository that builds its engine'
 }
 
 # Kinds whose row ships an npm artifact, so a row of that kind with a version

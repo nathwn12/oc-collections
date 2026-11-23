@@ -1237,9 +1237,9 @@ const GIT_CASES = [
     },
     commits: [
       {
-        subject: "feat(oc-fallback): add model fallback",
+        subject: "feat(oc-graphify): add model fallback",
         files: {
-          "packages/oc-fallback/index.js": "export const fallback = true\n",
+          "packages/oc-graphify/index.js": "export const fallback = true\n",
           [LOCKFILE]: fixtureLock((lock) => {
             lock.workspaces["packages/janua"].version = FIXTURE_BASE
           }),

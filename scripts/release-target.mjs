@@ -36,11 +36,6 @@ export const ALLOWED = [  "@nathwn12/oc-bifrost",
 // develops them in-tree and installs them by junction, so a version, a tag or a
 // changelog close is not something they have. Adding one to ALLOWED is the
 // mistake the refusal exists to catch.
-//
-// oc-puppet and oc-gladius are source-only for a different reason: they are npx
-// launchers that download a pinned engine from a GitHub Release built in their
-// own repositories. A version bump here would ship a launcher whose engine
-// version does not exist, so their release path stays where the engine is built.
 
 const ROOT = path.resolve(import.meta.dirname, "..")
 

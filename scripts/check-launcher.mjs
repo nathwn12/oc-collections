@@ -46,8 +46,8 @@ function main() {
   }
 
   // The workspace root is the published root. Never substitute the legacy
-  // nested npm/package.json: it names the old gladius-mcp/puppet-mcp packages,
-  // while this workspace publishes oc-gladius/oc-puppet from the root.
+  // nested npm/package.json: it names the upstream engine, while the launcher
+  // publishes from the root.
   const pkg = readJson(path.join(launcherDir, "package.json"), "package.json")
   if (!pkg) return
   const manifest = readJson(path.join(launcherDir, "npm", "engine-manifest.json"), "npm/engine-manifest.json")

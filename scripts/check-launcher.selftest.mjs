@@ -6,13 +6,12 @@
  * placeholder sha256, no engine bytes, no download, no remote binary execution.
  *
  * Each fixture also carries a COMPETING stale npm/package.json whose name and
- * version differ from the workspace root. That is the exact shape that made a18dcb2
- * report `gladius-mcp` while the workspace publishes `oc-gladius`: release.yml
- * packs the workspace root, not the nested npm/ directory. The self-test proves
- * the checker reports the root package identity, keeps the engine identity
- * separate, and goes red when only stale nested metadata could be selected.
- *
- * It also runs the checker against both real launchers at their actual paths.
+ * version differ from the workspace root. That is the exact shape that once
+ * made a checker report the nested engine name instead of the workspace
+ * package identity: release.yml packs the workspace root, not the nested npm/
+ * directory. The self-test proves the checker reports the root package
+ * identity, keeps the engine identity separate, and goes red when only stale
+ * nested metadata could be selected.
  *
  * Run from anywhere: node scripts/check-launcher.selftest.mjs
  */
@@ -127,14 +126,6 @@ function main() {
       `exit ${result.code}: ${result.err}`,
     )
 
-    const real = [
-      ["oc-gladius", "package oc-gladius@0.7.1 | engine gladius-mcp@0.7.1"],
-      ["oc-puppet", "package oc-puppet@7.0.2 | engine puppet-mcp@7.0.2"],
-    ]
-    for (const [name, identity] of real) {
-      result = runChecker(path.join(ROOT, "packages", name))
-      verify(`real launcher green: ${name}`, result.code === 0 && result.out.includes(identity), `exit ${result.code}: ${result.err}${result.out}`)
-    }
   } finally {
     for (const root of roots) fs.rmSync(root, { recursive: true, force: true })
   }
@@ -143,7 +134,7 @@ function main() {
     process.exitCode = 1
     console.error(`selftest FAILED: ${failures.length} case(s): ${failures.join(", ")}`)
   } else {
-    console.log("selftest PASS: 4 benign fixture cases + 2 real launchers")
+    console.log("selftest PASS: 4 benign fixture cases")
   }
 }
 
