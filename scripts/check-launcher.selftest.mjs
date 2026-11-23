@@ -2,14 +2,17 @@
 /**
  * Offline red/green proof for scripts/check-launcher.mjs.
  *
- * Builds benign, nonsecurity fixtures in a temp prefix: a complete launcher,
- * one with the nested manifest removed (missing metadata), and one with a
- * serverVersion that disagrees with the package version (packaging drift).
- * No download, no engine bytes, no remote binary execution: the fixture bin is
- * one printed line and every archive hash is the release placeholder.
+ * Every fixture keeps a benign, nonsecurity layout: one printed-line bin, a
+ * placeholder sha256, no engine bytes, no download, no remote binary execution.
  *
- * It also runs the checker against both real launchers at their actual paths,
- * so a silent path drift in the workspace plan cannot hide behind the fixtures.
+ * Each fixture also carries a COMPETING stale npm/package.json whose name and
+ * version differ from the workspace root. That is the exact shape that made a18dcb2
+ * report `gladius-mcp` while the workspace publishes `oc-gladius`: release.yml
+ * packs the workspace root, not the nested npm/ directory. The self-test proves
+ * the checker reports the root package identity, keeps the engine identity
+ * separate, and goes red when only stale nested metadata could be selected.
+ *
+ * It also runs the checker against both real launchers at their actual paths.
  *
  * Run from anywhere: node scripts/check-launcher.selftest.mjs
  */
@@ -36,27 +39,36 @@ function runChecker(dir) {
   return { code: result.status, out: result.stdout ?? "", err: result.stderr ?? "" }
 }
 
-function makeFixture(root) {
+function makeFixture(root, { rootVersion = "1.2.3", engineVersion = "1.2.3", withRootPkg = true, withManifest = true } = {}) {
   const npmDir = path.join(root, "npm")
   fs.mkdirSync(path.join(npmDir, "bin"), { recursive: true })
   fs.writeFileSync(path.join(npmDir, "bin", "fixture-mcp.js"), "console.log('benign fixture')\n")
   fs.writeFileSync(path.join(npmDir, "LICENSE"), "benign fixture license\n")
+
+  if (withRootPkg) {
+    fs.writeFileSync(
+      path.join(root, "package.json"),
+      JSON.stringify(
+        {
+          name: "oc-fixture",
+          version: rootVersion,
+          bin: { "oc-fixture": "./npm/bin/fixture-mcp.js" },
+          files: ["npm/bin/", "npm/engine-manifest.json", "npm/LICENSE"],
+        },
+        null,
+        2,
+      ),
+    )
+  }
+  // Competing stale source metadata: distinct name AND version from the root.
   fs.writeFileSync(
     path.join(npmDir, "package.json"),
-    JSON.stringify(
-      {
-        name: "fixture-mcp",
-        version: "1.2.3",
-        bin: { "fixture-mcp": "./bin/fixture-mcp.js" },
-        files: ["bin/", "engine-manifest.json", "LICENSE"],
-      },
-      null,
-      2,
-    ),
+    JSON.stringify({ name: "fixture-mcp", version: "9.9.9" }, null, 2),
   )
+
   const manifest = {
     package: "fixture-mcp",
-    serverVersion: "1.2.3",
+    serverVersion: engineVersion,
     runtime: {
       source: "https://github.com/example/fixture/releases/download/v1.2.3",
       archive: { name: "fixture-v1.2.3-windows-x86_64.zip", sha256: "RELEASE_WORKFLOW_FILLS_THIS", size: 0 },
@@ -64,18 +76,45 @@ function makeFixture(root) {
     },
   }
   const manifestPath = path.join(npmDir, "engine-manifest.json")
-  fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2))
-  return { manifestPath, manifest }
+  if (withManifest) fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2))
+  return { manifestPath }
 }
 
 function main() {
   const roots = []
   try {
-    const goodRoot = fs.mkdtempSync(path.join(os.tmpdir(), "check-launcher-selftest-"))
-    roots.push(goodRoot)
-    makeFixture(goodRoot)
-    let result = runChecker(goodRoot)
-    verify("fixture green: complete metadata", result.code === 0, `exit ${result.code}: ${result.err}${result.out}`)
+    const greenRoot = fs.mkdtempSync(path.join(os.tmpdir(), "check-launcher-selftest-"))
+    roots.push(greenRoot)
+    makeFixture(greenRoot)
+    let result = runChecker(greenRoot)
+    verify(
+      "fixture green: root package selected, engine identity separate",
+      result.code === 0 &&
+        result.out.includes("package oc-fixture@1.2.3") &&
+        result.out.includes("engine fixture-mcp@1.2.3") &&
+        !result.out.includes("package fixture-mcp@"),
+      `exit ${result.code}: ${result.err}${result.out}`,
+    )
+
+    const staleRoot = fs.mkdtempSync(path.join(os.tmpdir(), "check-launcher-selftest-"))
+    roots.push(staleRoot)
+    makeFixture(staleRoot, { withRootPkg: false })
+    result = runChecker(staleRoot)
+    verify(
+      "fixture red: stale nested metadata cannot stand in for root",
+      result.code !== 0 && /FAIL package\.json/.test(result.err),
+      `exit ${result.code}: ${result.err}`,
+    )
+
+    const driftRoot = fs.mkdtempSync(path.join(os.tmpdir(), "check-launcher-selftest-"))
+    roots.push(driftRoot)
+    makeFixture(driftRoot, { rootVersion: "2.0.0" })
+    result = runChecker(driftRoot)
+    verify(
+      "fixture red: root version drift beats agreeing stale manifest",
+      result.code !== 0 && /serverVersion 1\.2\.3 != package\.json version 2\.0\.0/.test(result.err),
+      `exit ${result.code}: ${result.err}`,
+    )
 
     const missingRoot = fs.mkdtempSync(path.join(os.tmpdir(), "check-launcher-selftest-"))
     roots.push(missingRoot)
@@ -83,25 +122,18 @@ function main() {
     fs.rmSync(missing.manifestPath, { force: true })
     result = runChecker(missingRoot)
     verify(
-      "fixture red: nested manifest missing",
+      "fixture red: nested engine manifest missing",
       result.code !== 0 && /engine-manifest\.json/.test(result.err),
       `exit ${result.code}: ${result.err}`,
     )
 
-    const driftRoot = fs.mkdtempSync(path.join(os.tmpdir(), "check-launcher-selftest-"))
-    roots.push(driftRoot)
-    const drift = makeFixture(driftRoot)
-    fs.writeFileSync(drift.manifestPath, JSON.stringify({ ...drift.manifest, serverVersion: "9.9.9" }, null, 2))
-    result = runChecker(driftRoot)
-    verify(
-      "fixture red: packaging drift on version",
-      result.code !== 0 && /serverVersion/.test(result.err),
-      `exit ${result.code}: ${result.err}`,
-    )
-
-    for (const name of ["oc-gladius", "oc-puppet"]) {
+    const real = [
+      ["oc-gladius", "package oc-gladius@0.7.1 | engine gladius-mcp@0.7.1"],
+      ["oc-puppet", "package oc-puppet@7.0.2 | engine puppet-mcp@7.0.2"],
+    ]
+    for (const [name, identity] of real) {
       result = runChecker(path.join(ROOT, "packages", name))
-      verify(`real launcher green: ${name}`, result.code === 0, `exit ${result.code}: ${result.err}${result.out}`)
+      verify(`real launcher green: ${name}`, result.code === 0 && result.out.includes(identity), `exit ${result.code}: ${result.err}${result.out}`)
     }
   } finally {
     for (const root of roots) fs.rmSync(root, { recursive: true, force: true })
@@ -111,7 +143,7 @@ function main() {
     process.exitCode = 1
     console.error(`selftest FAILED: ${failures.length} case(s): ${failures.join(", ")}`)
   } else {
-    console.log("selftest PASS: 3 benign fixture cases + 2 real launchers")
+    console.log("selftest PASS: 4 benign fixture cases + 2 real launchers")
   }
 }
 
