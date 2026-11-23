@@ -159,7 +159,7 @@ function detectCautions(input) {
     }
   }
   const hasLiveWork = calls.some((call) => !SETTLED_TOOL.has(call.status)) || shells.some((raw) => asRecord(raw)?.["status"] === "running");
-  if (sessionRunning && !hasLiveWork) {
+  if (input.openTurn === true && sessionRunning && !hasLiveWork) {
     const settledAt = newestActivity(calls) ?? input.lastMessageAt;
     if (settledAt !== undefined) {
       const elapsedMs = now - settledAt;
@@ -722,8 +722,8 @@ var STAT_FIELDS = [
   "agent",
   "model",
   "branch",
-  "cost",
-  "total",
+  "spend",
+  "lifetime",
   "project",
   "tokens",
   "cache",
@@ -742,10 +742,16 @@ var STAT_FIELDS = [
 ];
 var ANIMATED_FIELDS = ["caution", "status", "elapsed", "tps"];
 function isStatField(value) {
-  return value === "session" || STAT_FIELDS.some((field) => field === value);
+  return value === "session" || value === "cost" || value === "total" || STAT_FIELDS.some((field) => field === value);
 }
 function canonicalField(name) {
-  return name === "session" ? "ses" : name;
+  if (name === "session")
+    return "ses";
+  if (name === "cost")
+    return "spend";
+  if (name === "total")
+    return "lifetime";
+  return name;
 }
 function fieldLabel(field, labels) {
   const override = labels?.[canonicalField(field)];
@@ -753,13 +759,13 @@ function fieldLabel(field, labels) {
     return override;
   return field === "ses" ? "session" : field;
 }
-var DEFAULT_PLACEHOLDER = "\u2014";
+var DEFAULT_PLACEHOLDER = "0";
 var DEFAULT_LABEL_WIDTH = 10;
 var DEFAULT_SPARK_WIDTH = 12;
 function skeletonValue(field, layout) {
   switch (canonicalField(field)) {
-    case "cost":
-    case "total":
+    case "spend":
+    case "lifetime":
     case "project":
       return formatCost(0);
     case "tokens":
@@ -772,8 +778,10 @@ function skeletonValue(field, layout) {
       return "0 waiting";
     case "elapsed":
       return formatDuration(0, layout.durationStyle);
-    case "tps":
-      return;
+    case "tps": {
+      const label = layout.tpsLabel ?? "tok/s";
+      return layout.tpsDisplay === "both" ? `0 rt \xB7 0 avg` : `0 ${label}`;
+    }
     case "spark":
       return "\u2581".repeat(Math.max(0, Math.floor(layout.sparkWidth ?? DEFAULT_SPARK_WIDTH)));
     case "reasoning":
@@ -939,10 +947,14 @@ function statLine(field, source, layout = {}) {
     }
     case "status": {
       const status = asText2(source.status);
-      if (status === undefined && source.busy === undefined)
+      const paused = source.paused === true;
+      if (status === undefined && source.busy === undefined && !paused)
         return;
-      if (source.busy !== true && status !== "running")
+      if (paused)
+        return row("status", `${layout.pausedGlyph ?? "\u2016"} paused`);
+      if (source.busy === false || source.busy !== true && status !== "running") {
         return row("status", "\u25CB idle");
+      }
       const frame = Math.floor(asCount2(source.frame) ?? 0);
       return row("status", `${SPINNER[frame % SPINNER.length]} running`);
     }
@@ -962,37 +974,30 @@ function statLine(field, source, layout = {}) {
       const branch = asText2(source.branch);
       return branch === undefined ? undefined : row("branch", branch);
     }
-    case "cost": {
+    case "spend": {
       const cost = asCount2(source.cost);
       const tree = asRecord2(source.tree);
       const treeCost = asCount2(tree?.cost);
       const count = asCount2(tree?.count);
       const family = count !== undefined && count > 0 ? count : 0;
-      const merge = layout.hasTotalRow !== true && cost !== undefined && treeCost !== undefined && family > 0 && treeCost > cost;
+      const merge = layout.hasLifetimeRow !== true && cost !== undefined && treeCost !== undefined && family > 0 && treeCost > cost;
       if (!merge) {
-        if (cost === undefined)
-          return;
-        return row("cost", `${feeMark(source.costKind)}${formatCost(cost)}`);
+        return row(field, `${feeMark(source.costKind)}${formatCost(cost ?? 0)}`);
       }
       const plural = family === 1 ? "subagent" : "subagents";
-      return row("cost", `${feeMark(tree?.kind)}${formatCost(treeCost)} \xB7 ${family} ${plural}`);
+      return row(field, `${feeMark(tree?.kind)}${formatCost(treeCost)} \xB7 ${family} ${plural}`);
     }
-    case "total": {
-      const tree = asRecord2(source.tree);
-      if (tree === undefined)
-        return;
-      const cost = asCount2(tree.cost);
-      if (cost === undefined)
-        return;
-      const count = asCount2(tree.count) ?? 0;
+    case "lifetime": {
+      const live = asRecord2(source.tree);
+      const durable = asRecord2(source.lifetime);
+      const cost = asCount2(durable?.cost) ?? asCount2(live?.cost) ?? 0;
+      const count = asCount2(live?.count) ?? 0;
       const plural = count === 1 ? "subagent" : "subagents";
-      return row("total", `${feeMark(tree.kind)}${formatCost(cost)} \xB7 ${count} ${plural}`);
+      return row(field, `${feeMark(durable?.kind ?? live?.kind)}${formatCost(cost)} \xB7 ${count} ${plural}`);
     }
     case "project": {
       const project = asRecord2(source.project);
-      const cost = asCount2(project?.cost);
-      if (cost === undefined)
-        return;
+      const cost = asCount2(project?.cost) ?? 0;
       const count = asCount2(project?.count);
       return row("project", `${formatCost(cost)}${count !== undefined && count > 1 ? ` \xB7 ${count} sessions` : ""}`);
     }
@@ -1000,18 +1005,12 @@ function statLine(field, source, layout = {}) {
       const tokens = asRecord2(source.tokens);
       const input = asCount2(tokens?.input);
       const output = asCount2(tokens?.output);
-      if (input === undefined && output === undefined)
-        return;
       return row("tokens", `${formatCount(input ?? 0)} in \xB7 ${formatCount(output ?? 0)} out`);
     }
     case "cache": {
       const tokens = asRecord2(source.tokens);
-      if (tokens === undefined)
-        return;
-      const cache = asRecord2(tokens.cache);
-      const read = asCount2(cache?.read);
-      if (read === undefined)
-        return;
+      const cache = asRecord2(tokens?.cache);
+      const read = asCount2(cache?.read) ?? 0;
       const input = asCount2(tokens?.input);
       const total = input === undefined ? undefined : read + input;
       if (read === 0) {
@@ -1023,9 +1022,9 @@ function statLine(field, source, layout = {}) {
     case "context": {
       const context = asRecord2(source.context);
       const used = asCount2(context?.used);
-      if (used === undefined || used === 0)
-        return;
       const limit = asCount2(context?.limit);
+      if (used === undefined || used === 0)
+        return row("context", "~0 used");
       if (limit === undefined || limit === 0)
         return row("context", `~${formatCount(used)} used`);
       const ratio = used / limit;
@@ -1046,9 +1045,7 @@ function statLine(field, source, layout = {}) {
       return row("perms", resource === undefined ? action : `${action} \xB7 ${clip(resource, 18)}`);
     }
     case "elapsed": {
-      const ms = asCount2(source.elapsedMs);
-      if (ms === undefined || ms <= 0)
-        return;
+      const ms = asCount2(source.elapsedMs) ?? 0;
       return row("elapsed", formatDuration(ms, layout.durationStyle));
     }
     case "updated": {
@@ -1063,29 +1060,24 @@ function statLine(field, source, layout = {}) {
       const rt = asCount2(pair?.["rt"]);
       const avg = asCount2(pair?.["avg"]);
       const ttft = asCount2(pair?.["ttft"]);
+      const shownTtft = layout.tpsTtft ?? true ? ttft : undefined;
       const display = layout.tpsDisplay ?? "rt";
+      const label = layout.tpsLabel ?? "tok/s";
+      const rounded = (value) => {
+        const value_ = value === undefined ? 0 : Math.round(value);
+        return value_ > 0 ? value_ : 0;
+      };
+      const current = rounded(rt);
+      const settled = rounded(avg);
+      const suffix = shownTtft === undefined ? "" : ` \xB7 ${shownTtft.toFixed(1)}s ttft`;
       if (display === "rt") {
-        const rounded = rt === undefined ? undefined : Math.round(rt);
-        if (rounded === undefined || rounded <= 0) {
-          return ttft === undefined ? undefined : row("tps", `${ttft.toFixed(1)}s ttft`);
-        }
-        const rate = `${rounded} tok/s`;
-        return row("tps", ttft === undefined ? rate : `${rate} \xB7 ${ttft.toFixed(1)}s ttft`);
+        return row("tps", current > 0 ? `${current} ${label}${suffix}` : `0 ${label}`);
       }
       if (display === "both") {
-        if (avg !== undefined) {
-          if (Math.round(avg) <= 0)
-            return;
-          const head = `${rt === undefined ? 0 : Math.round(rt)} rt \xB7 ${Math.round(avg)} avg`;
-          return ttft === undefined ? row("tps", head) : row("tps", `${head} \xB7 ${ttft.toFixed(1)}s ttft`);
-        }
-        if (rt !== undefined && Math.round(rt) > 0)
-          return row("tps", `${Math.round(rt)} rt`);
-        return;
+        const head = `${current} rt \xB7 ${settled} avg`;
+        return row("tps", settled > 0 ? head + suffix : head);
       }
-      if (avg === undefined || Math.round(avg) <= 0)
-        return;
-      return row("tps", `${Math.round(avg)} tok/s`);
+      return row("tps", `${settled} ${label}`);
     }
     case "spark": {
       const values = Array.isArray(source.spark) ? source.spark.map((value) => asCount2(value) ?? 0) : [];
@@ -1095,9 +1087,7 @@ function statLine(field, source, layout = {}) {
       return row("spark", sparkline(windowed));
     }
     case "reasoning": {
-      const reasoning = asCount2(asRecord2(source.tokens)?.reasoning);
-      if (reasoning === undefined || reasoning === 0)
-        return;
+      const reasoning = asCount2(asRecord2(source.tokens)?.reasoning) ?? 0;
       return row("reasoning", formatCount(reasoning));
     }
     case "turns": {
@@ -1146,14 +1136,17 @@ function statSegments(field, source, layout = {}) {
   return [{ text: labelPrefix(fieldLabel(name, layout.labels), layout.labelWidth ?? DEFAULT_LABEL_WIDTH) }, ...value];
 }
 function statRows(fields, source, layout = {}) {
-  const hint = { ...layout, hasTotalRow: fields.includes("total") };
+  const hint = {
+    ...layout,
+    hasLifetimeRow: fields.some((field) => canonicalField(field) === "lifetime")
+  };
   const persist = hint.persist === true;
   const placeholder = hint.placeholder ?? DEFAULT_PLACEHOLDER;
   const labelWidth = hint.labelWidth ?? DEFAULT_LABEL_WIDTH;
   const rows = [];
   for (const field of fields) {
     const name = canonicalField(field);
-    const line = statLine(name, source, hint);
+    const line = statLine(field, source, hint);
     if (line !== undefined) {
       rows.push(line);
       continue;
@@ -1521,6 +1514,63 @@ function createRealtimeTps(context, opts) {
     return active && !disposed;
   }, rate, ttft, dispose };
 }
+// src/tui/lifetime-totals.ts
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
+import { homedir } from "os";
+import { dirname, join } from "path";
+function defaultLifetimeTotalsPath() {
+  return join(homedir(), ".local", "share", "opencode", "flight-deck", "totals.json");
+}
+function createLifetimeTotals(options = {}) {
+  const path = options.path ?? defaultLifetimeTotalsPath();
+  const held = new Map;
+  const storedValues = () => {
+    try {
+      if (!existsSync(path))
+        return {};
+      const parsed = JSON.parse(readFileSync(path, "utf8"));
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+        return {};
+      const values = {};
+      for (const [id, value] of Object.entries(parsed)) {
+        if (typeof value === "number" && Number.isFinite(value) && value > 0)
+          values[id] = value;
+      }
+      return values;
+    } catch {
+      return {};
+    }
+  };
+  const writeAll = (values) => {
+    try {
+      mkdirSync(dirname(path), { recursive: true });
+      const temporary = `${path}.${process.pid}.tmp`;
+      writeFileSync(temporary, JSON.stringify(values));
+      renameSync(temporary, path);
+    } catch {}
+  };
+  return {
+    read(id) {
+      const stored = storedValues()[id];
+      const memory = held.get(id);
+      if (stored === undefined && memory === undefined)
+        return;
+      return Math.max(stored ?? 0, memory ?? 0);
+    },
+    record(id, value) {
+      if (!Number.isFinite(value) || value <= 0)
+        return;
+      const previous = Math.max(held.get(id) ?? 0, storedValues()[id] ?? 0);
+      if (value <= previous)
+        return;
+      held.set(id, value);
+      const values = storedValues();
+      values[id] = value;
+      writeAll(values);
+    }
+  };
+}
+
 // src/tui/style.ts
 var TextAttributes = {
   NONE: 0,
@@ -1598,6 +1648,8 @@ var DEFAULT_GO_PANEL_LOOK = {
 };
 var DEFAULT_TPS_SCOPE = "family";
 var DEFAULT_TPS_DISPLAY = "rt";
+var DEFAULT_TPS_TTFT = true;
+var DEFAULT_TPS_LABEL = "tok/s";
 function cautionThresholds(config) {
   return {
     toolWatchMs: config.toolWatchSeconds * 1000,
@@ -1621,7 +1673,8 @@ var DEFAULT_FORMAT = {
 var DEFAULT_GLYPHS = {
   watch: "\u25B2",
   caution: "\u25CF",
-  clear: "\u25CB"
+  clear: "\u25CB",
+  paused: "\u2016"
 };
 var DEFAULT_NOTIFICATIONS = {
   enabled: true,
@@ -1645,7 +1698,7 @@ var DEFAULT_SIDEBAR_ROWS = [
   "status",
   "agent",
   "model",
-  "cost",
+  "spend",
   "project",
   "tokens",
   "cache",
@@ -1665,7 +1718,12 @@ var DEFAULT_CONFIG = {
     lines: DEFAULT_SIDEBAR_LINES,
     footer: { lines: DEFAULT_SIDEBAR_FOOTER_LINES, go: false },
     rows: DEFAULT_SIDEBAR_ROWS,
-    tps: { scope: DEFAULT_TPS_SCOPE, display: DEFAULT_TPS_DISPLAY },
+    tps: {
+      scope: DEFAULT_TPS_SCOPE,
+      display: DEFAULT_TPS_DISPLAY,
+      label: DEFAULT_TPS_LABEL,
+      ttft: DEFAULT_TPS_TTFT
+    },
     persist: true,
     placeholder: DEFAULT_PLACEHOLDER,
     maxLines: MAX_LINES
@@ -1677,7 +1735,8 @@ var DEFAULT_CONFIG = {
   format: DEFAULT_FORMAT,
   glyphs: DEFAULT_GLYPHS,
   style: DEFAULT_STYLE,
-  refresh: DEFAULT_REFRESH_MS
+  refresh: DEFAULT_REFRESH_MS,
+  lifetimeTotalsPath: defaultLifetimeTotalsPath()
 };
 var MAX_LINE_LENGTH = 120;
 var CONTROL_CHAR = /[\u0000-\u001F\u007F-\u009F]/;
@@ -1846,7 +1905,13 @@ function readRows(value, issues, maxLines) {
       issues.push(`${path} is not a known field (${STAT_FIELDS.join(", ")}); skipping it`);
       return;
     }
-    rows.push(canonicalField(name));
+    const canonical = canonicalField(name);
+    const duplicateOf = rows.find((entry) => canonicalField(entry) === canonical);
+    if (duplicateOf !== undefined) {
+      issues.push(`${path} duplicates ${duplicateOf}; rendering the row once`);
+      return;
+    }
+    rows.push(name === "session" ? "ses" : name);
   });
   if (rows.length === 0) {
     issues.push("sidebar.rows had no usable entries; using the default rows");
@@ -1870,14 +1935,46 @@ function readTpsDisplay(value, issues) {
   issues.push(`sidebar.tps.display must be "avg", "rt" or "both"; using "${DEFAULT_TPS_DISPLAY}"`);
   return DEFAULT_TPS_DISPLAY;
 }
+function readTpsTtft(value, issues) {
+  return readBoolean(value, DEFAULT_TPS_TTFT, "sidebar.tps.ttft", issues);
+}
+var TPS_LABEL_MAX_LENGTH = 16;
+function readTpsLabel(value, issues) {
+  if (value === undefined)
+    return DEFAULT_TPS_LABEL;
+  if (typeof value !== "string") {
+    issues.push("sidebar.tps.label must be a string; using the default");
+    return DEFAULT_TPS_LABEL;
+  }
+  const text = normalizeText(value, "sidebar.tps.label", issues);
+  if (text.length === 0) {
+    issues.push("sidebar.tps.label must not be empty; using the default");
+    return DEFAULT_TPS_LABEL;
+  }
+  if (text.length > TPS_LABEL_MAX_LENGTH) {
+    issues.push(`sidebar.tps.label was longer than ${TPS_LABEL_MAX_LENGTH} characters; using the default`);
+    return DEFAULT_TPS_LABEL;
+  }
+  return text;
+}
 function readTps(section, issues) {
   const raw = section["tps"];
   if (raw !== undefined && !isRecord(raw)) {
     issues.push("sidebar.tps must be an object; using defaults");
-    return { scope: DEFAULT_TPS_SCOPE, display: DEFAULT_TPS_DISPLAY };
+    return {
+      scope: DEFAULT_TPS_SCOPE,
+      display: DEFAULT_TPS_DISPLAY,
+      label: DEFAULT_TPS_LABEL,
+      ttft: DEFAULT_TPS_TTFT
+    };
   }
   const tps = isRecord(raw) ? raw : {};
-  return { scope: readTpsScope(tps["scope"], issues), display: readTpsDisplay(tps["display"], issues) };
+  return {
+    scope: readTpsScope(tps["scope"], issues),
+    display: readTpsDisplay(tps["display"], issues),
+    label: readTpsLabel(tps["label"], issues),
+    ttft: readTpsTtft(tps["ttft"], issues)
+  };
 }
 function readMaxLines(value, issues) {
   return readNumber(value, MAX_LINES, "sidebar.maxLines", issues, 1, MAX_LINES);
@@ -1885,6 +1982,15 @@ function readMaxLines(value, issues) {
 function sectionOf(options, key) {
   const value = options[key];
   return isRecord(value) ? value : {};
+}
+function readLifetimeTotalsPath(value, issues) {
+  if (value === undefined)
+    return DEFAULT_CONFIG.lifetimeTotalsPath;
+  if (typeof value !== "string" || value.trim().length === 0) {
+    issues.push("lifetimeTotalsPath must be a non-empty string; using the default path");
+    return DEFAULT_CONFIG.lifetimeTotalsPath;
+  }
+  return value.trim();
 }
 function readRefresh(value, issues) {
   if (value === undefined)
@@ -2129,7 +2235,8 @@ function readGlyphs(section, issues) {
   return {
     watch: readGlyph(section["watch"], DEFAULT_GLYPHS.watch, "glyphs.watch", issues),
     caution: readGlyph(section["caution"], DEFAULT_GLYPHS.caution, "glyphs.caution", issues),
-    clear: readGlyph(section["clear"], DEFAULT_GLYPHS.clear, "glyphs.clear", issues)
+    clear: readGlyph(section["clear"], DEFAULT_GLYPHS.clear, "glyphs.clear", issues),
+    paused: readGlyph(section["paused"], DEFAULT_GLYPHS.paused, "glyphs.paused", issues)
   };
 }
 function readStyleColor(value, fallback, path, issues) {
@@ -2330,7 +2437,8 @@ function resolveConfig(options) {
       format: readFormat(format, issues),
       glyphs: readGlyphs(glyphs, issues),
       style: readStyle(style, issues),
-      refresh: readRefresh(options.refresh, issues)
+      refresh: readRefresh(options.refresh, issues),
+      lifetimeTotalsPath: readLifetimeTotalsPath(options.lifetimeTotalsPath, issues)
     },
     issues
   };
@@ -2342,19 +2450,19 @@ function shouldNotify(config, kind) {
 }
 
 // src/tui/file-config.ts
-import { existsSync, readFileSync, statSync } from "fs";
-import { homedir } from "os";
-import { isAbsolute, join } from "path";
+import { existsSync as existsSync2, readFileSync as readFileSync2, statSync } from "fs";
+import { homedir as homedir2 } from "os";
+import { isAbsolute, join as join2 } from "path";
 var CONFIG_FILE_CANDIDATES = ["flight-deck.jsonc", "flight-deck.json"];
 function globalConfigDirectory() {
   const xdg = process.env["XDG_CONFIG_HOME"]?.trim();
-  return xdg !== undefined && xdg.length > 0 && isAbsolute(xdg) ? join(xdg, "opencode") : join(homedir(), ".config", "opencode");
+  return xdg !== undefined && xdg.length > 0 && isAbsolute(xdg) ? join2(xdg, "opencode") : join2(homedir2(), ".config", "opencode");
 }
 var MAX_CONFIG_BYTES = 64 * 1024;
 function findConfigFile(directory = globalConfigDirectory()) {
   for (const candidate of CONFIG_FILE_CANDIDATES) {
-    const path = join(directory, candidate);
-    if (existsSync(path))
+    const path = join2(directory, candidate);
+    if (existsSync2(path))
       return path;
   }
   return;
@@ -2378,7 +2486,7 @@ function loadConfigFile(directory = globalConfigDirectory()) {
       const limit = Math.floor(MAX_CONFIG_BYTES / 1024);
       return { options: undefined, source, issue: `${source} is larger than ${limit} KiB; using defaults` };
     }
-    const text = readFileSync(source, "utf8");
+    const text = readFileSync2(source, "utf8");
     if (text.trim().length === 0) {
       return { options: undefined, source, issue: `${source} is empty; using defaults` };
     }
@@ -2394,12 +2502,12 @@ function loadConfigFile(directory = globalConfigDirectory()) {
 }
 
 // src/tui/go-look.ts
-import { existsSync as existsSync2, statSync as statSync2 } from "fs";
-import { join as join2 } from "path";
+import { existsSync as existsSync3, statSync as statSync2 } from "fs";
+import { join as join3 } from "path";
 function findCandidate(directory) {
   for (const candidate of CONFIG_FILE_CANDIDATES) {
-    const path = join2(directory, candidate);
-    if (existsSync2(path))
+    const path = join3(directory, candidate);
+    if (existsSync3(path))
       return path;
   }
   return;
@@ -2468,7 +2576,10 @@ function railLines(config, source = {}) {
     durationStyle: config.format.duration,
     timestamp: config.format.timestamp,
     tpsDisplay: config.sidebar.tps.display,
-    hasTotalRow: config.sidebar.rows.includes("total")
+    tpsLabel: config.sidebar.tps.label,
+    tpsTtft: config.sidebar.tps.ttft,
+    pausedGlyph: config.glyphs.paused,
+    hasLifetimeRow: config.sidebar.rows.some((field) => canonicalField(field) === "lifetime")
   };
   const lines = config.sidebar.lines.map((text) => ({ text }));
   for (const field of config.sidebar.rows) {
@@ -2497,7 +2608,9 @@ function railLineSpans(line, style) {
 function footerLine(config) {
   return config.footer.enabled ? config.footer.text : undefined;
 }
+
 // src/tui/go-panel.ts
+var NO_READING = "\u2014";
 var PANEL_WINDOWS = ["5h", "1w", "1m"];
 var PANEL_DEFAULT_LABELS = {
   rolling: "rolling",
@@ -2699,7 +2812,7 @@ function restingLine(label, look, reason, nowMs, isFirst) {
     segments.push({ text: `${reason} `, tone: "subdued" });
     trackCells = Math.max(0, cells - reason.length - 1);
   }
-  const tail = CELL.repeat(trackCells) + (look.showPercent ? ` ${alignCell(DEFAULT_PLACEHOLDER, PANEL_PERCENT_WIDTH, look.align)}` : "");
+  const tail = CELL.repeat(trackCells) + (look.showPercent ? ` ${alignCell(NO_READING, PANEL_PERCENT_WIDTH, look.align)}` : "");
   segments.push({ text: tail, tone: "subdued" });
   return { field: "go", text: segments.map((segment) => segment.text).join(""), segments };
 }
@@ -2718,7 +2831,7 @@ function valueLine(label, look, window, nowMs, frame, isFirst) {
     appendRun(runs, CELL, "subdued");
   }
   if (look.showPercent) {
-    const percent = ratio === undefined ? DEFAULT_PLACEHOLDER : `${Math.round(ratio * 100)}%`;
+    const percent = ratio === undefined ? NO_READING : `${Math.round(ratio * 100)}%`;
     appendRun(runs, ` ${alignCell(percent, PANEL_PERCENT_WIDTH, look.align)}`, tone);
   }
   const segments = [];
@@ -3000,9 +3113,9 @@ function startGuardBridge(host, deps, intervalMs = GUARD_POLL_MS) {
 }
 
 // src/tui/go.ts
-import { appendFileSync, existsSync as existsSync3, mkdirSync, readFileSync as readFileSync2, writeFileSync } from "fs";
+import { appendFileSync, existsSync as existsSync4, mkdirSync as mkdirSync2, readFileSync as readFileSync3, writeFileSync as writeFileSync2 } from "fs";
 import { tmpdir } from "os";
-import { join as join3 } from "path";
+import { join as join4 } from "path";
 var GO_KEY = "flight-deck.go";
 var GO_POLL_MS = 60000;
 var GO_USAGE_URL = "https://opencode.ai/zen/go/v1/usage";
@@ -3368,22 +3481,22 @@ function logPoll(entry) {
   if (!goLogEnabled())
     return;
   try {
-    const directory = join3(tmpdir(), GO_LOG_DIR);
-    const path = join3(directory, GO_LOG_FILE);
+    const directory = join4(tmpdir(), GO_LOG_DIR);
+    const path = join4(directory, GO_LOG_FILE);
     const line = `ts=${new Date().toISOString()} src=${entry.src} key=${entry.key ? "yes" : "no"} http=${entry.http} parse=${entry.parse} reason=${entry.reason}
 `;
     let prior = "";
     try {
-      if (existsSync3(path))
-        prior = readFileSync2(path, "utf8");
+      if (existsSync4(path))
+        prior = readFileSync3(path, "utf8");
     } catch {
       prior = "";
     }
     const lines = prior.length === 0 ? 0 : prior.split(`
 `).filter((row) => row.length > 0).length;
-    mkdirSync(directory, { recursive: true });
+    mkdirSync2(directory, { recursive: true });
     if (lines >= GO_LOG_MAX_LINES)
-      writeFileSync(path, line);
+      writeFileSync2(path, line);
     else
       appendFileSync(path, line);
   } catch {}
@@ -3526,12 +3639,12 @@ function startGoBridge(host, deps, intervalMs = GO_POLL_MS) {
 
 // src/tui/codex-quota.ts
 import { spawn } from "child_process";
-import { existsSync as existsSync4, readFileSync as readFileSync3 } from "fs";
-import { isAbsolute as isAbsolute2, join as join5 } from "path";
+import { existsSync as existsSync5, readFileSync as readFileSync4 } from "fs";
+import { isAbsolute as isAbsolute2, join as join6 } from "path";
 import { createInterface } from "readline";
 
 // src/tui/owned-process.ts
-import { join as join4 } from "path";
+import { join as join5 } from "path";
 var supervisor = String.raw`
 using System;
 using System.ComponentModel;
@@ -3651,7 +3764,7 @@ ${supervisor}
 $argsList=${decode(JSON.stringify(args))}|ConvertFrom-Json
 ` + `exit [FlightDeckOwned]::Run($command,[string[]]$argsList,${ownerPid})`;
   return {
-    command: join4(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+    command: join5(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
     args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")]
   };
 }
@@ -3683,15 +3796,15 @@ function executable(pathValue = process.env.PATH ?? "") {
   for (const directory of pathValue.split(process.platform === "win32" ? ";" : ":")) {
     if (!isAbsolute2(directory))
       continue;
-    const path = join5(directory, process.platform === "win32" ? "codex.exe" : "codex");
-    if (!existsSync4(path))
+    const path = join6(directory, process.platform === "win32" ? "codex.exe" : "codex");
+    if (!existsSync5(path))
       continue;
     if (process.platform === "win32") {
       const shim = path.replace(/\.exe$/i, ".shim");
-      if (existsSync4(shim)) {
+      if (existsSync5(shim)) {
         try {
-          const target = /^path\s*=\s*"([^"\r\n]+)"\s*$/m.exec(readFileSync3(shim, "utf8"))?.[1];
-          if (target && isAbsolute2(target) && /[\\/]codex\.exe$/i.test(target) && existsSync4(target))
+          const target = /^path\s*=\s*"([^"\r\n]+)"\s*$/m.exec(readFileSync4(shim, "utf8"))?.[1];
+          if (target && isAbsolute2(target) && /[\\/]codex\.exe$/i.test(target) && existsSync5(target))
             return target;
         } catch {}
         return;
@@ -4327,10 +4440,42 @@ function createSessionReads(context) {
       return;
     }
   };
+  const openTurnOf = (sessionID) => {
+    const messages = messagesOf(sessionID);
+    for (let index = messages.length - 1;index >= 0; index -= 1) {
+      const message = asRecord2(messages[index]);
+      const type = asText2(message?.["type"]);
+      if (type !== "user" && type !== "assistant")
+        continue;
+      if (type === "user")
+        return true;
+      return asCount2(asRecord2(message?.["time"])?.["completed"]) === undefined;
+    }
+    return false;
+  };
+  const pausedOf = (sessionID) => {
+    if (permsOf(sessionID) !== undefined)
+      return true;
+    for (const part of recentParts(sessionID)) {
+      const call = readToolCall(part);
+      if (call !== undefined && call.name === "question" && !SETTLED_TOOL.has(call.status))
+        return true;
+    }
+    return false;
+  };
   const busy = (sessionID) => {
     const status = statusOf(sessionID);
-    if (status === "running")
-      return true;
+    try {
+      for (const part of recentParts(sessionID)) {
+        const call = readToolCall(part);
+        if (call !== undefined && !SETTLED_TOOL.has(call.status))
+          return true;
+      }
+    } catch {}
+    try {
+      if (shellsOf(sessionID).some((entry) => asRecord2(entry)?.["status"] === "running"))
+        return true;
+    } catch {}
     try {
       for (const id of context.data.session.family(sessionID) ?? []) {
         if (id === sessionID)
@@ -4341,10 +4486,8 @@ function createSessionReads(context) {
         } catch {}
       }
     } catch {}
-    try {
-      if (shellsOf(sessionID).some((entry) => asRecord2(entry)?.["status"] === "running"))
-        return true;
-    } catch {}
+    if (openTurnOf(sessionID))
+      return true;
     return status === undefined ? undefined : false;
   };
   const spansOf = (sessionID, now) => {
@@ -4408,6 +4551,8 @@ function createSessionReads(context) {
     shellsOf,
     lastActivity,
     permsOf,
+    openTurnOf,
+    pausedOf,
     busy
   };
 }
@@ -4568,7 +4713,7 @@ var tui_default = Plugin.define({
   setup(context) {
     const file = loadConfigFile();
     const { config, issues } = resolveConfig(mergeOptions(file.options, context.options));
-    const rows = config.sidebar.enabled ? new Set(config.sidebar.rows) : new Set;
+    const rows = config.sidebar.enabled ? new Set(config.sidebar.rows.map(canonicalField)) : new Set;
     const wants = (name) => rows.has(name);
     if (file.issue !== undefined && file.source !== undefined) {
       console.warn(`[flight-deck] ${file.issue}`);
@@ -4633,15 +4778,19 @@ var tui_default = Plugin.define({
       shellsOf,
       lastActivity,
       permsOf,
+      openTurnOf,
+      pausedOf,
       busy
     } = reads;
     const { projectTotals } = createProjectTotals(context);
+    const lifetimeTotals = createLifetimeTotals({ path: config.lifetimeTotalsPath });
     const cautionThreshold = cautionThresholds(config.caution);
     const cautionsOf = (sessionID, now) => detectCautions({
       parts: recentParts(sessionID),
       shells: shellsOf(sessionID),
       now,
       sessionRunning: statusOf(sessionID) === "running",
+      openTurn: openTurnOf(sessionID),
       lastMessageAt: lastActivity(sessionID),
       thresholds: cautionThreshold
     });
@@ -4691,11 +4840,30 @@ var tui_default = Plugin.define({
       const location = locationOf(context);
       const session = context.data.session.get(sessionID);
       const isBusy = busy(sessionID);
-      spinnerNeeded = wants("status") && isBusy === true;
+      const paused = wants("status") ? pausedOf(sessionID) : false;
+      spinnerNeeded = wants("status") && isBusy === true && !paused;
       const turns = wants("turns") ? messagesOf(sessionID).filter((entry) => asRecord2(entry)?.["type"] === "user").length : undefined;
-      const wantsUsage = wants("cost") || wants("total") || wants("tokens") || wants("cache") || wants("reasoning");
+      const wantsUsage = wants("spend") || wants("lifetime") || wants("tokens") || wants("cache") || wants("reasoning");
       const ownCost = wantsUsage ? sessionCost(sessionID, session) : undefined;
       const tree = wantsUsage ? treeTotals(sessionID) : undefined;
+      let lifetime;
+      if (wantsUsage) {
+        let root = sessionID;
+        try {
+          root = context.data.session.root(sessionID) ?? sessionID;
+        } catch {
+          root = sessionID;
+        }
+        const stored = lifetimeTotals.read(root);
+        const live = tree?.cost;
+        if (live !== undefined && (stored === undefined || live > stored)) {
+          lifetimeTotals.record(root, live);
+        }
+        const high = Math.max(live ?? 0, stored ?? 0);
+        if (live !== undefined || stored !== undefined) {
+          lifetime = { cost: high, count: tree?.count ?? 0, kind: tree?.kind ?? "bounded" };
+        }
+      }
       return {
         ...session,
         cost: ownCost?.cost,
@@ -4704,10 +4872,12 @@ var tui_default = Plugin.define({
         caution: wants("caution") ? announce(sessionID) : undefined,
         branch: wants("branch") ? branchOf(location) : undefined,
         tree,
+        lifetime,
         context: wants("context") ? contextUsage(sessionID, session?.model) : undefined,
         project: wants("project") ? projectTotals(sessionID) : undefined,
         status: wants("status") ? statusOf(sessionID) : undefined,
         busy: isBusy,
+        paused,
         perms: wants("perms") ? permsOf(sessionID) : undefined,
         tps: wants("tps") ? sessionTps(sessionID, session) : undefined,
         spark: wants("spark") ? sparkValues(sessionID) : undefined,
