@@ -11,9 +11,12 @@
 // repo root. Backticked tokens inside fenced code blocks are examples, not
 // prose claims, and are skipped.
 //
-// Four package READMEs are also npm's front door: npm renders
-// packages/<pkg>/README.md and GitHub shows that same file, so those four must
-// stay slim and self-contained. They fail on a version literal beside their own
+// The packages this repo releases are also npm's front doors: npm renders
+// packages/<pkg>/README.md and GitHub shows that same file, so those READMEs
+// must stay slim and self-contained. The front-door set and the package walk
+// both come from scripts/index-registry.ps1 (scope `released`) - the one
+// inventory of what this repo publishes - so neither list can drift into a
+// stale second registry. They fail on a version literal beside their own
 // package name (the stale pin that shipped twice) and on a relative link or
 // <img src> (npm has no repo tree to resolve one against). The one exception is
 // the house footer's canonical image: a relative image passes when it resolves
@@ -27,13 +30,32 @@
 //   node scripts/check-docs.mjs            # in-scope docs
 //   node scripts/check-docs.mjs --file X   # one file (used by the self-test)
 //   node scripts/check-docs.mjs --file X --pkg NAME  # front-door rule as NAME
+//   node scripts/check-docs.mjs --print-front-doors  # JSON coverage for the self-test
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
+
+// The released-scope entries of scripts/index-registry.ps1 are the canonical
+// inventory of packages this repo publishes. Derive the front doors and the
+// package walk from that one table. Fail closed if it stops parsing: a silent
+// drop back to a smaller set would reopen the coverage hole.
+function releasedPackages() {
+  const text = fs.readFileSync(path.join(ROOT, "scripts/index-registry.ps1"), "utf8");
+  const re = /^\s*'([^']+)'\s*=\s*\[pscustomobject\]@\{\s*\r?\n\s*Scope\s*=\s*'released'\s*\r?\n\s*Reason\s*=\s*'packages\/([^;]+);/gm;
+  const found = [];
+  let m;
+  while ((m = re.exec(text))) found.push({ dir: `packages/${m[2]}`, name: m[1] });
+  const dirs = new Set(found.map((p) => p.dir));
+  if (found.length !== 7 || dirs.size !== 7 || found.some((p) => !p.name || !p.dir)) {
+    throw new Error(`check-docs: expected 7 released packages in scripts/index-registry.ps1, parsed ${found.length}`);
+  }
+  return found;
+}
+const RELEASED = releasedPackages();
 const NAMES = new Set(["AGENTS.md", "CONTRIBUTING.md", "INSTALL.md", "PUBLISHING.md", "README.md", "SKILL.md"]);
-const IN_SCOPE = ["README.md", "AGENTS.md", "packages/oc-bifrost", "packages/oc-flight-deck", "packages/oc-harness-setup", "packages/rea-shim"];
+const IN_SCOPE = ["README.md", "AGENTS.md", ...RELEASED.map((p) => p.dir)];
 // Bare filenames are only claims when they name a maintainer document or a
 // manifest. Config examples such as `opencode.jsonc` are not repo paths.
 // `MIGRATIONS.md` lives in docs/ and its bare name stays claimed on purpose: the
@@ -67,14 +89,14 @@ for (let i = 0; i < args.length; i++) {
   if (args[i] === "--pkg" && args[i + 1]) { forcedPkg = args[i + 1]; i++; }
 }
 
-// The four npm front doors, keyed by package directory, valued by the exact
-// name npm and the README use for that package.
-const FRONT_DOOR = new Map([
-  ["packages/oc-bifrost", "@nathwn12/oc-bifrost"],
-  ["packages/oc-flight-deck", "oc-flight-deck"],
-  ["packages/oc-harness-setup", "oc-harness-setup"],
-  ["packages/rea-shim", "rea-shim"],
-]);
+// The npm front doors, keyed by package directory, valued by the exact name
+// npm and the README use for that package. Derived from the canonical registry
+// table above; `--print-front-doors` exposes it for the coverage self-test.
+const FRONT_DOOR = new Map(RELEASED.map((p) => [p.dir, p.name]));
+if (args.includes("--print-front-doors")) {
+  console.log(JSON.stringify(RELEASED));
+  process.exit(0);
+}
 // Absolute targets: a scheme (https:, mailto:, ...), a root path, or an anchor.
 const ABSOLUTE = /^(?:[a-z][a-z0-9+.-]*:|\/|#)/i;
 
@@ -151,7 +173,7 @@ function isGitIgnored(absPath) {
   return false;
 }
 
-// The front-door identity of a file: one of the four package READMEs (or a
+// The front-door identity of a file: one of the released package READMEs (or a
 // fixture told which package it stands for). Null for everything else.
 function frontDoorName(file, forced) {
   if (forced) return forced;

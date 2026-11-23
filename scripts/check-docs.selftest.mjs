@@ -46,12 +46,29 @@ try {
     fail++;
   }
 
-  // 1. The real tree passes (run before the ignored fixture creates dist/).
+  // 1. The real tree is checked before the ignored fixture creates dist/.
+  //    The widened front door exposes two version pins in READMEs owned by a
+  //    different slice (janua:23, oc-talk:17). They are real, reported out of
+  //    scope, and must stay detected; any other failure is a regression.
   const realRun = spawnSync(process.execPath, [checker], { cwd: ROOT, encoding: "utf8" });
   const summary = (realRun.stdout || "").trim().split(/\r?\n/).pop();
-  console.log(`real tree: exit=${realRun.status}; ${summary}`);
-  if (realRun.status !== 0) {
-    console.log("FAIL: the real tree did not pass");
+  const realFailures = (realRun.stdout || "").split(/\r?\n/).filter((line) => line.startsWith("FAIL "));
+  const knownOutOfScope = [
+    "FAIL packages/janua/README.md:23: version literal beside the package name: @nathwn12/janua@0.5.2",
+    "FAIL packages/oc-talk/README.md:17: version literal beside the package name: oc-talk@0.6.2",
+  ];
+  const unexpected = realFailures.filter((line) => !knownOutOfScope.includes(line));
+  console.log(`real tree: exit=${realRun.status}; ${summary}; known-pins=${realFailures.length}; unexpected=${unexpected.length}`);
+  if (realRun.status !== 0 && realRun.status !== 1) {
+    console.log(`FAIL: the real-tree check crashed (exit=${realRun.status})`);
+    fail++;
+  }
+  if (unexpected.length) {
+    console.log(`FAIL: unexpected real-tree failures:\n${unexpected.join("\n")}`);
+    fail++;
+  }
+  if (!/front-doors=7\b/.test(summary)) {
+    console.log("FAIL: the real tree did not check all seven front doors");
     fail++;
   }
 
@@ -204,6 +221,32 @@ try {
   }
   if (!otherRun.stdout.includes("relative image source: assets/other.svg")) {
     console.log("FAIL: the non-footer relative image was not named");
+    fail++;
+  }
+
+  // 11. Front-door coverage: the npm front doors and the package walk must
+  //     come from the canonical released registry, all seven of them. Private
+  //     workspaces, external-import packages and legacy launcher aliases are
+  //     not front doors. On a checker still stuck at four this goes red.
+  const listedRun = spawnSync(process.execPath, [checker, "--print-front-doors"], { cwd: ROOT, encoding: "utf8" });
+  let listed = null;
+  try { listed = JSON.parse((listedRun.stdout || "").trim()); } catch {}
+  const expectedDoors = [
+    ["packages/janua", "@nathwn12/janua"],
+    ["packages/oc-bifrost", "@nathwn12/oc-bifrost"],
+    ["packages/oc-flight-deck", "oc-flight-deck"],
+    ["packages/oc-harness-setup", "oc-harness-setup"],
+    ["packages/oc-plugin-view", "oc-plugin-view"],
+    ["packages/oc-talk", "oc-talk"],
+    ["packages/rea-shim", "rea-shim"],
+  ];
+  const listedKey = Array.isArray(listed)
+    ? JSON.stringify(listed.map((p) => [p.dir, p.name]).sort())
+    : null;
+  const expectedKey = JSON.stringify(expectedDoors.sort());
+  console.log(`front-door coverage: exit=${listedRun.status}; entries=${Array.isArray(listed) ? listed.length : "unparseable"}`);
+  if (listedKey !== expectedKey) {
+    console.log(`FAIL: front doors must be the seven released packages; got ${listedKey ?? "none"}`);
     fail++;
   }
 } finally {
