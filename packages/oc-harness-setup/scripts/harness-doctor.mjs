@@ -41,6 +41,9 @@
  *     an orphan either direction = FAIL)
  *   - state/template.md exists and carries the fixed session key order
  *     (id, title, status, goal, next, artifacts, decisions, open)
+ *   - playbooks/*.md carry Entry criteria, a ### heading, two numbered steps
+ *     and **Reply:** in order, and match skills/playbook/SKILL.md both ways
+ *     (no playbooks shipped is a supported PASS; no router skips the cross-check)
  *
  * The small DECLARED block at the top is the honest form of the old hardcoded
  * state: each entry names its evidence. Everything else is read from
@@ -1339,6 +1342,87 @@ if (!isFile(templatePath)) {
   }
 }
 
+// Law 19: playbooks carry the graded shape and match the router both ways.
+// The shape is a state machine over lines: Entry criteria -> ### heading ->
+// at least two numbered steps -> **Reply:**, in that order. This is a pure
+// read of the tree: no writes, no spawn, no network. A config with no
+// playbooks/ is a supported state (the install lane may not have run), so it
+// passes as 'no playbooks shipped' and ordering with that lane never matters.
+// The router cross-check is fail-closed in both directions; an absent router
+// skips it as PASS rather than FAIL.
+function getPlaybookMissingElements(text) {
+  const missing = [];
+  let stage = 0;
+  let steps = 0;
+  for (const line of text.split(/\r?\n/)) {
+    if (stage === 0) {
+      if (/^\s*Entry criteria\s*:/i.test(line)) stage = 1;
+    } else if (stage === 1) {
+      if (/^###\s+\S/.test(line)) stage = 2;
+    } else if (stage === 2) {
+      if (/^\s*\d+[.)]\s+\S/.test(line)) steps++;
+      if (steps >= 2) stage = 3;
+    } else if (stage === 3) {
+      if (/^\s*\*\*Reply:\*\*/i.test(line)) stage = 4;
+    } else {
+      break;
+    }
+  }
+  if (stage < 1) missing.push('Entry criteria: line');
+  if (stage < 2) missing.push('### heading');
+  if (stage < 3) missing.push('at least two numbered steps');
+  if (stage < 4) missing.push('**Reply:** line');
+  return missing;
+}
+
+// Router rows are `| ... | playbooks/<name>.md |`. Only table rows count, so
+// prose mentions of a playbook never adopt a file the router does not route.
+function getRouterPlaybookNames(text) {
+  const names = [];
+  for (const line of text.split(/\r?\n/)) {
+    if (!/^\s*\|/.test(line)) continue;
+    for (const m of line.matchAll(/playbooks\/([^|\s]+\.md)/gi)) names.push(m[1]);
+  }
+  return sortUnique(names);
+}
+
+const playbooksDir = path.join(root, 'playbooks');
+const routerPath = path.join(skillsRoot, 'playbook', 'SKILL.md');
+if (!isDir(playbooksDir)) {
+  addLaw('playbooks carry the graded shape and match the router', 'PASS', 'no playbooks shipped');
+} else {
+  const playbookFiles = listFiles(playbooksDir, /\.md$/i);
+  const playbookProblems = [];
+  for (const name of playbookFiles) {
+    for (const element of getPlaybookMissingElements(safeText(path.join(playbooksDir, name)))) {
+      playbookProblems.push(`${name}: missing ${element}`);
+    }
+  }
+  const routerExists = isFile(routerPath);
+  if (routerExists) {
+    const routerNames = getRouterPlaybookNames(safeText(routerPath));
+    const fileNames = sortUnique(playbookFiles);
+    const orphans = fileNames.filter((name) => !hasCI(routerNames, name));
+    const dangling = routerNames.filter((name) => !hasCI(fileNames, name));
+    if (orphans.length > 0) playbookProblems.push(`orphan playbooks with no router row: ${orphans.join(', ')}`);
+    if (dangling.length > 0) playbookProblems.push(`dangling router rows with no playbook: ${dangling.join(', ')}`);
+  }
+  if (playbookProblems.length > 0) {
+    addLaw(
+      'playbooks carry the graded shape and match the router',
+      'FAIL',
+      playbookProblems.join('; '),
+      `repair each playbook and reconcile the router table in skills\\playbook\\SKILL.md: ${playbookProblems.join('; ')}`
+    );
+  } else {
+    const routerDetail = routerExists ? 'router names agree both ways' : 'no router (cross-check skipped)';
+    addLaw(
+      'playbooks carry the graded shape and match the router',
+      'PASS',
+      `${playbookFiles.length} playbook file(s) carry Entry criteria, ### heading, two numbered steps, and **Reply:** in order; ${routerDetail}`
+    );
+  }
+}
 
 const failLaws = laws.filter((law) => law.result === 'FAIL');
 const driftLaws = laws.filter((law) => law.result === 'DRIFT');
