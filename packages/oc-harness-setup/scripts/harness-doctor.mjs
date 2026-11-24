@@ -286,6 +286,17 @@ function getMcpServerNames(mcpNode) {
   return Object.keys(container);
 }
 
+// A V2 `plugins[]` entry may be `{ package, options }`; its identity is
+// `package`. A specifier string keeps its existing String() behavior, and a
+// tuple or malformed object stays on that same path so it still fails closed.
+function pluginIdentity(entry) {
+  if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+    const id = entry.package;
+    if (typeof id === 'string' && id.trim() !== '') return id.trim();
+  }
+  return String(entry);
+}
+
 // StrictMode-safe read of the permissions array. A config that omits the
 // key (or carries a non-array) grades as an empty set, so dependent laws
 // FAIL with their named reason instead of throwing a property error.
@@ -297,11 +308,14 @@ function getPermissionRules(config) {
   return Array.isArray(value) ? value : [];
 }
 
-// First token per line of `opencode mcp list`, minus status markers.
+// First token per line of `opencode mcp list`, minus status markers. V2 marks
+// a disabled server with a leading ○ (U+25CB): that glyph is a status, not an
+// ID, so it is stripped like the older ✓/✗/×/• markers. A disabled server is
+// still registered and keeps counting in both directions of Law 7.
 function getRegistryMcpNames(lines) {
   const names = [];
   for (const line of lines) {
-    const text = String(line).replace(/^[\u2713\u2717\u00D7\u2022\-\s]+/, '').trim();
+    const text = String(line).replace(/^[\u2713\u2717\u00D7\u2022\u25CB\-\s]+/, '').trim();
     if (text === '') continue;
     const name = text.split(/\s+/).filter((tok) => tok !== '')[0];
     if (name && !/^(id|name|server|status|no)$/i.test(name)) names.push(String(name));
@@ -669,7 +683,7 @@ if (!configOk) {
     const pluginRows = pluginRun.lines.filter((line) => String(line).trim() !== '').slice(1);
     const unresolved = [];
     for (const entry of configuredPlugins) {
-      const text = String(entry);
+      const text = pluginIdentity(entry);
       let resolves = false;
       for (const row of pluginRows) {
         if (String(row).includes(text)) {
