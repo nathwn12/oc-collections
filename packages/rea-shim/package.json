@@ -1,6 +1,6 @@
 {
   "name": "rea-shim",
-  "version": "1.0.0",
+  "version": "0.3.0",
   "description": "Unofficial one-line installer and launcher for the Craft Anything desktop app on Windows x64. Verifies a pinned portable release before use. Ships no upstream code. All credit to the Craft Anything authors.",
   "license": "MIT",
   "repository": {

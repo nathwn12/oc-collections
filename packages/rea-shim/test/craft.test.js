@@ -332,7 +332,7 @@ test('the shipped source carries no MCP, REA, Ghidra, JDK, agent or updater path
     }
   }
   const manifest = JSON.parse(fs.readFileSync(path.join(PACKAGE_DIR, 'package.json'), 'utf8'));
-  assert.equal(manifest.version, '1.0.0');
+  assert.equal(manifest.version, '0.3.0');
   for (const field of ['dependencies', 'optionalDependencies', 'peerDependencies', 'devDependencies']) {
     assert.ok(manifest[field] === undefined || Object.keys(manifest[field]).length === 0);
   }
@@ -359,7 +359,7 @@ test('the package check script syntax-checks every shipped bin and lib file', ()
 test('the CLI takes no operational argument', () => {
   const version = runCli(['--version']);
   assert.equal(version.status, 0);
-  assert.match(version.stdout, /^1\.0\.0\r?\n$/);
+  assert.match(version.stdout, /^0\.3\.0\r?\n$/);
   const unknown = runCli(['--mcp']);
   assert.equal(unknown.status, 2);
   assert.match(unknown.stderr, /usage: rea-shim/);

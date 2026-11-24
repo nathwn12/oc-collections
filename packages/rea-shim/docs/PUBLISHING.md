@@ -20,7 +20,7 @@ The upstream pin is data in `lib/sources.js`: tag, filename, byte count, SHA-256
 
 ## Version reconciliation
 
-The historical tag `rea-shim@0.2.4` carried a manifest declaring 0.2.3. This release moves the manifest to 1.0.0, derived from the highest tag, and names that drift in the changelog. The owner resolves the live registry tag pair before tagging.
+The historical tag `rea-shim@0.2.4` carried a manifest declaring 0.2.3. This release moves the manifest to 0.3.0, derived from the highest tag under the 0.x breaking rule, and names that drift in the changelog. The owner resolves the live registry tag pair before tagging.
 
 ## Release evidence
 
