@@ -2,9 +2,9 @@
 
 ## How it works
 
-`setup` is a one-shot installer, not a runtime. It reads a file manifest, prints it, waits for your `y`, then writes into your OpenCode config directory. It ships no plugin and starts no process: everything it lays down is markdown, JSON, and one doctor script that Node runs.
+`setup` is a one-shot installer, not a runtime. It runs six ordered stages declared in `stages.yaml`. At the plan stage it reads a file manifest, prints it and waits for your `y`; then it writes into your OpenCode config directory. It ships no plugin and starts no process: everything it lays down is markdown, JSON, and one doctor script that Node runs.
 
-**What lands where.** The config dir receives `opencode.jsonc` (merged, never replaced), `AGENTS.md`, `agents/` (10 seats), `commands/` (6 commands), `skills/` (6 skills), `reference/` (12 on-demand files behind one index), `scripts/harness-doctor.mjs`, `gitignore.template`, and `.docs/`. Your state dir is seeded once with `state/lessons.md` and `state/template.md` and is never overwritten afterwards.
+**What lands where.** The config dir receives `opencode.jsonc` (merged, never replaced), `AGENTS.md`, `agents/` (10 seats), `commands/` (6 commands), `skills/` (6 skills), `playbooks/` (five procedures), `templates/`, `reference/` (12 on-demand files behind one index), `scripts/harness-doctor.mjs`, `gitignore.template`, and `.docs/`. Setup records stage progress in `state/setup-state.yaml` in the config dir. Your state dir is seeded once with `state/lessons.md` and `state/template.md` and is never overwritten afterwards.
 
 **The loop it installs.** Brief → seat → skill → evidence → verify → memory. One routing table in `reference/flow.md` gives each seat its trigger, owned paths, and check. The verifier never authored the work it grades, and no seat certifies its own output.
 
@@ -14,7 +14,24 @@
 
 **Journal and uninstall.** Every written path is recorded in `oc-harness-setup.manifest.json` inside the config dir, with a SHA-256 per file. `setup --uninstall` reads that manifest and removes exactly what it lists, restoring the pre-install originals from its backup path.
 
-**Doctor gate.** Every setup run ends by running `scripts/harness-doctor.mjs` against the config dir. It grades 18 laws and names the failing law with the fix. A failing doctor exits non-zero, and re-running setup is idempotent, so the recipe is: read the named fix, apply it, run again.
+**Doctor gate.** Every setup run reaches a doctor gate: the verify stage runs `scripts/harness-doctor.mjs` against the config dir. It grades 18 laws and names the failing law with the fix. A failing doctor exits non-zero, and re-running setup is idempotent, so read the named fix, apply it and run again.
+
+## Stages
+
+`setup` runs these stages in the order declared in `stages.yaml`:
+
+| Stage | What it does |
+| --- | --- |
+| preflight | Checks the host. |
+| resolve | Finds the config dir. |
+| plan | Collects files, prints the plan and confirms. |
+| write | Backs up, installs and merges config. |
+| verify | Runs the doctor. |
+| report | Prints the summary. |
+
+`--list-stages` prints the list and exits without writing. `--stage <id>` runs up to and including that stage, then stops. `--from <id>` starts at that stage and runs to the end. `--ask` adds two questions: whether to keep your existing config values when an install-owned key collides, and whether to install the playbooks and templates. Both default to yes.
+
+Progress is recorded in `state/setup-state.yaml` in the config dir. Plain `setup` still runs every stage and remains the upgrade path; recorded progress never makes it skip work.
 
 ## Configuration
 
@@ -37,10 +54,15 @@ Everything else in that file is yours. There are no model pins and no credential
 
 | Command | Arguments | What it returns | Exit |
 | --- | --- | --- | --- |
-| `oc-harness-setup setup` | none (the default when you pass no command) | Prints the manifest, waits for `y`, installs, ends on the doctor gate | `0` on a clean install, `1` when the doctor fails or an argument is unknown |
-| `oc-harness-setup setup --dry-run` | — | The same manifest, and nothing is written | `0` |
+| `oc-harness-setup setup` | none (the default when you pass no command) | Runs all six stages: prints the plan, waits for `y`, installs, runs the doctor and reports | `0` on a clean install, `1` when the doctor fails or an argument is unknown |
+| `oc-harness-setup setup --dry-run` | — | The same plan, and nothing is written | `0` |
+| `oc-harness-setup setup --list-stages` | — | The ordered stage list, then exits without writing | `0` |
+| `oc-harness-setup setup --stage <id>` | a stage id | Runs up to and including that stage, then stops | `0` |
+| `oc-harness-setup setup --from <id>` | a stage id | Starts at that stage and runs to the end | `0` |
+| `oc-harness-setup setup --ask` | — | Asks about keeping existing config values on a collision and about installing the playbooks and templates; both default to yes | `0` |
 | `oc-harness-setup setup --ci` | — | The manifest only, refusing to mutate | `0` |
 | `oc-harness-setup setup --uninstall` | `--dry-run` / `--ci` also accepted | Removes exactly the manifest-listed files and restores originals; a preview writes nothing | `0`, or `1` on a doctor failure during setup |
+| `oc-harness-setup evolve <kind> <id>` | a kind (`skill`, `command`, `agent`, `playbook`) and an id | Writes the artifact and its required companions, runs the doctor and reports the verdict | `0` when the doctor is clean, `1` when it fails or the input is bad, `2` for a usage error |
 | `oc-harness-setup --version` | — | The package version | `0` |
 | `oc-harness-setup --help` | — | The usage block | `0` |
 
@@ -64,9 +86,21 @@ It prints the destination config dir, the incoming file count split into new and
 - A `/goal` path the prior manifest never listed, an entry with no recorded hash, or an install with no prior manifest is left in place — so it can still collide with the native `/goal` name; remove it yourself if it does.
 - `setup --dry-run` previews all of it; `--uninstall` restores the pre-upgrade snapshot.
 
-## Grow it
+## Playbooks
 
-This starter grows through `evolve`: the smallest deliberate extension — one skill, command, reference, seat, or config change at a time, always 1:1 and doctor-checked. Repeat something twice, and `evolve` is how it earns a place.
+The pack ships `playbooks/` with five procedures: investigate, bug-fix, feature, refactor and ship. Invoke the router skill as `/playbook`. It matches one playbook to your task and copies its numbered steps into the todo before any work starts. Each playbook carries entry criteria, numbered steps, a reply line and an exit receipt.
+
+## Evolve
+
+`evolve` turns a repeated workflow into a lasting artifact. It is a command, not a recipe.
+
+```bash
+oc-harness-setup evolve <kind> <id>
+```
+
+`<kind>` is `skill`, `command`, `agent` or `playbook`, and `<id>` names the artifact. `--title` and `--description` describe it. `--body <file|->` takes the body from a file, or from standard input when you pass `-`. `--dry-run` shows what would be written without writing. `--force` overwrites an existing artifact.
+
+The command writes the artifact from the matching template and adds the companions the doctor requires. A skill also gets its paired command and its skill allowlist entry; a playbook also gets its router row. It then runs the doctor and reports the verdict. Exit `0` when the doctor is clean, `1` when it fails or the input is bad, and `2` for a usage error.
 
 ## Troubleshooting
 
