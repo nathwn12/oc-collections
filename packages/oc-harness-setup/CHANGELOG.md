@@ -2,6 +2,45 @@
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-24
+
+### Added
+
+- Setup runs six ordered stages — preflight, resolve, plan, write, verify and
+  report — and records its progress in `state/setup-state.yaml`. Plain `setup`
+  still runs every stage and stays the upgrade path. `--list-stages` prints the
+  order and exits without writing, `--stage <id>` runs up to and including that
+  stage, `--from <id>` starts there and runs to the end, and `--ask` asks
+  whether to keep existing config values when an install-owned key collides and
+  whether to install the playbooks and templates; both default to yes.
+- The pack ships five playbooks — investigate, bug-fix, feature, refactor and
+  ship — behind the `/playbook` router. The router matches one playbook to a
+  task and copies its numbered steps into the todo before work starts. The
+  doctor grades the playbooks and the router.
+
+### Changed
+
+- `evolve` is now a generator command. It writes a skill, command, agent or
+  playbook from its template and adds the companions the doctor requires: a
+  skill also gets its paired command and a skill allowlist entry, and a
+  playbook also gets a row in the router. It then runs the doctor and reports
+  the verdict.
+
+### Fixed
+
+- V2 plugin objects (`{package, options}`) survive the config merge with their
+  options intact. Entries dedupe on the package id, so a string and an object
+  naming the same plugin collapse to one, and an adopter entry wins when it
+  collides with a shipped one. Entries the host cannot represent are reported,
+  not written.
+- The doctor reads a V2 plugin object's `package` as its identity instead of
+  stringifying it, and strips the disabled marker from an MCP server name
+  before grading it, so a config that agrees with the registry no longer fails
+  those two checks.
+- A `--from` start that skipped the plan stage no longer crashes during the
+  write; the inputs are now derived the same way for planned and skipped-plan
+  starts.
+
 ## [1.0.0] - 2026-10-31
 
 ### Breaking
