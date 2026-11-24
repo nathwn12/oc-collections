@@ -1,6 +1,6 @@
 <h1 align="center">rea-shim</h1>
 
-<p align="center"><strong>A one-line MCP launcher for upstream rea, with an optional bootstrap for its exact JDK and Ghidra.</strong></p>
+<p align="center"><strong>One command installs the Craft Anything desktop app on Windows and opens it.</strong></p>
 
 <p align="center">
   <a href="https://www.npmjs.com/package/rea-shim"><img src="https://img.shields.io/npm/v/rea-shim" alt="npm version"></a>
@@ -8,56 +8,42 @@
   <a href="https://github.com/nathwn12/oc-collections/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT"></a>
 </p>
 
-## Why
-
-Upstream `rea` needs a matching Ghidra and JDK, and a wrong pair wastes an afternoon. `rea-shim` resolves them from the installed upstream release's own policy — there is no shim version table to go stale. It serves the upstream agents over stdio without vendoring their code, and verifies every archive against the SHA-256 in official release data before extracting it.
-
-Extraction refuses an archive without one top-level directory and rejects links, junctions and reparse points before and after the fact. A foreign install or a mismatched cache entry is reported and preserved, never overwritten.
-
-## Install
-
-```powershell
-npx -y rea-shim@latest --doctor
-```
-
-Point your MCP client at the same command with no flag to serve. `--print-config` prints the finished block for this machine:
-
-```jsonc
-{
-  "mcp": {
-    "servers": {
-      "rea": {
-        "type": "local",
-        "command": ["cmd", "/c", "npx", "-y", "rea-shim@latest"]
-      }
-    }
-  }
-}
-```
-
 ## Use
 
-- `--doctor` prints node, the Ghidra dir, the declared Java requirement, the JDK home and major, the upstream version, and the exact child command. It is read-only and exits `0` or `2`.
-- `--print-config` prints the `opencode.jsonc` block for this machine, byte for byte what your client reads.
-- `--bootstrap` installs the exact upstream release, the Ghidra line it declares, and the JDK Ghidra needs. This is the only mutating command.
+```powershell
+npx -y rea-shim@latest
+```
 
-With no flag, the shim serves upstream `rea` over stdio as its child.
+That is the whole interface. No flag, path, configuration file or extra setup.
 
-## Configure
+The first run downloads the official portable build, checks it against a pinned SHA-256 before extracting, puts it under your user profile, writes one first-run setting and starts the app. Later runs start the same install without downloading again and leave your settings as they are.
 
-No config file. The command line is the surface. `--bootstrap` derives the Ghidra line and the JDK floor from the installed upstream release, so there is nothing to pin by hand. The environment variables are listed in the guide.
+If a download is interrupted or does not match the pin, nothing is installed. Run the same command again to retry.
+
+## What it changes
+
+- One application folder under your local app data, with the app and its files.
+- One small settings file, only when no settings exist. It sets `auto_mode = false` and leaves every other default alone.
+- Nothing else. No administrator prompt, no change to `PATH`, no service, no shortcut registration and no background updater.
+
+Existing settings are never read, rewritten or reformatted. The app is pointed at the same stable settings folder on every launch.
 
 ## Requirements
 
-- Windows x64.
-- Node matching the current upstream `rea-agents` release.
-- A Ghidra install and a full JDK satisfying that Ghidra's declared bounds, or run `--bootstrap` to install both.
+- Windows 10 or 11, 64-bit. Any other platform is refused with a clear message.
+- Node matching the range in the package manifest.
+
+## About
+
+REA means Reverse Engineer Anything. This shim keeps the name but no longer installs base REA. It installs Craft Anything, a separate product by its own authors. The two are not affiliated. The shim ships no upstream code; see the official site and release page below for upstream documentation and downloads.
 
 ## Links
 
 - [Issues](https://github.com/nathwn12/oc-collections/issues)
 - [Releases](https://github.com/nathwn12/oc-collections/releases)
 - [Guide](https://github.com/nathwn12/oc-collections/blob/main/packages/rea-shim/docs/GUIDE.md)
+- [Craft Anything](https://craft.wiki/apps/craft-anything)
+- [Upstream releases](https://github.com/storytold/craft-anything/releases)
 - [MIT licence](https://github.com/nathwn12/oc-collections/blob/main/LICENSE)
 
 <p align="center"><sub>Built by nathwn12</sub></p>

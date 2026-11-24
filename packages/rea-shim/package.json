@@ -1,7 +1,7 @@
 {
   "name": "rea-shim",
-  "version": "0.2.3",
-  "description": "Unofficial personal-use one-line MCP launcher and explicit bootstrapper for rea: serves upstream rea-agents over stdio, and can install the official JDK and Ghidra the exact upstream release requires. Ships no upstream code. All credit to the original rea authors.",
+  "version": "1.0.0",
+  "description": "Unofficial one-line installer and launcher for the Craft Anything desktop app on Windows x64. Verifies a pinned portable release before use. Ships no upstream code. All credit to the Craft Anything authors.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -17,7 +17,7 @@
   "scripts": {
     "prepublishOnly": "node ../../scripts/check-version-cell.mjs .",
     "test": "node --test \"test/**/*.test.js\"",
-    "check": "node --check bin/rea-shim.js && node --check lib/bootstrap.js && node --check lib/checks.js && node --check lib/discovery.js && node --check lib/install.js && node --check lib/sources.js && node --check lib/support.js"
+    "check": "node --check bin/rea-shim.js && node --check lib/craft.js && node --check lib/settings.js && node --check lib/sources.js && node --check lib/support.js"
   },
   "files": [
     "bin/",
@@ -30,11 +30,13 @@
     "assets"
   ],
   "keywords": [
-    "mcp",
-    "reverse-engineering",
-    "ghidra",
+    "reverse-engineer-anything",
+    "rea",
+    "craft-anything",
+    "installer",
     "launcher",
-    "stdio"
+    "windows",
+    "desktop"
   ],
   "author": "nathwn12"
 }

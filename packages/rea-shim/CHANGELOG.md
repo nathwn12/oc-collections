@@ -1,10 +1,26 @@
 # Changelog
 
-## [Unreleased]
+## [1.0.0] - 2026-11-24
 
-### Fixed
+### Changed
 
-- The MCP transport child (`cmd.exe /d /c npx -y rea-agents@… --mcp`) now passes `windowsHide: true`: the launcher no longer opens a console window that steals focus on a desktop launch. The stdio transport is unchanged.
+- Breaking: `npx -y rea-shim@latest` now installs and launches the official Craft Anything portable build for Windows x64. It no longer serves a server over stdio, and it no longer installs or resolves the former upstream toolchain. Clients that depended on that transport must be retired.
+- The one command verifies the pinned v0.6.1 archive with native SHA-256 before extraction, installs under the user profile without elevation, and starts the app. A rerun reuses the verified install and downloads nothing.
+- The first run writes one setting, `auto_mode = false`, only when no config exists. Existing settings are left byte-identical. Every launch points the app at the same supported config directory through its native environment key.
+- Unsupported hosts exit with an explicit message instead of guessing a payload or a hash.
+
+### Removed
+
+- The bootstrap command, the toolchain discovery and the server handshake. No second flag, path, environment setup, client block or agent configuration is needed. No background updater, service or `PATH` edit.
+
+### Added
+
+- Offline contract coverage for the pinned architecture map, the hash gate before extraction, corrupt-payload recovery, zero-fetch reuse, one-key first-run config, byte-identical existing settings and the explicit host refusal.
+
+### Notes
+
+- The published tag `rea-shim@0.2.4` carried a manifest declaring 0.2.3. The new version follows the highest tag, not the stale manifest; the owner reconciles the registry pair before tagging.
+- The offline suite is not runtime proof. First-run window reachability, reuse and corrupt recovery require a separate isolated native run.
 
 ## [0.2.2] - 2026-10-29
 
