@@ -4,7 +4,7 @@
 
 `setup` is a one-shot installer, not a runtime. It runs six ordered stages declared in `stages.yaml`. At the plan stage it reads a file manifest, prints it and waits for your `y`; then it writes into your OpenCode config directory. It ships no plugin and starts no process: everything it lays down is markdown, JSON, and one doctor script that Node runs.
 
-**What lands where.** The config dir receives `opencode.jsonc` (merged, never replaced), `AGENTS.md`, `agents/` (10 seats), `commands/` (6 commands), `skills/` (6 skills), `playbooks/` (five procedures), `templates/`, `reference/` (12 on-demand files behind one index), `scripts/harness-doctor.mjs`, `gitignore.template`, and `.docs/`. Setup records stage progress in `state/setup-state.yaml` in the config dir. Your state dir is seeded once with `state/lessons.md` and `state/template.md` and is never overwritten afterwards.
+**What lands where.** The config dir receives `opencode.jsonc` (merged, never replaced), `AGENTS.md`, `agents/` (10 seats), `commands/` (7 commands), `skills/` (7 skills), `playbooks/` (five procedures), `reference/` (12 on-demand files behind one index), `scripts/harness-doctor.mjs`, `gitignore.template`, and `.docs/`. Templates stay inside the package; `evolve` reads them there. Setup records stage progress in `state/setup-state.yaml` in the config dir. Your state dir is seeded once with `state/lessons.md` and `state/template.md` and is never overwritten afterwards.
 
 **The loop it installs.** Brief → seat → skill → evidence → verify → memory. One routing table in `reference/flow.md` gives each seat its trigger, owned paths, and check. The verifier never authored the work it grades, and no seat certifies its own output.
 
@@ -14,7 +14,7 @@
 
 **Journal and uninstall.** Every written path is recorded in `oc-harness-setup.manifest.json` inside the config dir, with a SHA-256 per file. `setup --uninstall` reads that manifest and removes exactly what it lists, restoring the pre-install originals from its backup path.
 
-**Doctor gate.** Every setup run reaches a doctor gate: the verify stage runs `scripts/harness-doctor.mjs` against the config dir. It grades 18 laws and names the failing law with the fix. A failing doctor exits non-zero, and re-running setup is idempotent, so read the named fix, apply it and run again.
+**Doctor gate.** Every setup run reaches a doctor gate: the verify stage runs `scripts/harness-doctor.mjs` against the config dir. It grades 19 laws and names the failing law with the fix. A failing doctor exits non-zero, and re-running setup is idempotent, so read the named fix, apply it and run again.
 
 ## Stages
 
@@ -29,7 +29,7 @@
 | verify | Runs the doctor. |
 | report | Prints the summary. |
 
-`--list-stages` prints the list and exits without writing. `--stage <id>` runs up to and including that stage, then stops. `--from <id>` starts at that stage and runs to the end. `--ask` adds two questions: whether to keep your existing config values when an install-owned key collides, and whether to install the playbooks and templates. Both default to yes.
+`--list-stages` prints the list and exits without writing. `--stage <id>` runs up to and including that stage, then stops. `--from <id>` starts at that stage and runs to the end. `--ask` adds two questions: whether to keep your existing config values when an install-owned key collides, and the question "Install the playbooks?". Both default to yes.
 
 Progress is recorded in `state/setup-state.yaml` in the config dir. Plain `setup` still runs every stage and remains the upgrade path; recorded progress never makes it skip work.
 
@@ -46,7 +46,7 @@ Two environment variables, and the config keys the pack owns.
 | --- | --- | --- |
 | `default_agent` | `orchestrator` | The routing seat is the entry point; an existing 0.3.x config keeps resolving. |
 | `permissions[]` / `policies[]` | The deny block, last | Hard denies land after your rules so the gate cannot be widened by ordering. |
-| `skill` allow entries | The six shipped skills | Retired skills are pruned; custom skills are left alone. |
+| `skill` allow entries | The seven shipped skills | Retired skills are pruned; custom skills are left alone. |
 
 Everything else in that file is yours. There are no model pins and no credentials anywhere in the pack.
 
@@ -59,7 +59,7 @@ Everything else in that file is yours. There are no model pins and no credential
 | `oc-harness-setup setup --list-stages` | — | The ordered stage list, then exits without writing | `0` |
 | `oc-harness-setup setup --stage <id>` | a stage id | Runs up to and including that stage, then stops | `0` |
 | `oc-harness-setup setup --from <id>` | a stage id | Starts at that stage and runs to the end | `0` |
-| `oc-harness-setup setup --ask` | — | Asks about keeping existing config values on a collision and about installing the playbooks and templates; both default to yes | `0` |
+| `oc-harness-setup setup --ask` | — | Asks about keeping existing config values on a collision, then asks "Install the playbooks?"; both default to yes | `0` |
 | `oc-harness-setup setup --ci` | — | The manifest only, refusing to mutate | `0` |
 | `oc-harness-setup setup --uninstall` | `--dry-run` / `--ci` also accepted | Removes exactly the manifest-listed files and restores originals; a preview writes nothing | `0`, or `1` on a doctor failure during setup |
 | `oc-harness-setup evolve <kind> <id>` | a kind (`skill`, `command`, `agent`, `playbook`) and an id | Writes the artifact and its required companions, runs the doctor and reports the verdict | `0` when the doctor is clean, `1` when it fails or the input is bad, `2` for a usage error |
@@ -112,7 +112,7 @@ The command writes the artifact from the matching template and adds the companio
 
 **The doctor fails.** It names the law and the fix. Apply the fix and re-run `setup`; it is idempotent. Removing `state/template.md`, for example, fails the doctor by name.
 
-**The doctor did not run at all.** If `scripts/harness-doctor.mjs` is missing from the config dir, setup warns that the 18 laws are unverified and exits `0`. That is a warning, not a pass.
+**The doctor did not run at all.** If `scripts/harness-doctor.mjs` is missing from the config dir, setup warns that the 19 laws are unverified and exits `0`. That is a warning, not a pass.
 
 **A file I edited got a `.new` beside it.** By design: your bytes were kept and the new version landed next to them. Merge by hand, then delete the `.new`.
 

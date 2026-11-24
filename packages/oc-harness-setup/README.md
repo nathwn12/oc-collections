@@ -4,7 +4,7 @@
 
 <h1 align="center">oc-harness-setup</h1>
 
-<p align="center"><strong>A consent-first OpenCode starter for Windows: ten seats, six skills, five playbooks and a doctor gate in one command.</strong></p>
+<p align="center"><strong>A consent-first OpenCode starter for Windows: ten seats, seven skills, five playbooks and a doctor gate in one command.</strong></p>
 
 <p align="center">
   <a href="https://www.npmjs.com/package/oc-harness-setup"><img src="https://img.shields.io/npm/v/oc-harness-setup" alt="npm version"></a>
@@ -14,7 +14,7 @@
 
 ## Why
 
-A starter that writes files is only safe if you can see and undo what it does. `oc-harness-setup` prints a full manifest before anything moves and waits for you to type `y`. It gives every agent a trigger, an owned path set and a check, so a verdict never comes from the author. Each run ends on the doctor gate: an 18-law check names the failing law and its fix, and a summary reports the result.
+A starter that writes files is only safe if you can see and undo what it does. `oc-harness-setup` prints a full manifest before anything moves and waits for you to type `y`. It gives every agent a trigger, an owned path set and a check, so a verdict never comes from the author. Each run ends on the doctor gate: a 19-law check names the failing law and its fix, and a summary reports the result.
 
 The install is reversible by journal: SHA-256 per file, so `--uninstall` restores what was there and removes exactly what it added.
 
@@ -28,7 +28,7 @@ Setup checks your host, finds your config dir, collects the files and prints a p
 
 ## Use
 
-Run `setup` to install the starter, then answer `y` at the plan. The pack puts ten seats on one routing table, six skills behind six commands, five playbooks behind `/playbook`, and twelve on-demand references loaded one at a time from an index.
+Run `setup` to install the starter, then answer `y` at the plan. The pack puts ten seats on one routing table, seven skills behind seven commands, five playbooks behind `/playbook`, and twelve on-demand references loaded one at a time from an index.
 
 Afterwards:
 
@@ -47,7 +47,7 @@ There is no config file to edit by hand. Your model, provider, keys, plugins and
 | `setup --list-stages` | Print the ordered stage list and exit without writing. |
 | `setup --stage <id>` | Run up to and including that stage, then stop. |
 | `setup --from <id>` | Start at that stage and run to the end. |
-| `setup --ask` | Ask whether to keep your existing config values when an install-owned key collides, and whether to install the playbooks and templates; both default to yes. |
+| `setup --ask` | Ask whether to keep your existing config values when an install-owned key collides, then ask "Install the playbooks?"; both default to yes. |
 | `evolve <kind> <id>` | Write an artifact from its template, add its required companions, run the doctor and report the verdict. |
 | `--dry-run` | Print the plan without writing. |
 | `--uninstall` | Restore files from the journal. |
