@@ -140,7 +140,7 @@ test('--dry-run prints the manifest with orchestrator, state/, 18 and creates no
   assert.ok(!existsSync(cfgDir), 'dry-run created no files');
 });
 
-test('package audit: files list exists, no leaks, 10/6/6 with 1:1 seam', { skip: WIN_SKIP }, () => {
+test('package audit: files list exists, no leaks, 10/7/7 with 1:1 seam', { skip: WIN_SKIP }, () => {
   const pkg = JSON.parse(readFileSync(path.join(PKG_ROOT, 'package.json'), 'utf8'));
   assert.ok(Array.isArray(pkg.files) && pkg.files.length > 0, 'files list present');
 
@@ -182,9 +182,9 @@ test('package audit: files list exists, no leaks, 10/6/6 with 1:1 seam', { skip:
   const skillDirs = readdirSync(path.join(PKG_ROOT, 'skills'), { withFileTypes: true })
     .filter((e) => e.isDirectory() && existsSync(path.join(PKG_ROOT, 'skills', e.name, 'SKILL.md')))
     .map((e) => e.name);
-  assert.equal(skillDirs.length, 6, `6 skills (saw ${skillDirs.length})`);
+  assert.equal(skillDirs.length, 7, `7 skills (saw ${skillDirs.length})`);
   const commandIds = readdirSync(path.join(PKG_ROOT, 'commands')).filter((f) => f.endsWith('.md')).map((f) => f.slice(0, -3));
-  assert.equal(commandIds.length, 6, `6 commands (saw ${commandIds.length})`);
+  assert.equal(commandIds.length, 7, `7 commands (saw ${commandIds.length})`);
   assert.deepEqual([...commandIds].sort(), [...skillDirs].sort(), 'commands and skills are 1:1');
 
   // OpenCode 2.2.0 config shape, pinned statically so a 2.1-shaped key goes red

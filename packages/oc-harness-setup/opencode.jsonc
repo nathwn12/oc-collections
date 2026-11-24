@@ -356,6 +356,11 @@
     },
     {
       "action": "skill",
+      "resource": "playbook",
+      "effect": "allow"
+    },
+    {
+      "action": "skill",
       "resource": "search",
       "effect": "allow"
     },

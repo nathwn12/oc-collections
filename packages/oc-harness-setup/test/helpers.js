@@ -24,7 +24,7 @@ export const EXPECTED_AGENTS = [
   'code-agent', 'git-agent', 'harness-agent', 'host-agent', 'memory-agent',
   'release-agent', 'research-agent', 'secret-agent', 'surface-agent', 'verify-agent',
 ];
-export const EXPECTED_SKILLS = ['close', 'evolve', 'fast', 'loop', 'search', 'swarm'];
+export const EXPECTED_SKILLS = ['close', 'evolve', 'fast', 'loop', 'playbook', 'search', 'swarm'];
 
 export const sha256Text = (s) => createHash('sha256').update(Buffer.from(s, 'utf8')).digest('hex');
 
