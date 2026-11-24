@@ -158,7 +158,7 @@ test('--ask with Enter keeps today\'s result', { skip: WIN_SKIP }, async () => {
     assert.equal(r.status, 0, `ask exit was ${r.status}\nSTDOUT:\n${r.stdout}\nSTDERR:\n${r.stderr}`);
     const out = String(r.stdout || '');
     assert.ok(out.includes('Keep your values for install-owned keys on collision?'), 'collision prompt asked');
-    assert.ok(out.includes('Install the playbook and template directories?'), 'playbook prompt asked');
+    assert.ok(out.includes('Install the playbooks?'), 'playbook prompt asked');
     const merged = parseJsoncForTest(readFileSync(path.join(cfg, 'opencode.jsonc'), 'utf8'));
     assert.equal(merged.default_agent, 'mine', 'Enter keeps the adopter collision value');
     const st = readStageState(cfg);

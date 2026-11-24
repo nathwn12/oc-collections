@@ -21,6 +21,7 @@ import {
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { createInterface } from 'node:readline/promises';
+import { createEvolve } from './evolve.mjs';
 
 // Node floor: import.meta.dirname needs Node 20.11+; the supported floor is
 // 22 (package.json engines + README + CI). Fail fast with a clear message
@@ -36,7 +37,7 @@ if (!Number.isInteger(NODE_MAJOR) || NODE_MAJOR < 22) {
 const PKG_NAME = 'oc-harness-setup';
 const PKG_ROOT = path.resolve(import.meta.dirname, '..');
 const MANIFEST_FILE = 'oc-harness-setup.manifest.json';
-const COPY_DIRS = ['agents', 'commands', 'skills', 'reference', 'scripts', '.docs', 'state-seed'];
+const COPY_DIRS = ['agents', 'commands', 'skills', 'reference', 'scripts', '.docs', 'state-seed', 'playbooks'];
 const COPY_FILES = ['AGENTS.md', 'GLOSSARY.md', 'gitignore.template'];
 // npm renames a shipped root dotfile (`.gitignore` → `.npmignore`) on pack/
 // install, so the pack ships `gitignore.template` and the installer aliases it
@@ -225,6 +226,9 @@ usage:
   oc-harness-setup setup --stage <id>   run through that stage, then stop
   oc-harness-setup setup --from <id>    start at that stage, run to the end
   oc-harness-setup setup --ask          ask the two default-yes policy questions
+  oc-harness-setup evolve <kind> <id>   add a skill, command, agent or playbook
+                                        --title <text> --description <text>
+                                        --body <file|->  --dry-run  --force
   oc-harness-setup --version            print the package version`);
 }
 
@@ -1509,7 +1513,11 @@ const STAGE_BODIES = {
     }
     if (ctx.opts.ask) {
       ctx.collisionPolicy = (await askYesNo(ctx.rl, 'Keep your values for install-owned keys on collision?')) ? 'keep' : 'replace';
-      ctx.installPlaybooks = await askYesNo(ctx.rl, 'Install the playbook and template directories?');
+      ctx.installPlaybooks = await askYesNo(ctx.rl, 'Install the playbooks?');
+      if (!ctx.installPlaybooks) {
+        // Templates stay package-internal; this answer gates playbooks only.
+        ctx.files = ctx.files.filter((f) => !String(f.rel).replace(/\\/g, '/').startsWith('playbooks/'));
+      }
     }
     validateJsoncInputs(ctx.configDir, ctx.backupPath);
     return undefined;
@@ -1622,18 +1630,73 @@ async function setup(opts) {
   }
 }
 
+/* --------------------------------- evolve ---------------------------------- */
+
+// The engine owns the policy; the CLI only supplies real I/O. runDoctor's
+// existing {code, skipped} shape becomes the numeric code the engine expects.
+async function runEvolve(opts) {
+  const evolve = createEvolve({
+    pkgRoot: PKG_ROOT,
+    configDir: findConfigDir(),
+    runDoctor: async (dir) => runDoctor(dir).code,
+    readText: (p) => readFileSync(p, 'utf8'),
+    writeText: (p, text) => installBytes(p, text),
+    log: (line) => console.log(line),
+  });
+  return evolve({
+    kind: opts.kind,
+    id: opts.id,
+    title: opts.title,
+    description: opts.description,
+    body: opts.body,
+    dryRun: !!opts.dryRun,
+    force: !!opts.force,
+  });
+}
+
 /* --------------------------------- entry ---------------------------------- */
 
 function parseArgs(argv) {
   const opts = {
     command: 'setup', dryRun: false, ci: false, uninstall: false,
     listStages: false, stage: null, from: null, ask: false,
+    kind: null, id: null, title: null, description: null, body: null, force: false,
   };
+  let evolveArgs = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
+    // One parser: evolve's two positionals are read in the same loop as the
+    // existing switches, so every setup flag keeps its current meaning.
+    if (a === 'evolve') {
+      opts.command = 'evolve';
+      evolveArgs = true;
+      continue;
+    }
+    if (evolveArgs && opts.kind === null) { opts.kind = a; continue; }
+    if (evolveArgs && opts.id === null) { opts.id = a; continue; }
+    const take = () => {
+      if (i + 1 >= argv.length) {
+        usage();
+        process.exitCode = 2;
+        return undefined;
+      }
+      return argv[++i];
+    };
     switch (a) {
       case 'setup':
         opts.command = 'setup';
+        break;
+      case '--force':
+      case '--title':
+      case '--description':
+      case '--body':
+        if (!evolveArgs) {
+          usage();
+          bail(`unknown argument: ${a}`);
+          return null;
+        }
+        if (a === '--force') opts.force = true;
+        else opts[a.slice(2)] = take();
         break;
       case '--version':
       case '-v':
@@ -1682,6 +1745,16 @@ function parseArgs(argv) {
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
   if (!opts) return;
+  if (opts.command === 'evolve') {
+    if (!opts.kind) {
+      usage();
+      process.exitCode = 2;
+      return;
+    }
+    const code = await runEvolve(opts);
+    if (code !== 0) process.exitCode = code;
+    return;
+  }
   if (opts.listStages) {
     const registry = loadStages();
     for (const s of registry.stages) console.log(`${s.id}  ${s.title}`);

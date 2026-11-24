@@ -172,6 +172,40 @@ test('re-running a skill keeps one allow entry under force', async (t) => {
   assert.equal(allowCount(h, 'new-thing'), 1, 'no duplicate allow');
 });
 
+// A real config leads with non-skill rules, so the root object is not itself a
+// skill allow. The nested permission entries must be found by walking objects,
+// or a forced rerun appends a second allow for the same id.
+test('forced rerun on a nested config keeps one allow and identical files', async (t) => {
+  const h = harness(t);
+  const realistic = [
+    '{',
+    '  "permissions": [',
+    '    {',
+    '      "action": "shell",',
+    '      "resource": "*",',
+    '      "effect": "allow"',
+    '    },',
+    ...['close', 'swarm'].flatMap((r, i) => [
+      '    {',
+      '      "action": "skill",',
+      `      "resource": "${r}",`,
+      '      "effect": "allow"',
+      `    }${i === 1 ? '' : ','}`,
+    ]),
+    '  ]',
+    '}',
+    '',
+  ].join('\n');
+  h.put(under(h, 'opencode.jsonc'), realistic);
+  const opts = options(h, { kind: 'skill' });
+  assert.equal(await h.evolve(opts), 0);
+  const before = h.snapshot();
+  assert.equal(allowCount(h, 'new-thing'), 1, 'first run adds one allow');
+  assert.equal(await h.evolve({ ...opts, force: true }), 0);
+  assert.equal(allowCount(h, 'new-thing'), 1, 'forced rerun keeps one allow');
+  assert.deepEqual(h.snapshot(), before, 'no file added, removed, or rewritten');
+});
+
 test('re-running a playbook keeps one router row under force', async (t) => {
   const h = harness(t);
   assert.equal(await h.evolve(options(h, { kind: 'playbook', force: true })), 0);

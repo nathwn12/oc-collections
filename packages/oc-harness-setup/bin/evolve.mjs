@@ -61,13 +61,14 @@ function frontmatterError(text, kind, id) {
   return null;
 }
 
-/* Top-level objects, string-aware. Comments between objects are ignored. */
+/* Every plain object, string-aware, at any nesting depth. A stack of opening
+ * braces keeps the walk generic: a permission entry under `permissions` is
+ * found the same way as any other nested object, with no path special case. */
 function scanObjects(text) {
   const objects = [];
+  const starts = [];
   let inString = false;
   let escaped = false;
-  let depth = 0;
-  let start = -1;
   for (let i = 0; i < text.length; i++) {
     const c = text[i];
     if (inString) {
@@ -77,15 +78,10 @@ function scanObjects(text) {
       continue;
     }
     if (c === '"') { inString = true; continue; }
-    if (c === '{') {
-      if (depth === 0) start = i;
-      depth++;
-    } else if (c === '}') {
-      depth--;
-      if (depth === 0 && start !== -1) {
-        objects.push({ start, end: i + 1, text: text.slice(start, i + 1) });
-        start = -1;
-      }
+    if (c === '{') starts.push(i);
+    else if (c === '}' && starts.length) {
+      const start = starts.pop();
+      objects.push({ start, end: i + 1, text: text.slice(start, i + 1) });
     }
   }
   return objects;
