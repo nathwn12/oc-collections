@@ -27,7 +27,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
-  mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync,
+  cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync,
 } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -141,10 +141,6 @@ function writeFakeOpencode(binDir) {
     "else if (a[0] === 'debug' && a[1] === 'agents') out(JSON.stringify([{ id: 'orchestrator', name: 'Orchestrator', mode: 'primary' }]));",
     "else if (a[0] === 'plugin' && a[1] === 'list') {",
     "  const rows = (process.env.FAKE_OPENCODE_PLUGINS ?? '').split(/[,\\s]+/).filter(Boolean);",
-    "  // The doctor stringifies a plugin entry for Law 6; a V2 object therefore",
-    "  // reads as '[object Object]'. Stand in for the real host resolving the",
-    "  // object by its package so this stub grades the merge, not that law.",
-    "  if (process.env.FAKE_OPENCODE_OBJECT_PLUGIN) rows.push('[object Object]');",
     "  if (!rows.length) out('No plugins found');",
     "  else { out('ID                 VERSION  SOURCE'); for (const n of rows) out(n + '  2.2.0  ' + n); }",
     '}',
@@ -297,7 +293,6 @@ test('the CLI merge preserves valid V2 plugin objects and their options', { time
     OPENCODE_CONFIG_DIR: cfg,
     FAKE_OPENCODE_CONFIG: cfg,
     FAKE_OPENCODE_PLUGINS: 'options-plugin plain-plugin legacy-tuple',
-    FAKE_OPENCODE_OBJECT_PLUGIN: '1',
     PATH: fakePath(fakeBin),
   };
   try {
@@ -315,6 +310,90 @@ test('the CLI merge preserves valid V2 plugin objects and their options', { time
       'legacy-tuple',
     ], 'object + options survive, the tuple reduces to a specifier, and dedupe uses package identity');
     assert.ok((r.stdout || '').includes('normalized the 1.x plugin tuple'), 'legacy tuple reduction stays reported');
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+/* -------------------------------- test 5 ------------------------------ */
+
+// mergeJsonc unions [distro, adopter]. On a package collision the adopter's
+// entry must win, in the distro entry's slot: a surviving distro string is how
+// an adopter's {options} silently disappear. The shipped distro ships no
+// plugins, so a scratch COPY of the package supplies both sides of the union.
+test('an adopter plugin object wins a package collision with a distro entry', { timeout: 300000 }, () => {
+  const base = mkdtempSync(path.join(os.tmpdir(), 'oc-plugin-precedence-'));
+  try {
+    const scratchPkg = path.join(base, 'pkg');
+    cpSync(PKG_ROOT, scratchPkg, { recursive: true });
+    const distroPath = path.join(scratchPkg, 'opencode.jsonc');
+    const distro = JSON.parse(stripJsonc(readFileSync(distroPath, 'utf8')));
+    distro.plugins = ['foo', 'distro-only'];
+    writeFileSync(distroPath, JSON.stringify(distro, null, 2));
+
+    const cfg = path.join(base, 'cfg');
+    mkdirSync(cfg, { recursive: true });
+    const fakeBin = path.join(base, 'fakebin');
+    mkdirSync(fakeBin, { recursive: true });
+    writeFakeOpencode(fakeBin);
+    const adopterObject = { package: 'foo', options: { mode: 'strict' } };
+    writeFileSync(path.join(cfg, 'opencode.jsonc'), JSON.stringify({
+      plugins: [adopterObject, 'adopter-only'],
+    }, null, 2));
+
+    const env = {
+      OPENCODE_CONFIG_DIR: cfg,
+      FAKE_OPENCODE_CONFIG: cfg,
+      FAKE_OPENCODE_PLUGINS: 'foo distro-only adopter-only',
+      PATH: fakePath(fakeBin),
+    };
+    const r = spawnSync(process.execPath, [path.join(scratchPkg, 'bin', 'cli.js'), 'setup'], {
+      encoding: 'utf8', input: 'y\n', cwd: cfg, env: { ...process.env, ...env },
+    });
+    assert.equal(r.status, 0, `setup exit was ${r.status}\nSTDOUT:\n${r.stdout}\nSTDERR:\n${r.stderr}`);
+
+    const emitted = JSON.parse(stripJsonc(readFileSync(path.join(cfg, 'opencode.jsonc'), 'utf8')));
+    assert.deepEqual(emitted.plugins, [adopterObject, 'distro-only', 'adopter-only'],
+      'the later adopter object replaces the distro string in place; other entries keep order');
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+/* -------------------------------- test 6 ------------------------------ */
+
+// A versioned specifier and a versionless object name ONE plugin:
+// pluginIdOf('foo@1.2.3') === 'foo'. Dedupe on the trimmed specifier leaves
+// both in the array and declares foo twice.
+test('a versioned specifier and a V2 object for one package collapse to one entry', { timeout: 300000 }, () => {
+  const base = mkdtempSync(path.join(os.tmpdir(), 'oc-plugin-identity-'));
+  try {
+    const cfg = path.join(base, 'cfg');
+    mkdirSync(cfg, { recursive: true });
+    const fakeBin = path.join(base, 'fakebin');
+    mkdirSync(fakeBin, { recursive: true });
+    writeFakeOpencode(fakeBin);
+    const adopterObject = { package: 'foo', options: { mode: 'strict' } };
+    writeFileSync(path.join(cfg, 'opencode.jsonc'), JSON.stringify({
+      plugins: ['foo@1.2.3', adopterObject],
+    }, null, 2));
+
+    const env = {
+      OPENCODE_CONFIG_DIR: cfg,
+      FAKE_OPENCODE_CONFIG: cfg,
+      // The registry lists both IDs so Law 6 grades the merge, not the fixture:
+      // pre-fix both entries survive, post-fix only the object (id foo) does.
+      FAKE_OPENCODE_PLUGINS: 'foo foo@1.2.3',
+      PATH: fakePath(fakeBin),
+    };
+    const r = spawnSync(process.execPath, [CLI, 'setup'], {
+      encoding: 'utf8', input: 'y\n', cwd: cfg, env: { ...process.env, ...env },
+    });
+    assert.equal(r.status, 0, `setup exit was ${r.status}\nSTDOUT:\n${r.stdout}\nSTDERR:\n${r.stderr}`);
+
+    const emitted = JSON.parse(stripJsonc(readFileSync(path.join(cfg, 'opencode.jsonc'), 'utf8')));
+    assert.deepEqual(emitted.plugins, [adopterObject],
+      'bare package identity dedupes the versioned string and the object; the object carries the options');
   } finally {
     rmSync(base, { recursive: true, force: true });
   }

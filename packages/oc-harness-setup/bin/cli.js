@@ -112,12 +112,14 @@ function pluginIdOf(spec) {
 // Reduce, dedupe (order preserved), and report plugin entries so a re-run
 // produces byte-identical output and nothing the host would drop survives.
 // Valid objects ride through unchanged: their `options` are the adopter's
-// data, not ours to flatten. Dedupe keys on the package identity, never JS
-// reference identity, so reparsing the same config yields the same array.
-// First occurrence wins — the adopter's own ordering is left as it was.
+// data, not ours to flatten. Dedupe keys on the BARE package id via pluginIdOf,
+// so `foo@1.2.3` and {package:'foo'} are one plugin. The union is
+// [distro, adopter], so a collision replaces the earlier value IN ITS SLOT:
+// the later adopter entry wins (its options survive) and the relative order
+// of non-colliding distro entries is untouched.
 function normalizePluginEntries(entries) {
   const out = [];
-  const seen = new Set();
+  const slotOf = new Map();
   for (const entry of entries) {
     const spec = pluginSpecifier(entry);
     if (spec === null) {
@@ -127,9 +129,14 @@ function normalizePluginEntries(entries) {
     if (Array.isArray(entry)) {
       log('merge', `normalized the 1.x plugin tuple ${JSON.stringify(entry)} → "${spec}" (OpenCode V2 drops tuple entries; per-plugin options cannot be carried)`);
     }
-    if (seen.has(spec)) continue;
-    seen.add(spec);
-    out.push(isV2PluginObject(entry) ? entry : spec);
+    const value = isV2PluginObject(entry) ? entry : spec;
+    const id = pluginIdOf(spec);
+    if (slotOf.has(id)) {
+      out[slotOf.get(id)] = value; // later entry wins; keep the first slot
+    } else {
+      slotOf.set(id, out.length);
+      out.push(value);
+    }
   }
   return out;
 }
@@ -323,14 +330,14 @@ function preflight() {
   if (host.major < 2) {
     bail(
       `OpenCode ${host.raw} speaks the 1.x config dialect (@opencode-ai/* plugins, an object \`permission\` block), not the 2.2.0 shape this package writes ` +
-        '(plugins[] of specifier strings, permissions[] of {action,resource,effect}, policies[] with tool.use). Nothing was written. ' +
+        '(plugins[] of specifier strings or {package, options} objects, permissions[] of {action,resource,effect}, policies[] with tool.use). Nothing was written. ' +
         'Upgrade first (opencode upgrade), then re-run setup.'
     );
   }
   if (host.minor < 2) {
     console.warn(
       `[warn] preflight: OpenCode ${host.raw} is below the 2.2.0 this package is tested on. The merge writes the 2.2-shaped config ` +
-        '(plugins[] as specifier strings, permissions[] of {action,resource,effect}, policies[] with tool.use); ' +
+        '(plugins[] as specifier strings or {package, options} objects, permissions[] of {action,resource,effect}, policies[] with tool.use); ' +
         'on 2.0/2.1 those blocks may be partly ignored, so the deny gate is not proven on this host. ' +
         'The install proceeds — upgrade to 2.2.0 or newer when you can.'
     );
@@ -863,10 +870,11 @@ function mergeJsonc(configDir, backupPath, manifest, retiredSkills = new Set(), 
         if (!Array.isArray(user[k])) {
           merged[k] = user[k]; // adopter's non-array value wins verbatim
         } else {
-          // `plugins` is the only union key, and it is the one whose element
-          // shape changed in 2.2.0: normalize before the union so dedupe works
-          // on strings (a tuple would never compare equal across runs and
-          // would accumulate).
+          // `plugins` is the only union key. Its V2 items are strings or
+          // {package, options} objects, so normalize the [distro, adopter]
+          // array by bare package id before the union: a tuple would never
+          // compare equal across runs and would accumulate. A later adopter
+          // entry with the same id wins in the earlier entry's slot.
           merged[k] = normalizePluginEntries([
             ...(Array.isArray(merged[k]) ? merged[k] : []),
             ...user[k],
