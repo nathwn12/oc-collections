@@ -1,7 +1,7 @@
 {
   "name": "rea-shim",
-  "version": "0.3.0",
-  "description": "Unofficial one-line installer and launcher for the Craft Anything desktop app on Windows x64. Verifies a pinned portable release before use. Ships no upstream code. All credit to the Craft Anything authors.",
+  "version": "0.3.1",
+  "description": "Unofficial one-line shortcut to Craft Anything on Windows x64. Starts the desktop app with no flag, or serves an MCP JSON-RPC channel with --mcp. Verifies a pinned portable release before use. Ships no upstream code. All credit to the Craft Anything authors.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -32,6 +32,7 @@
   "keywords": [
     "reverse-engineer-anything",
     "rea",
+    "mcp",
     "craft-anything",
     "installer",
     "launcher",

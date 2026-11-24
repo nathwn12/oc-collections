@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-24
+
+### Added
+
+- `--mcp` starts a standard-input/output JSON-RPC server for an MCP client such as OpenCode. It reuses the pinned install, hash gate and config rule, then runs the bundled command line with stderr reserved for progress and errors. The no-argument install-and-launch route is unchanged.
+
 ## [0.3.0] - 2026-11-24
 
 ### Changed

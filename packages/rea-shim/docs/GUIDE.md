@@ -6,7 +6,11 @@
 npx -y rea-shim@latest
 ```
 
-The command takes no argument. It verifies the pinned payload, installs it, prepares one first-run setting and starts the app window. `--version` prints the shim version and `--help` prints the short usage. No other option exists.
+With no argument, the command verifies the pinned payload, installs it, prepares one first-run setting and starts the app window. `--version` prints the shim version and `--help` prints the short usage. The only other option is `--mcp`, described below.
+
+## MCP entry
+
+`npx -y rea-shim@latest --mcp` is the entry an MCP client such as OpenCode can start. It verifies and stages the pinned payload with the same install root, hash gate and config rule as the no-argument path, then starts `craft-anything-cli.exe mcp` with standard input and output inherited. Standard error is passed through too. The child owns stdout: the shim writes progress and errors only to stderr, and forwards the child's exit code. If the first run has to download, that finishes before the channel starts.
 
 ## What is pinned
 

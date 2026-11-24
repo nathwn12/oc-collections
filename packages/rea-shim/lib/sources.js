@@ -24,6 +24,7 @@ const CRAFT_SOURCE = Object.freeze({
   sha256: 'bd370fbaa2b44dbc13581db5ffd2bf66924ed40e433c7902212aa17ca781de54',
   archiveRoot: 'craft-anything-0.6.1-windows-x64-portable',
   exeName: 'craft-anything.exe',
+  cliExeName: 'craft-anything-cli.exe',
   portableMarker: 'portable.txt',
   configEnv: 'CRAFT_ANYTHING_CONFIG_DIR',
   settingsVersion: 3,

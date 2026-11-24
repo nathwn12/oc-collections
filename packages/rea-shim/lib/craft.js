@@ -233,6 +233,47 @@ function launch(options = {}) {
   return child;
 }
 
+function launchCli(options = {}) {
+  if (!options.exe) fail('an executable path is required to start the CLI');
+  const root = options.root;
+  if (!root) fail('an install root is required to start the CLI');
+  const spawnFn = options.spawn || spawn;
+  const child = spawnFn(options.exe, ['mcp'], {
+    cwd: path.dirname(options.exe),
+    stdio: 'inherit',
+    env: settings.launchEnv(root, options.env || process.env),
+    windowsHide: true,
+    shell: false,
+    detached: false,
+  });
+  if (child && typeof child.on === 'function') {
+    child.on('error', (error) => {
+      support.logLine(`cannot start the Craft Anything CLI: ${error.message}`);
+      process.exitCode = 1;
+    });
+    child.on('exit', (code, signal) => {
+      process.exitCode = signal ? 1 : (code === null ? 1 : code);
+    });
+  }
+  return child;
+}
+
+async function runMcp(options = {}) {
+  const env = options.env || process.env;
+  const root = options.root || installRoot(env);
+  const log = options.log || support.logLine;
+  const admitted = sources.resolveSource(options.platform, options.arch);
+  const source = options.source || admitted;
+  const installed = await ensureInstalled({ ...options, root, env, log, source });
+  const config = settings.ensureFirstRunSettings(root, options.settings || {});
+  log(`config ${config.created ? 'created' : 'preserved'} at ${config.path}`);
+  const cli = path.join(installed.dir, source.cliExeName);
+  if (!support.isPlainFile(cli)) fail(`the pinned release has no ${source.cliExeName}`);
+  log(`starting ${source.cliExeName} mcp`);
+  const child = launchCli({ exe: cli, root, env, spawn: options.spawn });
+  return { ...installed, settings: config.path, settingsCreated: config.created, child };
+}
+
 async function run(options = {}) {
   const env = options.env || process.env;
   const root = options.root || installRoot(env);
@@ -258,5 +299,7 @@ module.exports = {
   ensureInstalled,
   installRoot,
   launch,
+  launchCli,
   run,
+  runMcp,
 };

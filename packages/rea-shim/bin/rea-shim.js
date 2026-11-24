@@ -10,7 +10,7 @@
 
 const fs = require('node:fs');
 
-const { run } = require('../lib/craft.js');
+const { run, runMcp } = require('../lib/craft.js');
 const PKG = require('../package.json');
 
 const NAME = 'rea-shim';
@@ -21,10 +21,13 @@ function failLine(message) {
 
 function usage(exitCode, stream) {
   const text = [
-    `usage: ${NAME} [--version | --help]`,
+    `usage: ${NAME} [--mcp | --version | --help]`,
     '',
     '  (no args)   verify the pinned Craft Anything payload, install it without',
     '              elevation and start its window',
+    '  --mcp       serve a stdio JSON-RPC channel through the bundled CLI, for',
+    '              an MCP client such as OpenCode:',
+    '              npx -y rea-shim@latest --mcp',
     '  --version   print the shim version',
     '  --help, -h  print this usage',
     '',
@@ -49,6 +52,17 @@ function main() {
       return;
     }
     fs.writeSync(1, `${PKG.version}\n`);
+    return;
+  }
+  if (args.includes('--mcp')) {
+    if (args.length !== 1) {
+      usage(2, process.stderr);
+      return;
+    }
+    runMcp().catch((error) => {
+      failLine(error && error.message ? error.message : String(error));
+      process.exitCode = 1;
+    });
     return;
   }
   if (args.length > 0) {

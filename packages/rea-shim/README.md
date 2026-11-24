@@ -1,6 +1,6 @@
 <h1 align="center">rea-shim</h1>
 
-<p align="center"><strong>One command installs the Craft Anything desktop app on Windows and opens it.</strong></p>
+<p align="center"><strong>One command installs Craft Anything and opens it. Add --mcp to serve a client.</strong></p>
 
 <p align="center">
   <a href="https://www.npmjs.com/package/rea-shim"><img src="https://img.shields.io/npm/v/rea-shim" alt="npm version"></a>
@@ -14,9 +14,13 @@
 npx -y rea-shim@latest
 ```
 
-That is the whole interface. No flag, path, configuration file or extra setup.
+No argument installs the app. One optional flag, `--mcp`, serves a client instead. No path, configuration file or extra setup.
 
 The first run downloads the official portable build, checks it against a pinned SHA-256 before extracting, puts it under your user profile, writes one first-run setting and starts the app. Later runs start the same install without downloading again and leave your settings as they are.
+
+## MCP client
+
+`npx -y rea-shim@latest --mcp` is the MCP entry for a client such as OpenCode. It uses the same verified install and settings rule, then runs the bundled command line as a JSON-RPC server over standard input and output. Progress and errors go to stderr only, so stdout carries protocol frames only. The child's exit code is passed through. A first run completes the download before the channel starts.
 
 If a download is interrupted or does not match the pin, nothing is installed. Run the same command again to retry.
 

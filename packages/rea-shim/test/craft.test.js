@@ -316,12 +316,12 @@ test('run installs, configures and launches once, then reuses with no fetch and 
   assert.deepEqual(fs.readFileSync(second.settings), before, 'existing settings must be byte-identical');
 });
 
-test('the shipped source carries no MCP, REA, Ghidra, JDK, agent or updater path', () => {
+test('the shipped source carries no legacy REA, Ghidra, JDK, agent or updater path', () => {
   const files = [
     'bin/rea-shim.js', 'lib/craft.js', 'lib/settings.js', 'lib/sources.js', 'lib/support.js',
   ].map((name) => path.join(PACKAGE_DIR, name));
   const banned = [
-    /--mcp\b/, /rea-agents/, /mcp-rea\.ps1/, /--bootstrap/, /--doctor/, /--print-config/,
+    /rea-agents/, /mcp-rea\.ps1/, /--bootstrap/, /--doctor/, /--print-config/,
     /Ghidra/i, /JDK/i, /@opencode\//, /plugins\.mcp/, /mcp\.servers/, /setInterval/, /cron/i,
     /deep_mode/i, /auto_mode\s*=\s*true/,
   ];
@@ -332,12 +332,12 @@ test('the shipped source carries no MCP, REA, Ghidra, JDK, agent or updater path
     }
   }
   const manifest = JSON.parse(fs.readFileSync(path.join(PACKAGE_DIR, 'package.json'), 'utf8'));
-  assert.equal(manifest.version, '0.3.0');
+  assert.equal(manifest.version, '0.3.1');
   for (const field of ['dependencies', 'optionalDependencies', 'peerDependencies', 'devDependencies']) {
     assert.ok(manifest[field] === undefined || Object.keys(manifest[field]).length === 0);
   }
   const haystack = JSON.stringify(manifest).toLowerCase();
-  for (const word of ['mcp', 'ghidra', 'jdk', 'stdio']) {
+  for (const word of ['ghidra', 'jdk', 'stdio']) {
     assert.equal(haystack.includes(word), false, `manifest still names ${word}`);
   }
 });
@@ -356,11 +356,14 @@ test('the package check script syntax-checks every shipped bin and lib file', ()
   }
 });
 
-test('the CLI takes no operational argument', () => {
+test('the CLI offers --mcp and rejects unknown arguments', () => {
   const version = runCli(['--version']);
   assert.equal(version.status, 0);
-  assert.match(version.stdout, /^0\.3\.0\r?\n$/);
-  const unknown = runCli(['--mcp']);
+  assert.match(version.stdout, /^0\.3\.1\r?\n$/);
+  const help = runCli(['--help']);
+  assert.equal(help.status, 0);
+  assert.match(help.stdout, /--mcp/);
+  const unknown = runCli(['--bogus']);
   assert.equal(unknown.status, 2);
   assert.match(unknown.stderr, /usage: rea-shim/);
 });
