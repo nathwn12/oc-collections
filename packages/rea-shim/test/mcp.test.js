@@ -137,5 +137,10 @@ test('mcp passes JSON-RPC bytes through both directions with a clean stdout and 
   assert.equal(result.status, 7, `stderr: ${result.stderr}`);
   assert.equal(result.stdout, expected, 'stdout must carry only the CLI response frames');
   assert.match(result.stderr, /fake-cli: stderr passthrough/, 'the child stderr must pass through');
+  assert.match(
+    result.stderr,
+    /rea-shim: starting craft-anything-cli\.exe mcp/,
+    'a real shim diagnostic must reach fd2',
+  );
   assert.doesNotMatch(result.stdout, /rea-shim|downloaded|verified|config/, 'no shim chatter on stdout');
 });

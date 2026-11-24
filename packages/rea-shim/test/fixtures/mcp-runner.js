@@ -29,7 +29,6 @@ craft.runMcp({
   env: { ...process.env },
   platform: 'win32',
   arch: 'x64',
-  log: () => {},
   spawn: (file, args, options) => spawn(process.execPath, [stub], options),
 }).catch((error) => {
   fs.writeSync(2, `runner: ${error.message}\n`);

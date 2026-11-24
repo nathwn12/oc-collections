@@ -2,11 +2,9 @@
 //
 // Manifest guard.
 //
-// The launcher resolves a JDK/Ghidra pair and relays a stdio channel using
-// Node builtins only: it ships no upstream code and needs no third-party
-// module. It also speaks MCP over stdio, so it never imports the client's own
-// `@opencode/*` packages. Both properties live in the package manifest, and
-// both are checked here rather than asserted in prose.
+// The launcher uses Node builtins only: it ships no upstream code and needs
+// no third-party module. It speaks MCP over stdio without importing a client
+// package. Both properties live in the package manifest and are checked here.
 //
 
 const assert = require('node:assert/strict');
