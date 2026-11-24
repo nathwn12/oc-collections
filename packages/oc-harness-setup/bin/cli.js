@@ -69,14 +69,23 @@ const DENY_OWNED = ['policies'];
 const UNION_KEYS = ['plugins'];
 const DISTRO_PLUGIN_IDS = ['oc-flight-deck'];
 
-// `plugins` element truth for OpenCode 2.2.0, measured against the installed
-// host (`opencode v2.2.0`, `opencode debug config`): an entry must be a
-// specifier STRING — an npm name, `name@version`, `github:owner/repo#ref
-// ::path:pkg`, or a local `.ts` path. The 1.x `[specifier, options]` tuple is
-// DROPPED by the 2.2.0 schema (so the plugin silently stops loading), and a
-// non-string is dropped too. A tuple is therefore reduced to its specifier —
-// 2.2.0 has nowhere to express the options — and every entry that cannot be
-// expressed is reported, never written into a config the host would ignore.
+// `plugins` element truth for the current V2 schema. The live config.json
+// defines plugins[] items as a string OR Config.Plugin.EntryEncoded — an
+// object `{ package: string, options?: object, additionalProperties: false }`
+// — and the live plugins doc shows that object form. Specifier strings cover
+// npm names, `name@version`, `github:owner/repo#ref::path:pkg`, local paths,
+// and `.ts`/`.js` files. The 1.x `[specifier, options]` tuple is DROPPED by the
+// V2 schema, so a tuple is reduced to its specifier and the reduction is
+// reported; under the existing migration contract its options cannot be
+// carried and are never silently erased. Anything unrepresentable is reported,
+// not written.
+function isV2PluginObject(entry) {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false;
+  if (typeof entry.package !== 'string' || !entry.package.trim()) return false;
+  if (entry.options !== undefined && (!entry.options || typeof entry.options !== 'object' || Array.isArray(entry.options))) return false;
+  return Object.keys(entry).every((k) => k === 'package' || k === 'options');
+}
+
 function pluginSpecifier(entry) {
   if (typeof entry === 'string') {
     const s = entry.trim();
@@ -85,6 +94,9 @@ function pluginSpecifier(entry) {
   if (Array.isArray(entry) && typeof entry[0] === 'string' && entry[0].trim()) {
     return entry[0].trim();
   }
+  // A V2 object is identified by its `package`, so a string and an object for
+  // the same plugin dedupe to one entry instead of comparing by JS form.
+  if (isV2PluginObject(entry)) return entry.package.trim();
   return null;
 }
 
@@ -97,21 +109,27 @@ function pluginIdOf(spec) {
   return at > 0 ? s.slice(0, at) : s;
 }
 
-// Reduce, dedupe (order preserved), and report 1.x plugin entries so a re-run
+// Reduce, dedupe (order preserved), and report plugin entries so a re-run
 // produces byte-identical output and nothing the host would drop survives.
+// Valid objects ride through unchanged: their `options` are the adopter's
+// data, not ours to flatten. Dedupe keys on the package identity, never JS
+// reference identity, so reparsing the same config yields the same array.
+// First occurrence wins — the adopter's own ordering is left as it was.
 function normalizePluginEntries(entries) {
   const out = [];
+  const seen = new Set();
   for (const entry of entries) {
     const spec = pluginSpecifier(entry);
     if (spec === null) {
-      log('merge', `dropped an unrepresentable plugins entry ${JSON.stringify(entry)} — OpenCode 2.2.0 accepts specifier strings only`);
+      log('merge', `dropped an unrepresentable plugins entry ${JSON.stringify(entry)} — OpenCode V2 accepts specifier strings and {package, options} objects only`);
       continue;
     }
     if (Array.isArray(entry)) {
-      log('merge', `normalized the 1.x plugin tuple ${JSON.stringify(entry)} → "${spec}" (OpenCode 2.2.0 drops tuple entries; per-plugin options cannot be carried)`);
+      log('merge', `normalized the 1.x plugin tuple ${JSON.stringify(entry)} → "${spec}" (OpenCode V2 drops tuple entries; per-plugin options cannot be carried)`);
     }
-    if (out.includes(spec)) continue;
-    out.push(spec);
+    if (seen.has(spec)) continue;
+    seen.add(spec);
+    out.push(isV2PluginObject(entry) ? entry : spec);
   }
   return out;
 }

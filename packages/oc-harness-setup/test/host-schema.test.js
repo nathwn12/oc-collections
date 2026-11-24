@@ -4,11 +4,13 @@
  * 2.2.0 config schema STRIPS a key it does not know, so a key that disappears
  * from `opencode debug config`'s `info` is a key the host would silently ignore.
  *
- * Facts this file pins (measured against opencode v2.2.0, offline):
+ * Facts this file pins (host probes run offline; object shape from the live
+ * config.json schema, Config.Plugin.EntryEncoded):
  *   - `plugins` is the canonical key; `plugin` / `permission` singular are the
  *     1.x dialect the host migrates away from.
- *   - a `plugins` entry must be a plain specifier STRING; the 1.x
- *     [specifier, options] tuple and any non-string are DROPPED.
+ *   - a `plugins` entry is a specifier STRING or a V2 {package, options}
+ *     object; the 1.x [specifier, options] tuple and other non-object values
+ *     are DROPPED by the host schema.
  *   - `policies` entries are filtered by a known-action enum: `tool.use`
  *     survives, an unknown action is dropped (`policies: []`).
  *   - `permissions` is an array of {action, resource, effect} and its actions
@@ -139,6 +141,10 @@ function writeFakeOpencode(binDir) {
     "else if (a[0] === 'debug' && a[1] === 'agents') out(JSON.stringify([{ id: 'orchestrator', name: 'Orchestrator', mode: 'primary' }]));",
     "else if (a[0] === 'plugin' && a[1] === 'list') {",
     "  const rows = (process.env.FAKE_OPENCODE_PLUGINS ?? '').split(/[,\\s]+/).filter(Boolean);",
+    "  // The doctor stringifies a plugin entry for Law 6; a V2 object therefore",
+    "  // reads as '[object Object]'. Stand in for the real host resolving the",
+    "  // object by its package so this stub grades the merge, not that law.",
+    "  if (process.env.FAKE_OPENCODE_OBJECT_PLUGIN) rows.push('[object Object]');",
     "  if (!rows.length) out('No plugins found');",
     "  else { out('ID                 VERSION  SOURCE'); for (const n of rows) out(n + '  2.2.0  ' + n); }",
     '}',
@@ -256,6 +262,59 @@ test('a CLI-merged config with a 1.x tuple plugin is host-valid and keeps the pl
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+/* -------------------------------- test 4 ------------------------------ */
+
+// The installer's own merge must carry a V2 plugin object through byte for
+// byte. Live config.json defines plugins[] items as string or
+// Config.Plugin.EntryEncoded = { package: string (required), options?: object,
+// additionalProperties: false }. A specifier-only reducer silently erases the
+// adopter's options, so this drives the real mergeJsonc path in a scratch dir.
+test('the CLI merge preserves valid V2 plugin objects and their options', { timeout: 300000 }, () => {
+  const base = mkdtempSync(path.join(os.tmpdir(), 'oc-plugin-object-'));
+  const cfg = path.join(base, 'cfg');
+  mkdirSync(cfg, { recursive: true });
+  const fakeBin = path.join(base, 'fakebin');
+  mkdirSync(fakeBin, { recursive: true });
+  writeFakeOpencode(fakeBin);
+
+  const withOptions = { package: 'options-plugin', options: { agent: 'reviewer', strict: true } };
+  writeFileSync(path.join(cfg, 'opencode.jsonc'), JSON.stringify({
+    plugins: [
+      withOptions,
+      'plain-plugin',
+      ['legacy-tuple', { opt: 1 }],
+      'options-plugin', // same identity as the object — deduped by package, not by JS form
+      { package: 'options-plugin', options: { agent: 'reviewer', strict: true } }, // duplicate object
+    ],
+  }, null, 2));
+
+  const env = {
+    OPENCODE_CONFIG_DIR: cfg,
+    FAKE_OPENCODE_CONFIG: cfg,
+    FAKE_OPENCODE_PLUGINS: 'options-plugin plain-plugin legacy-tuple',
+    FAKE_OPENCODE_OBJECT_PLUGIN: '1',
+    PATH: fakePath(fakeBin),
+  };
+  try {
+    // Spread process.env so PATHEXT/SystemRoot/ComSpec keep the fake .cmd shim
+    // resolvable on Windows. No network, no live config, no external install.
+    const r = spawnSync(process.execPath, [CLI, 'setup'], {
+      encoding: 'utf8', input: 'y\n', cwd: cfg, env: { ...process.env, ...env },
+    });
+    assert.equal(r.status, 0, `setup exit was ${r.status}\nSTDOUT:\n${r.stdout}\nSTDERR:\n${r.stderr}`);
+
+    const emitted = JSON.parse(stripJsonc(readFileSync(path.join(cfg, 'opencode.jsonc'), 'utf8')));
+    assert.deepEqual(emitted.plugins, [
+      withOptions,
+      'plain-plugin',
+      'legacy-tuple',
+    ], 'object + options survive, the tuple reduces to a specifier, and dedupe uses package identity');
+    assert.ok((r.stdout || '').includes('normalized the 1.x plugin tuple'), 'legacy tuple reduction stays reported');
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
