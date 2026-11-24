@@ -136,7 +136,7 @@ test('--dry-run prints the manifest with orchestrator, state/, 18 and creates no
   const out = r.stdout || '';
   assert.ok(out.includes('orchestrator'), 'manifest mentions orchestrator');
   assert.ok(out.includes('state/'), 'manifest mentions state/');
-  assert.ok(out.includes('18 laws'), 'manifest names the 18-law doctor gate');
+  assert.ok(out.includes('19 laws'), 'manifest names the 19-law doctor gate');
   assert.ok(!existsSync(cfgDir), 'dry-run created no files');
 });
 

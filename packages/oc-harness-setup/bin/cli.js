@@ -985,7 +985,7 @@ function doctorPlan() {
 function runDoctor(configDir) {
   const script = path.join(configDir, 'scripts', 'harness-doctor.mjs');
   if (!existsSync(script)) {
-    console.warn(`[doctor] WARNING: ${script} not found — harness-doctor did NOT run, so the 18 laws are UNVERIFIED.`);
+    console.warn(`[doctor] WARNING: ${script} not found — harness-doctor did NOT run, so the 19 laws are UNVERIFIED.`);
     return { code: 0, skipped: true };
   }
   log('doctor', `running ${script}`);
@@ -1016,7 +1016,7 @@ function printManifest(configDir, files, backupPath, doctor, prior = null) {
   console.log('                            default_agent: "orchestrator", references registry)');
   console.log('                            + your keys kept, your value wins on a collision · permissions: harness allows, yours, harness denies last');
   console.log('  state-seed/ -> state/   : shipped seed maps to live state/ (an edited state file is kept, the seeded copy lands as <name>.new)');
-  console.log(`  doctor plan            : harness-doctor, 18 laws — ${doctor}`);
+  console.log(`  doctor plan            : harness-doctor, 19 laws — ${doctor}`);
   console.log('----------------------------------------------------------------------------');
 }
 
@@ -1253,7 +1253,7 @@ function uninstall(configDir, opts = {}) {
     console.log(`  ${preserved} post-install edit-copy(ies) written beside the restored file(s) as <name>.replaced-<ts> (listed above).`);
   }
   if (manifest.doctorSkipped) {
-    console.log('  note: this install skipped the doctor — the 18 laws were never verified.');
+    console.log('  note: this install skipped the doctor — the 19 laws were never verified.');
   }
 }
 
@@ -1480,6 +1480,20 @@ function writeStageState(ctx, registry) {
   writeFileSync(path.join(dir, 'setup-state.yaml'), `${lines.join('\n')}\n`);
 }
 
+// Pure derivation of everything the write stage needs from the destination.
+// The plan stage calls it for its own display and consent gate; a --from start
+// that skips plan calls the SAME function silently, so no stage can leave the
+// write inputs null. No printing, no prompting, no mutation here.
+function derivePlanInputs(configDir) {
+  const files = collectIncoming(configDir);
+  const prior = readManifest(configDir); // read-only
+  const newBackupPath = nextBackupPath(configDir);
+  // R4(d): a re-run must never re-point the original backup — that snapshot
+  // has already been mutated, so restoring from it would be a lie.
+  const backupPath = prior && prior.backupPath ? prior.backupPath : newBackupPath;
+  return { files, prior, newBackupPath, backupPath };
+}
+
 // Each body is the original pipeline call sequence, split at the stage seams.
 // A returned number is a final exit code; undefined means "continue".
 const STAGE_BODIES = {
@@ -1492,20 +1506,15 @@ const STAGE_BODIES = {
     warnConfigTargets(ctx.configDir);
   },
   plan: async (ctx) => {
-    ctx.files = collectIncoming(ctx.configDir);
+    Object.assign(ctx, derivePlanInputs(ctx.configDir));
     const hits = lintPackagedSource(ctx.files);
     if (hits.length) {
       for (const h of hits) console.error(`[lint] author-leak marker "${h.pattern}" found in ${h.file}`);
       bail(`author-leak markers found in the packaged source (${hits.length} file(s) listed above) — this package build is corrupted; NOTHING was written. Reinstall from npm.`);
     }
-    ctx.prior = readManifest(ctx.configDir); // read-only
     if (!ctx.prior) {
       console.warn('[warn] no prior install manifest — old 0.3.x files are not auto-retired; review them manually before relying on a clean tree.');
     }
-    ctx.newBackupPath = nextBackupPath(ctx.configDir);
-    // R4(d): a re-run must never re-point the original backup — that snapshot
-    // has already been mutated, so restoring from it would be a lie.
-    ctx.backupPath = ctx.prior && ctx.prior.backupPath ? ctx.prior.backupPath : ctx.newBackupPath;
     printManifest(ctx.configDir, ctx.files, ctx.backupPath, doctorPlan(), ctx.prior);
     if (!(await confirmProceed(ctx.rl))) {
       console.log('[gate] aborted — nothing was modified.');
@@ -1530,7 +1539,9 @@ const STAGE_BODIES = {
       version: pkgVersion(),
       // The host whose dialect the merged config was written for: recorded so
       // an install's config shapes are auditable against the CLI that read it.
-      hostVersion: ctx.host.raw,
+      // A --from start can skip preflight; reuse the recorded host when the
+      // prior manifest has one, rather than dereferencing a null host.
+      hostVersion: ctx.host?.raw ?? ctx.prior?.hostVersion ?? 'unknown',
       created: new Date().toISOString(),
       configDir: ctx.configDir,
       backupPath: ctx.backupPath,
@@ -1542,7 +1553,7 @@ const STAGE_BODIES = {
     ctx.staged = stageFiles(ctx.files, manifest, ctx.prior);
     carryForwardJournal(manifest, ctx.prior);
     mergeJsonc(ctx.configDir, backup, manifest, retiredSkills, ctx.prior, ctx.collisionPolicy);
-    // R6: record the skip in the journal so "all 18 laws unrun" is never silent.
+    // R6: record the skip in the journal so "all 19 laws unrun" is never silent.
     manifest.doctorSkipped = !existsSync(path.join(ctx.configDir, 'scripts', 'harness-doctor.mjs'));
     writeManifest(ctx.configDir, manifest);
     log('manifest', `journal written: ${path.join(ctx.configDir, MANIFEST_FILE)}`);
@@ -1566,7 +1577,7 @@ const STAGE_BODIES = {
     if (ctx.manifest) {
       console.log(`  backup   : ${ctx.manifest.backupPath}${ctx.manifest.priorBackup ? `\n  snapshot : ${ctx.manifest.priorBackup} (chained — backup() pointer above is the original)` : ''}`);
       if (ctx.manifest.doctorSkipped) {
-        console.log('  doctor   : ⚠ SKIPPED — the 18 laws were NOT verified (journaled as doctorSkipped; re-run setup to verify)');
+        console.log('  doctor   : ⚠ SKIPPED — the 19 laws were NOT verified (journaled as doctorSkipped; re-run setup to verify)');
       }
     }
     console.log('  undo     : npx oc-harness-setup setup --uninstall');
@@ -1607,8 +1618,13 @@ async function setup(opts) {
     executed: new Map(),
   };
   try {
-    // Later stages still need a destination when resolve is skipped by --from.
-    if (opts.from) ctx.configDir = findConfigDir();
+    // A --from start skips preflight/resolve. Restore the destination, and
+    // derive the plan's read-only inputs here whenever plan will not run —
+    // the same function the plan stage uses, with no print and no prompt.
+    if (opts.from) {
+      ctx.configDir = findConfigDir();
+      if (fromIdx > registry.ids.indexOf('plan')) Object.assign(ctx, derivePlanInputs(ctx.configDir));
+    }
     let code;
     for (let i = fromIdx; i <= toIdx; i++) {
       const stage = registry.stages[i];

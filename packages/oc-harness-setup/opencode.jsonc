@@ -4,7 +4,7 @@
   // and the doctor grades 18 derived laws. Stable runtime policy lives here;
   // behavior lives beside it in agents/, commands/, skills/, and reference/
   // for smaller, hot-reloadable artifacts. Skill loading is fail-closed to
-  // the 6 local IDs.
+  // the 7 local IDs.
   //
   // This is the oc-harness-setup base config; the installer preserves your
   // model/providers/mcp/plugins.

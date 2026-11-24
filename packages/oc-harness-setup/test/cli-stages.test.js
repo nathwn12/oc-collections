@@ -116,6 +116,39 @@ test('--from verify skips the writes', { skip: WIN_SKIP }, () => {
   }
 });
 
+/* -------------------------- --from derivation -------------------------- */
+
+// A --from start skips plan, so its read-only inputs must come from the same
+// derivation the plan stage uses. This was a null-deref crash in makeBackup.
+test('--from write derives its inputs and completes', { skip: WIN_SKIP }, () => {
+  const { base, cfg, env } = stageFixture('oc-stages-from-write-');
+  try {
+    writeFileSync(path.join(cfg, 'opencode.jsonc'), JSON.stringify({ model: 'adopter/model-1' }, null, 2));
+    const r = runCli(['setup', '--from', 'write'], { env, input: 'y\n', cwd: base });
+    assert.equal(r.status, 0, `from write exit was ${r.status}\nSTDOUT:\n${r.stdout}\nSTDERR:\n${r.stderr}`);
+    assert.ok(existsSync(path.join(cfg, 'oc-harness-setup.manifest.json')), 'manifest written');
+    const merged = parseJsoncForTest(readFileSync(path.join(cfg, 'opencode.jsonc'), 'utf8'));
+    assert.equal(merged.model, 'adopter/model-1', 'adopter config kept');
+    assert.equal(merged.default_agent, 'orchestrator', 'the distro merge landed');
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+// The last stage id must also work: no writes, no prompt, exit 0.
+test('--from report still exits 0', { skip: WIN_SKIP }, () => {
+  const { base, cfg, env } = stageFixture('oc-stages-from-report-');
+  try {
+    writeFileSync(path.join(cfg, 'opencode.jsonc'), JSON.stringify({ model: 'adopter/model-1' }, null, 2));
+    const r = runCli(['setup', '--from', 'report'], { env, input: '', cwd: base });
+    assert.equal(r.status, 0, `from report exit was ${r.status}\nSTDOUT:\n${r.stdout}\nSTDERR:\n${r.stderr}`);
+    assert.match(String(r.stdout || ''), /-------------------------------- summary/, 'the report stage ran');
+    assert.ok(!existsSync(path.join(cfg, 'oc-harness-setup.manifest.json')), 'no writes');
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 /* -------------------------------- test 4 ------------------------------ */
 
 test('plain setup still runs all six stages and exits as before', { skip: WIN_SKIP }, () => {
