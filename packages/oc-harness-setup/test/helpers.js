@@ -294,3 +294,25 @@ export function writeFsFaultInjector(base, { op, target }) {
     env: { OC_FAULT_PATH: target, OC_FAULT_OP: op },
   };
 }
+
+// Reader for the installer's tiny state/setup-state.yaml dialect. Deliberately
+// line-based: the product writes this shape with stdlib only, so the test reads
+// the same shape without pulling in a YAML dependency.
+export function readStageState(cfg) {
+  const text = readFileSync(path.join(cfg, 'state', 'setup-state.yaml'), 'utf8');
+  const stages = [];
+  let updated = null;
+  let collisionPolicy = null;
+  let installPlaybooks = null;
+  let cur = null;
+  for (const raw of text.split(/\r?\n/)) {
+    const t = raw.trim();
+    if (t.startsWith('updated:')) updated = t.slice(8).trim();
+    else if (t.startsWith('collision_policy:')) collisionPolicy = t.slice(17).trim();
+    else if (t.startsWith('install_playbooks:')) installPlaybooks = t.slice(18).trim();
+    else if (/^-\s+id:/.test(t)) { cur = { id: t.replace(/^-\s+id:\s*/, '').trim() }; stages.push(cur); }
+    else if (t.startsWith('status:') && cur) cur.status = t.slice(7).trim();
+    else if (t.startsWith('at:') && cur) cur.at = t.slice(3).trim();
+  }
+  return { updated, collisionPolicy, installPlaybooks, stages };
+}

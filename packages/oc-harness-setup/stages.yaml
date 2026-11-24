@@ -1,0 +1,42 @@
+# Shipped stage registry. Data only: code reads stage order and ids from here.
+version: 1
+stages:
+  - id: preflight
+    title: Preflight
+    steps:
+      - assertWindows
+      - preflight
+  - id: resolve
+    title: Resolve
+    steps:
+      - findConfigDir
+      - warnConfigTargets
+  - id: plan
+    title: Plan
+    steps:
+      - collectIncoming
+      - lintPackagedSource
+      - readManifest
+      - backupSelection
+      - printManifest
+      - confirmProceed
+      - validateJsoncInputs
+  - id: write
+    title: Write
+    steps:
+      - sweepTmpLitter
+      - makeBackup
+      - manifest
+      - retireStale
+      - stageFiles
+      - carryForwardJournal
+      - mergeJsonc
+      - writeManifest
+  - id: verify
+    title: Verify
+    checks:
+      - runDoctor
+  - id: report
+    title: Report
+    steps:
+      - summary

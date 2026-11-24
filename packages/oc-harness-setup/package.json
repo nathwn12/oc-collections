@@ -19,6 +19,7 @@
     "CHANGELOG.md",
     "gitignore.template",
     "opencode.jsonc",
+    "stages.yaml",
     "README.md",
     "LICENSE",
     "assets",

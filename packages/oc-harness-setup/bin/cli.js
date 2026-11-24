@@ -221,6 +221,10 @@ usage:
   oc-harness-setup --dry-run            print the manifest only; touch nothing
   oc-harness-setup --ci                 print-only, refuse to mutate, exit 0
   oc-harness-setup setup --uninstall    remove exactly the manifest-listed files
+  oc-harness-setup --list-stages        print stage ids and titles, touch nothing
+  oc-harness-setup setup --stage <id>   run through that stage, then stop
+  oc-harness-setup setup --from <id>    start at that stage, run to the end
+  oc-harness-setup setup --ask          ask the two default-yes policy questions
   oc-harness-setup --version            print the package version`);
 }
 
@@ -756,15 +760,17 @@ const isPlainObject = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 // adopter may adopt, never a replacement for their own. Plain objects merge, so
 // a subkey the adopter never set still arrives; every collided leaf keeps the
 // adopter's value and is named in `collisions` so the report can cite it.
-function adoptInstallOwned(distro, user, key, pathParts, collisions) {
+function adoptInstallOwned(distro, user, key, pathParts, collisions, policy = 'keep') {
   const d = distro[key];
   const u = user[key];
   if (isPlainObject(d) && isPlainObject(u)) {
-    for (const sub of Object.keys(u)) adoptInstallOwned(d, u, sub, [...pathParts, sub], collisions);
+    for (const sub of Object.keys(u)) adoptInstallOwned(d, u, sub, [...pathParts, sub], collisions, policy);
     return;
   }
   if (JSON.stringify(d) !== JSON.stringify(u)) collisions.push(pathParts.join('.'));
-  distro[key] = u;
+  // 'keep' is today's contract: the adopter's value wins on a collision.
+  // 'replace' is the --ask answer that declines it; the shipped default stays.
+  if (policy === 'keep') distro[key] = u;
 }
 
 // Deny-owning blocks are additive without being softenable: the adopter's own
@@ -777,7 +783,7 @@ function unionDenyLast(distro, user) {
   return [...u.filter((r) => !d.some((x) => same(x, r))), ...d];
 }
 
-function mergeJsonc(configDir, backupPath, manifest, retiredSkills = new Set(), prior = null) {
+function mergeJsonc(configDir, backupPath, manifest, retiredSkills = new Set(), prior = null, collisionPolicy = 'keep') {
   const distroPath = path.join(PKG_ROOT, 'opencode.jsonc');
   if (!existsSync(distroPath)) {
     log('merge', 'note: this package ships no opencode.jsonc — no merge to do');
@@ -823,7 +829,7 @@ function mergeJsonc(configDir, backupPath, manifest, retiredSkills = new Set(), 
         continue;
       }
       if (INSTALL_OWNED.includes(k)) {
-        adoptInstallOwned(merged, user, k, [k], ownedCollisions);
+        adoptInstallOwned(merged, user, k, [k], ownedCollisions, collisionPolicy);
         preserved.push(k);
         continue;
       }
@@ -881,7 +887,9 @@ function mergeJsonc(configDir, backupPath, manifest, retiredSkills = new Set(), 
           ]);
         }
         if (k === 'plugins' && priorIsOlder && Array.isArray(merged[k])) {
-          const isDistroPlugin = (e) => DISTRO_PLUGIN_IDS.includes(pluginIdOf(e));
+          // A V2 object's identity is its `package`; route every entry through
+          // pluginSpecifier first so an object for a retired id is dropped too.
+          const isDistroPlugin = (e) => DISTRO_PLUGIN_IDS.includes(pluginIdOf(pluginSpecifier(e) ?? e));
           for (const d of merged[k].filter(isDistroPlugin)) {
             log('merge', `dropped the retired distro plugin ${pluginIdOf(d)} (this version ships no plugin; your own plugin entries are kept)`);
           }
@@ -1008,17 +1016,37 @@ function printManifest(configDir, files, backupPath, doctor, prior = null) {
   console.log('----------------------------------------------------------------------------');
 }
 
-async function confirmProceed() {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
+// The consent gate keeps its exact prompt and answer rule. The optional rl is
+// shared with --ask so three questions read one stdin stream in order; without
+// it the gate still owns a temporary interface, as before.
+async function confirmProceed(rl) {
+  if (!rl) {
+    const own = createInterface({ input: process.stdin, output: process.stdout });
+    try {
+      return await confirmProceed(own);
+    } finally {
+      own.close();
+    }
+  }
   let answer = '';
   try {
     answer = (await rl.question('Type y to continue (anything else aborts; nothing is touched): ')).trim().toLowerCase();
   } catch {
     answer = ''; // stdin closed (EOF) — treat as abort
-  } finally {
-    rl.close();
   }
   return answer === 'y' || answer === 'yes';
+}
+
+// --ask adds exactly two yes/no questions. Bare Enter is yes, so the default
+// path is byte-for-byte today's result.
+async function askYesNo(rl, text) {
+  let answer = '';
+  try {
+    answer = (await rl.question(`${text} [Y/n] `)).trim().toLowerCase();
+  } catch {
+    answer = '';
+  }
+  return answer !== 'n' && answer !== 'no';
 }
 
 /* -------------------------------- uninstall -------------------------------- */
@@ -1371,12 +1399,181 @@ function validateJsoncInputs(configDir, backupPath) {
   }
 }
 
+/* ---------------------------- stage registry ---------------------------- */
+
+const STAGES_FILE = 'stages.yaml';
+
+function yamlScalar(s) {
+  const t = String(s).trim();
+  if ((t.startsWith('"') && t.endsWith('"')) || (t.startsWith("'") && t.endsWith("'"))) return t.slice(1, -1);
+  return t;
+}
+
+// Constrained reader for the shipped data file. Anything outside the small
+// shape is a hard error — a typo in the registry must not silently reorder the
+// install. Code holds one copy of the order: this file.
+function loadStages() {
+  const p = path.join(PKG_ROOT, STAGES_FILE);
+  if (!existsSync(p)) bail(`${STAGES_FILE} is missing from this package build — refusing to guess the stage order`);
+  const stages = [];
+  let version = null;
+  let cur = null;
+  let listKey = null;
+  for (const raw of readFileSync(p, 'utf8').split(/\r?\n/)) {
+    const t = raw.replace(/(^|\s)#.*$/, '').trim();
+    if (!t) continue;
+    let m = t.match(/^version:\s*(.+)$/);
+    if (m) { version = yamlScalar(m[1]); continue; }
+    if (t === 'stages:') continue;
+    m = t.match(/^-\s+id:\s*(.+)$/);
+    if (m) { cur = { id: yamlScalar(m[1]), title: '', steps: [], checks: [] }; stages.push(cur); listKey = null; continue; }
+    m = t.match(/^title:\s*(.+)$/);
+    if (m && cur) { cur.title = yamlScalar(m[1]); listKey = null; continue; }
+    m = t.match(/^(steps|checks):\s*$/);
+    if (m && cur) { listKey = m[1]; continue; }
+    m = t.match(/^-\s+(.+)$/);
+    if (m && cur && listKey) { cur[listKey].push(yamlScalar(m[1])); continue; }
+    bail(`${STAGES_FILE}: unexpected line: ${raw}`);
+  }
+  if (!version || !stages.length) bail(`${STAGES_FILE}: missing version or stages`);
+  const ids = stages.map((s) => s.id);
+  if (new Set(ids).size !== ids.length) bail(`${STAGES_FILE}: duplicate stage id`);
+  for (const s of stages) {
+    if (!s.title) bail(`${STAGES_FILE}: stage ${s.id} has no title`);
+    if (!s.steps.length && !s.checks.length) bail(`${STAGES_FILE}: stage ${s.id} owns no steps`);
+  }
+  return { version, stages, ids };
+}
+
+function stageIndexOf(ids, id, flag) {
+  const i = ids.indexOf(id);
+  if (i < 0) {
+    console.error(`[error] unknown stage id "${id}" for ${flag}; valid ids: ${ids.join(', ')}`);
+    process.exitCode = 2;
+  }
+  return i;
+}
+
+// Progress only. It never gates work: a plain setup runs every stage even when
+// an earlier run left a state file behind.
+function writeStageState(ctx, registry) {
+  const dir = path.join(ctx.configDir, 'state');
+  mkdirSync(dir, { recursive: true });
+  const now = new Date().toISOString();
+  const lines = [
+    'version: 1',
+    `updated: ${now}`,
+    `collision_policy: ${ctx.collisionPolicy}`,
+    `install_playbooks: ${ctx.installPlaybooks ? 'true' : 'false'}`,
+    'stages:',
+  ];
+  for (const s of registry.stages) {
+    const ran = ctx.executed.get(s.id);
+    lines.push(`  - id: ${s.id}`);
+    lines.push(`    status: ${ran ? 'done' : 'skipped'}`);
+    lines.push(`    at: ${ran ? ran.at : now}`);
+  }
+  writeFileSync(path.join(dir, 'setup-state.yaml'), `${lines.join('\n')}\n`);
+}
+
+// Each body is the original pipeline call sequence, split at the stage seams.
+// A returned number is a final exit code; undefined means "continue".
+const STAGE_BODIES = {
+  preflight: (ctx) => {
+    assertWindows();
+    ctx.host = preflight();
+  },
+  resolve: (ctx) => {
+    ctx.configDir = findConfigDir();
+    warnConfigTargets(ctx.configDir);
+  },
+  plan: async (ctx) => {
+    ctx.files = collectIncoming(ctx.configDir);
+    const hits = lintPackagedSource(ctx.files);
+    if (hits.length) {
+      for (const h of hits) console.error(`[lint] author-leak marker "${h.pattern}" found in ${h.file}`);
+      bail(`author-leak markers found in the packaged source (${hits.length} file(s) listed above) — this package build is corrupted; NOTHING was written. Reinstall from npm.`);
+    }
+    ctx.prior = readManifest(ctx.configDir); // read-only
+    if (!ctx.prior) {
+      console.warn('[warn] no prior install manifest — old 0.3.x files are not auto-retired; review them manually before relying on a clean tree.');
+    }
+    ctx.newBackupPath = nextBackupPath(ctx.configDir);
+    // R4(d): a re-run must never re-point the original backup — that snapshot
+    // has already been mutated, so restoring from it would be a lie.
+    ctx.backupPath = ctx.prior && ctx.prior.backupPath ? ctx.prior.backupPath : ctx.newBackupPath;
+    printManifest(ctx.configDir, ctx.files, ctx.backupPath, doctorPlan(), ctx.prior);
+    if (!(await confirmProceed(ctx.rl))) {
+      console.log('[gate] aborted — nothing was modified.');
+      return 0;
+    }
+    if (ctx.opts.ask) {
+      ctx.collisionPolicy = (await askYesNo(ctx.rl, 'Keep your values for install-owned keys on collision?')) ? 'keep' : 'replace';
+      ctx.installPlaybooks = await askYesNo(ctx.rl, 'Install the playbook and template directories?');
+    }
+    validateJsoncInputs(ctx.configDir, ctx.backupPath);
+    return undefined;
+  },
+  write: (ctx) => {
+    sweepTmpLitter(ctx.configDir);
+    const backup = makeBackup(ctx.configDir, ctx.newBackupPath);
+    const manifest = {
+      package: PKG_NAME,
+      version: pkgVersion(),
+      // The host whose dialect the merged config was written for: recorded so
+      // an install's config shapes are auditable against the CLI that read it.
+      hostVersion: ctx.host.raw,
+      created: new Date().toISOString(),
+      configDir: ctx.configDir,
+      backupPath: ctx.backupPath,
+      ...(ctx.prior && ctx.prior.backupPath ? { priorBackup: backup } : {}),
+      files: [],
+    };
+    const retiredSkills = retireStale(ctx.configDir, ctx.prior, ctx.files, manifest);
+    if (retiredSkills.size) log('retire', `${retiredSkills.size} stale skill id(s) retired — their allowlist entries are pruned from the merge (${[...retiredSkills].join(', ')})`);
+    ctx.staged = stageFiles(ctx.files, manifest, ctx.prior);
+    carryForwardJournal(manifest, ctx.prior);
+    mergeJsonc(ctx.configDir, backup, manifest, retiredSkills, ctx.prior, ctx.collisionPolicy);
+    // R6: record the skip in the journal so "all 18 laws unrun" is never silent.
+    manifest.doctorSkipped = !existsSync(path.join(ctx.configDir, 'scripts', 'harness-doctor.mjs'));
+    writeManifest(ctx.configDir, manifest);
+    log('manifest', `journal written: ${path.join(ctx.configDir, MANIFEST_FILE)}`);
+    ctx.manifest = manifest;
+    return undefined;
+  },
+  verify: (ctx) => {
+    ctx.doctorResult = runDoctor(ctx.configDir);
+    return ctx.doctorResult.code !== 0 ? 1 : undefined;
+  },
+  report: (ctx) => {
+    console.log();
+    console.log('-------------------------------- summary ---------------------------------');
+    console.log('  installed: agents/, commands/, skills/, reference/, scripts/, .docs/, state/ (from state-seed/), AGENTS.md, GLOSSARY.md + merged opencode.jsonc');
+    if (ctx.staged) {
+      console.log(`  policy   : ${ctx.staged.updated} updated in place (unmodified package files) · ${ctx.staged.kept} kept + .new written (your files) · ${ctx.staged.added} added · ${ctx.staged.skipped} skipped (identical)`);
+      if (ctx.staged.kept > 0) {
+        console.log('  adopt    : the new version of each kept file sits beside it as <name>.new — diff it and move it over when you want it');
+      }
+    }
+    if (ctx.manifest) {
+      console.log(`  backup   : ${ctx.manifest.backupPath}${ctx.manifest.priorBackup ? `\n  snapshot : ${ctx.manifest.priorBackup} (chained — backup() pointer above is the original)` : ''}`);
+      if (ctx.manifest.doctorSkipped) {
+        console.log('  doctor   : ⚠ SKIPPED — the 18 laws were NOT verified (journaled as doctorSkipped; re-run setup to verify)');
+      }
+    }
+    console.log('  undo     : npx oc-harness-setup setup --uninstall');
+    console.log('  restart  : restart your OpenCode session so the new agents/commands/skills load.');
+    console.log('----------------------------------------------------------------------------');
+    return 0;
+  },
+};
+
 async function setup(opts) {
-  assertWindows();
-  // F2: --ci / --dry-run promise print-only exit 0 with no mutation — honour
-  // them BEFORE preflight(), which bails without the opencode binary (exactly
-  // the headless case --ci exists for). Read-only manifest path only.
+  const registry = loadStages();
+  // F2: the print-only promise is preserved exactly, including its position
+  // after assertWindows and before preflight().
   if (opts.ci || opts.dryRun) {
+    assertWindows();
     const configDir = findConfigDir();
     const files = collectIncoming(configDir);
     const prior = readManifest(configDir); // read-only
@@ -1390,97 +1587,50 @@ async function setup(opts) {
     console.log('[ci] refusing to mutate — print-only. Run setup interactively to install.');
     return 0;
   }
-  const host = preflight();
-  const configDir = findConfigDir();
-  warnConfigTargets(configDir);
-  const files = collectIncoming(configDir);
+  const fromIdx = opts.from ? stageIndexOf(registry.ids, opts.from, '--from') : 0;
+  const toIdx = opts.stage ? stageIndexOf(registry.ids, opts.stage, '--stage') : registry.stages.length - 1;
+  if (fromIdx < 0 || toIdx < 0) return 2;
 
-  // Author-leak lint runs PRE-write, over the PACKAGE source only. A hit aborts
-  // before the consent gate, so nothing lands and the adopter's config (which
-  // is never linted) can never trip it.
-  const hits = lintPackagedSource(files);
-  if (hits.length) {
-    for (const h of hits) console.error(`[lint] author-leak marker "${h.pattern}" found in ${h.file}`);
-    bail(
-      `author-leak markers found in the packaged source (${hits.length} file(s) listed above) — this package build is corrupted; NOTHING was written. Reinstall from npm.`
-    );
-  }
-
-  const prior = readManifest(configDir); // read-only
-  if (!prior) {
-    console.warn('[warn] no prior install manifest — old 0.3.x files are not auto-retired; review them manually before relying on a clean tree.');
-  }
-  const newBackupPath = nextBackupPath(configDir);
-  // R4(d): a re-run must never re-point the original backup — that snapshot has
-  // already been mutated by the previous install, so restoring from it would be
-  // a lie. Keep the original pointer; chain the new snapshot as priorBackup.
-  const backupPath = prior && prior.backupPath ? prior.backupPath : newBackupPath;
-  printManifest(configDir, files, backupPath, doctorPlan(), prior);
-
-  // (F2: --dry-run / --ci already returned print-only before preflight.)
-  if (!(await confirmProceed())) {
-    console.log('[gate] aborted — nothing was modified.');
-    return 0;
-  }
-
-  /* ---------------- mutations begin (all journaled) ---------------- */
-  // F1: every parse validated BEFORE the first write — a broken config bails
-  // here, before staging overwrites live files.
-  validateJsoncInputs(configDir, backupPath);
-  // F6: sweep unambiguous installer crash litter before the first write.
-  sweepTmpLitter(configDir);
-  const backup = makeBackup(configDir, newBackupPath);
-  const manifest = {
-    package: PKG_NAME,
-    version: pkgVersion(),
-    // The host whose dialect the merged config was written for: recorded so an
-    // install's config shapes are auditable against the CLI that will read them.
-    hostVersion: host.raw,
-    created: new Date().toISOString(),
-    configDir,
-    backupPath: backupPath,
-    ...(prior && prior.backupPath ? { priorBackup: backup } : {}),
-    files: [],
+  const ctx = {
+    opts, host: null, configDir: null, files: null, prior: null,
+    newBackupPath: null, backupPath: null, staged: null, manifest: null,
+    doctorResult: null, collisionPolicy: 'keep', installPlaybooks: true,
+    rl: createInterface({ input: process.stdin, output: process.stdout }),
+    executed: new Map(),
   };
-
-  const retiredSkills = retireStale(configDir, prior, files, manifest);
-  if (retiredSkills.size) log('retire', `${retiredSkills.size} stale skill id(s) retired — their allowlist entries are pruned from the merge (${[...retiredSkills].join(', ')})`);
-  const staged = stageFiles(files, manifest, prior);
-  carryForwardJournal(manifest, prior);
-  // An adopter's own plugins[] entries survive the merge via UNION_KEYS; the
-  // distro ships no plugins of its own, so there is nothing to register here.
-  mergeJsonc(configDir, backup, manifest, retiredSkills, prior);
-
-  // R6: record the skip in the journal so "all 18 laws unrun" is never silent.
-  manifest.doctorSkipped = !existsSync(path.join(configDir, 'scripts', 'harness-doctor.mjs'));
-  writeManifest(configDir, manifest);
-  log('manifest', `journal written: ${path.join(configDir, MANIFEST_FILE)}`);
-
-  const doctorResult = runDoctor(configDir);
-  if (doctorResult.code !== 0) return 1;
-
-  console.log();
-  console.log('-------------------------------- summary ---------------------------------');
-  console.log('  installed: agents/, commands/, skills/, reference/, scripts/, .docs/, state/ (from state-seed/), AGENTS.md, GLOSSARY.md + merged opencode.jsonc');
-  console.log(`  policy   : ${staged.updated} updated in place (unmodified package files) · ${staged.kept} kept + .new written (your files) · ${staged.added} added · ${staged.skipped} skipped (identical)`);
-  if (staged.kept > 0) {
-    console.log('  adopt    : the new version of each kept file sits beside it as <name>.new — diff it and move it over when you want it');
+  try {
+    // Later stages still need a destination when resolve is skipped by --from.
+    if (opts.from) ctx.configDir = findConfigDir();
+    let code;
+    for (let i = fromIdx; i <= toIdx; i++) {
+      const stage = registry.stages[i];
+      const body = STAGE_BODIES[stage.id];
+      if (!body) bail(`${STAGES_FILE}: no implementation for stage "${stage.id}"`);
+      const result = await body(ctx);
+      ctx.executed.set(stage.id, { at: new Date().toISOString() });
+      if (result !== undefined) {
+        code = result;
+        break;
+      }
+    }
+    // No state before the write stage: --stage plan must leave the tree alone.
+    // An explicit --from run records its skipped prefix as progress.
+    if (ctx.configDir && (ctx.executed.has('write') || opts.from)) writeStageState(ctx, registry);
+    return code === undefined ? 0 : code;
+  } finally {
+    ctx.rl.close();
   }
-  console.log(`  backup   : ${manifest.backupPath}${manifest.priorBackup ? `\n  snapshot : ${manifest.priorBackup} (chained — backup() pointer above is the original)` : ''}`);
-  if (manifest.doctorSkipped) {
-    console.log('  doctor   : ⚠ SKIPPED — the 18 laws were NOT verified (journaled as doctorSkipped; re-run setup to verify)');
-  }
-  console.log('  undo     : npx oc-harness-setup setup --uninstall');
-  console.log('  restart  : restart your OpenCode session so the new agents/commands/skills load.');
-  console.log('----------------------------------------------------------------------------');
-  return 0;
 }
 
 /* --------------------------------- entry ---------------------------------- */
 
 function parseArgs(argv) {
-  const opts = { command: 'setup', dryRun: false, ci: false, uninstall: false };
-  for (const a of argv) {
+  const opts = {
+    command: 'setup', dryRun: false, ci: false, uninstall: false,
+    listStages: false, stage: null, from: null, ask: false,
+  };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
     switch (a) {
       case 'setup':
         opts.command = 'setup';
@@ -1499,6 +1649,22 @@ function parseArgs(argv) {
       case '--uninstall':
         opts.uninstall = true;
         break;
+      case '--list-stages':
+        opts.listStages = true;
+        break;
+      case '--ask':
+        opts.ask = true;
+        break;
+      case '--stage':
+      case '--from':
+        if (i + 1 >= argv.length) {
+          usage();
+          bail(`${a} needs a stage id`);
+          return null;
+        }
+        if (a === '--stage') opts.stage = argv[++i];
+        else opts.from = argv[++i];
+        break;
       case '--help':
       case '-h':
         usage();
@@ -1516,6 +1682,11 @@ function parseArgs(argv) {
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
   if (!opts) return;
+  if (opts.listStages) {
+    const registry = loadStages();
+    for (const s of registry.stages) console.log(`${s.id}  ${s.title}`);
+    return;
+  }
   if (opts.uninstall) {
     const configDir = findConfigDir();
     // F3: honour --dry-run / --ci in the uninstall branch — preview only.
