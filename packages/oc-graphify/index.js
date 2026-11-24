@@ -15,15 +15,17 @@
  * with `graphify query` in the CLI, and the hub list stays in GRAPH_REPORT.md;
  * the host owns only locating and relating nodes.
  *
- * What it still does not do: writes. Rebuild, cluster and label belong to the
- * CLI, because they need Python and a model.
+ * What it still does not do: write graph bytes. Rebuild, cluster and label
+ * belong to the CLI, because they need Python and a model. A stale freshness
+ * verdict starts the vault's own incremental sync once, detached, off the
+ * critical path; the plugin never touches graph.json or the seed itself.
  *
  * Failure policy: every path returns null or swallows. A missing graph, a
  * broken config, an unreadable HEAD, a host without the hook or without the
  * tool editor all degrade to "less plugin", never to a failed request. Setup
  * never throws, so one bad file can never take down the host's generation.
  */
-import { MARKER, askFreshnessAsync, configPath, corpusFreshness, graphFile, headCommitAsync, readConfig, readGraph, render } from './lib.js';
+import { MARKER, askFreshnessAsync, configPath, corpusFreshness, graphFile, headCommitAsync, maybeMaintain, readConfig, readGraph, render } from './lib.js';
 import { readGraph as loadGraph } from './graph.js';
 import { toolDefinitions } from './tools.js';
 
@@ -90,6 +92,8 @@ export default {
 
       let cache = { at: 0, graph: readGraph(config.atlas), head: null, fresh: { state: 'unknown' } };
       let refreshFlight = null;
+      /* One maintenance trigger per plugin load, never one per request. */
+      const maintenance = { started: false };
       const snapshot = () => {
         const now = Date.now();
         if (!cache || now - cache.at > HEAD_TTL_MS) {
@@ -104,7 +108,11 @@ export default {
                   // fallback when no child verdict exists. Both are read once
                   // per refresh, never on a tool call or a per-request render.
                   const source = fresh ?? corpusFreshness(config.atlas, graph);
-                  return { graph, head, fresh: changed ? { state: 'unknown' } : source ?? { state: 'unknown' } };
+                  const verdict = changed ? { state: 'unknown' } : source ?? { state: 'unknown' };
+                  // Same verdict the state line reports: stale starts the vault's
+                  // incremental sync once, detached. Fresh and unknown do nothing.
+                  maybeMaintain(config.atlas, verdict, { state: maintenance });
+                  return { graph, head, fresh: verdict };
                 });
             }).then((next) => { cache = { ...next, at: Date.now() }; }).catch(() => {
               cache = { ...cache, at: Date.now(), fresh: { state: 'unknown' } };

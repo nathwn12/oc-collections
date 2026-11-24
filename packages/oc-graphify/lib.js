@@ -4,12 +4,13 @@
  * The plugin's only job is orientation: say where the Atlas graph is, how big
  * it is, whether it matches the corpus inputs the build recorded, and which
  * verb answers a question. It never wraps the CLI and never touches a command:
- * the three reads answer from graph.json, the CLI owns the writes, and
- * GRAPH_REPORT.md owns the hub list.
+ * the three reads answer from graph.json, the CLI owns every graph byte, and
+ * GRAPH_REPORT.md owns the hub list. When freshness is stale it starts the
+ * vault's own incremental sync once, detached; it still writes no graph byte.
  *
  * Everything here is pure except `readGraph` (one file), `headCommit` (one git
- * call) and `askFreshness` (one hidden child), all of which return null instead
- * of throwing.
+ * call), `askFreshness` (one hidden child) and `maybeMaintain` (one detached
+ * child), all of which degrade to null or a reason instead of throwing.
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -17,6 +18,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { execFile } from 'node:child_process';
+import { spawn } from 'node:child_process';
 
 /** First line of every injected block; also how a second injection is refused. */
 export const MARKER = '<!-- oc-graphify -->';
@@ -244,6 +246,64 @@ export function corpusFreshness(atlas, graph = null, { io = fs } = {}) {
     state: 'fresh',
     detail: 'ledger fallback: no corpus input changed; graph bytes match the build ledger',
   };
+}
+
+/** Relative path of the vault's incremental maintenance entry point. */
+export const MAINTENANCE_ENTRY = '.graphify/tools/atlas.mjs';
+/** --if-stale makes a rebuild conditional; --quiet keeps a no-op silent. */
+export const MAINTENANCE_ARGS = ['sync', '--if-stale', '--quiet'];
+
+/**
+ * One decision, no IO. A stale verdict is the only reason to act. A fresh or
+ * unknown graph, or a trigger already started this host process, is left alone.
+ * The verdict comes from the vault's own freshness command, never a second
+ * freshness notion invented here.
+ */
+export function maintenanceDecision(fresh, started = false) {
+  if (started) return { run: false, why: 'already started this host process' };
+  if (fresh?.state !== 'stale') {
+    return { run: false, why: fresh?.state ? `graph ${fresh.state}` : 'no freshness verdict' };
+  }
+  return { run: true, why: fresh.detail || 'graph stale' };
+}
+
+/**
+ * Start the vault's own incremental sync once, off the critical path.
+ *
+ * The plugin never writes a graph byte: it spawns the CLI, detached and hidden,
+ * and ignores the result. The lock and the atomic publication live in the vault
+ * tool, so an overlapping run either no-ops or refuses without touching
+ * graph.json. `state` is supplied by the caller to make the once-per-host
+ * promise real; `spawnTool` and `runtime` are seams for the test harness.
+ */
+export function maybeMaintain(atlas, fresh, {
+  state = {},
+  runtime = runtimePath(),
+  spawnTool = spawn,
+} = {}) {
+  const decision = maintenanceDecision(fresh, state.maintenanceStarted === true);
+  if (!decision.run) return { ...decision, started: false };
+  if (!atlas || !isJsRuntime(runtime)) {
+    return { run: false, started: false, why: 'no JS runtime for the maintenance child' };
+  }
+  const tool = path.join(atlas, ...MAINTENANCE_ENTRY.split('/'));
+  if (!fs.existsSync(tool)) {
+    return { run: false, started: false, why: `${MAINTENANCE_ENTRY} is missing` };
+  }
+  try {
+    const child = spawnTool(runtime, [tool, ...MAINTENANCE_ARGS], {
+      cwd: atlas,
+      detached: true,
+      windowsHide: true,
+      stdio: 'ignore',
+    });
+    child.unref?.();
+    child.on?.('error', () => {});
+    state.maintenanceStarted = true;
+    return { ...decision, started: true, tool };
+  } catch (error) {
+    return { run: false, started: false, why: `cannot start maintenance: ${error.message}` };
+  }
 }
 
 /** fresh | stale | unknown | missing. A corpus verdict alone decides freshness. */

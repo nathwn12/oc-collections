@@ -43,10 +43,25 @@ again re-adds the file; the check below fails by name when that happens.
 - **No search or hub list.** `graphify query "<question>"` (cwd = the atlas) is
   the one search route; `GRAPH_REPORT.md` is the one hub list. A second copy of
   either would drift from the CLI and the published report.
-- **No rebuild.** Rebuilding costs an extraction pass; the block names the
-  sanctioned command instead of running it.
+- **No graph write.** The plugin never writes `graph.json` or the seed. Rebuild
+  still costs an extraction pass, so the CLI stays the only writer.
 - **No third-party module.** It imports only `node:` built-ins and its own
   sibling files.
+
+## Automatic maintenance
+
+When the freshness verdict is stale, the plugin starts the vault's own
+incremental entry point once per host process:
+
+```
+node .graphify/tools/atlas.mjs sync --if-stale --quiet
+```
+
+The child is detached and hidden, so session start never waits for a rebuild.
+The vault tool takes its heartbeat lock, skips the rebuild when the graph is
+already fresh, and publishes through staging. Two overlapping runs cannot mix
+graph bytes: the second either no-ops or refuses while the first holds the lock.
+A fresh or unverified graph triggers nothing. No timer, task or daemon is added.
 
 ## Install
 
