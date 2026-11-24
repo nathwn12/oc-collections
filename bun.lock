@@ -96,7 +96,7 @@
     },
     "packages/rea-shim": {
       "name": "rea-shim",
-      "version": "0.3.1",
+      "version": "0.4.0",
       "bin": {
         "rea-shim": "bin/rea-shim.js",
       },

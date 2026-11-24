@@ -332,7 +332,7 @@ test('the shipped source carries no legacy REA, Ghidra, JDK, agent or updater pa
     }
   }
   const manifest = JSON.parse(fs.readFileSync(path.join(PACKAGE_DIR, 'package.json'), 'utf8'));
-  assert.equal(manifest.version, '0.3.1');
+  assert.equal(manifest.version, '0.4.0');
   for (const field of ['dependencies', 'optionalDependencies', 'peerDependencies', 'devDependencies']) {
     assert.ok(manifest[field] === undefined || Object.keys(manifest[field]).length === 0);
   }
@@ -359,7 +359,7 @@ test('the package check script syntax-checks every shipped bin and lib file', ()
 test('the CLI offers --mcp and rejects unknown arguments', () => {
   const version = runCli(['--version']);
   assert.equal(version.status, 0);
-  assert.match(version.stdout, /^0\.3\.1\r?\n$/);
+  assert.match(version.stdout, /^0\.4\.0\r?\n$/);
   const help = runCli(['--help']);
   assert.equal(help.status, 0);
   assert.match(help.stdout, /--mcp/);
