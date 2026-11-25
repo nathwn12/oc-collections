@@ -1,6 +1,5 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
 import path from "node:path"
 
 import { ALLOWED, compareVersions, guardRegistry, parseTag, resolvePackage } from "./release-target.mjs"
@@ -81,13 +80,6 @@ test("allowlist: exactly the seven releasable packages", () => {
     "oc-talk",
     "rea-shim",
   ])
-})
-
-test("oc-graphify stays private and outside the release allowlist", () => {
-  const manifestPath = path.resolve(import.meta.dirname, "..", "packages", "oc-graphify", "package.json")
-  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"))
-  assert.equal(manifest.private, true, "oc-graphify must stay private")
-  assert.equal(ALLOWED.includes("oc-graphify"), false, "oc-graphify must not be releasable")
 })
 
 test("resolvePackage: rea-shim resolves to its workspace package", () => {

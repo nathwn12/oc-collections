@@ -278,6 +278,17 @@ Rewired with it: the root workspace plan (`scripts/workspace-plan.mjs`, all thre
 
 Nothing else named it: the package was already absent from the release allowlist, the dispatch choice list, the index-registry scope table, the doc checker's scope and front-door map, and the structural index self-test (which reads the package inventory rather than listing it). The repo releases the same seven packages as before.
 
+## 2026-11-25 - removed: `packages/oc-memory` and `packages/oc-graphify`
+
+The owner retired the memory era: Graphify and both packages built for it are gone, and neither returns. Each package has a byte-identical copy archived outside this repository (`oc-memory-2026-11-25\` and `oc-graphify-2026-11-25\` under the owner's private archive), so the removal is reversible without git history.
+
+| Removed path | What it was | Why |
+| --- | --- | --- |
+| `packages/oc-memory/` | the session-memory plugin, present in the tree as uncommitted work only | retired by the owner before it landed; `graymatter` is its replacement |
+| `packages/oc-graphify/` | the Obsidian + Graphify atlas context plugin at 0.1.0 | retired with Graphify itself; private, never published |
+
+Rewired with it: the root workspace plan (`scripts/workspace-plan.mjs`, all three purposes), the root lockfile (`bun.lock`), the structural index check's omission list (`scripts/check-index.ps1`, `$Omitted`), the release-target test that read the graphify manifest, the front-door `README.md` install note, the closed naming decision below, and this changelog. `graymatter` is the replacement for the memory surface. The repo releases the same seven packages and no version moved.
+
 ## Retired repositories
 
 The four published packages - `@nathwn12/oc-bifrost`, `oc-flight-deck`, `oc-harness-setup`, `rea-shim` - build, tag and publish from `oc-collections` only. Their former repositories - `nathwn12/oc-bifrost`, `nathwn12/oc-flight-deck`, `nathwn12/oc-harness-setup`, `nathwn12/rea-shim` - are archived and private. `rea-shim` spent part of 2026-10-29 back on its own repository and returned here with the 0.2.2 source the same day. An archived repository stays readable, its npm metadata stays immutable, and nothing resolves it at install time.
@@ -296,6 +307,5 @@ These are settled so they stop resurfacing as open questions.
 
 - **`@nathwn12/janua` and `rea-shim` keep their npm names.** Both are published and installed. A rename would mean publishing a new name that CI cannot create (trusted publishing attests an existing package, so the first publish needs a manual OTP) and freezing the old name against updates - a cost paid by every `npx` user, for no gain on the surface anyone reads: the MCP keys and the sidebar rows are already `oc-janua` and `oc-rea`. The visible naming is done; the package names are identity, and identity changes are deprecations.
 - **`oc-phone-link` stays where it is.** It is installed as a plain directory under `~/.config/opencode/plugins/`, has no source repository and is not on npm. Moving it into the collection would create a second copy with no history and no tests to hold it, which is the divergence this repo exists to avoid. It works in place; it is recorded here.
-- **`oc-graphify` stays private and never ships to npm.** The owner ruled it is kept in the repository and never released, so it is not in `ALLOWED` and will not be admitted: it is developed in-tree and installed by junction. `resolvePackage` refuses a private package by name, and `scripts/check-launchers.mjs` fails the root check if one is admitted to `ALLOWED`.
 
 Published packages' older versions still name their original repositories in immutable npm metadata; that is historical, not a fetch target.
