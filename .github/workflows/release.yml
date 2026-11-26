@@ -228,11 +228,12 @@ jobs:
         with:
           path: node_modules
           key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-
 
       - name: Install dependencies
-        if: ${{ env.REFUSED != '1' && env.SKIP != '1' && steps.cache-node.outputs.cache-hit != 'true' }}
+        # Install is unconditional on cache state: a cache hit only restores
+        # node_modules, it must never skip the frozen-lockfile install. The
+        # REFUSED/SKIP guards are release semantics and stay.
+        if: ${{ env.REFUSED != '1' && env.SKIP != '1' }}
         shell: pwsh
         run: bun install --frozen-lockfile
 
