@@ -28,14 +28,18 @@ export const ALLOWED = [  "@nathwn12/oc-bifrost",
   "oc-harness-setup",
   "oc-plugin-view",
   "oc-talk",
+  "oc-title",
   "rea-shim",
 ]
 
-// Private packages are never released. They are not in ALLOWED, and
-// resolvePackage refuses them by name with the reason below: this repository
+// Private packages are not released: they stay out of ALLOWED, and
+// resolvePackage refuses them by name with the reason below. This repository
 // develops them in-tree and installs them by junction, so a version, a tag or a
 // changelog close is not something they have. Adding one to ALLOWED is the
-// mistake the refusal exists to catch.
+// mistake the refusal exists to catch. oc-title used to be private; the owner
+// has admitted it as a public package, so it is now in ALLOWED and ships on npm
+// (first publish 0.1.0, then trusted publishing from the release lane). oc-fix
+// and every other private package remain source-only and are still refused.
 
 const ROOT = path.resolve(import.meta.dirname, "..")
 
