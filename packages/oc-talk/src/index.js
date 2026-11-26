@@ -9,6 +9,7 @@
 // secret crossing this module's public surface: `transport.mjs` resolves the
 // endpoint once and is the only file that speaks to the wire.
 import { randomUUID } from 'node:crypto';
+import fs from 'node:fs';
 import { Plugin } from '@opencode/plugin';
 import { BOARD_FIELDS, BOARD_STATES, claim, defaultBoardFile, plan, readBoard } from './board.mjs';
 import { viewBoard } from './board-view.mjs';
@@ -17,9 +18,16 @@ import { call as httpCall } from './transport.mjs';
 
 const READ_DEFAULT_LIMIT = 20;
 const READ_MAX_LIMIT = 100;
-// The version stamped into the machine-readable envelope. Also the version the
-// reply instruction asks the peer to answer with.
-const VERSION = '0.6.2';
+// The version stamped into the machine-readable envelope. It comes from the
+// shipped manifest, never a literal: release.yml rewrites package.json to the
+// derived version before it runs the tests, so a baked-in version goes stale
+// exactly when a release is derived. No new dependency, no network, no cache.
+export function readManifestVersion(manifest) {
+  const value = JSON.parse(fs.readFileSync(manifest, 'utf8')).version;
+  if (typeof value !== 'string' || !value) throw new Error('package.json has no version');
+  return value;
+}
+const VERSION = readManifestVersion(new URL('../package.json', import.meta.url));
 // The envelope travels in `text`, not only in metadata: metadata is not guaranteed
 // to reach the model's context. A text that already opens this way is passed on
 // byte for byte, so a relayed message is never wrapped a second time.

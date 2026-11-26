@@ -400,17 +400,18 @@ test('the envelope is byte-exact and delivery uses the synthetic route, never pr
 
 test('the synthetic metadata carries the ocTalk reply fields and the package version', async () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, '..', 'package.json'), 'utf8'));
-  assert.equal(pkg.version, '0.6.2', 'the manifest version is the envelope version');
+  assert.equal(typeof pkg.version, 'string', 'the manifest carries a version');
   const { tool, calls } = await toolWith('talk_send');
   const out = JSON.parse((await tool.execute({ session: 'ses_a', text: 'hi' }, CALLER)).content);
   assert.deepEqual(syntheticBody(calls).metadata, {
-    ocTalk: { from: 'ses_caller', replyTo: 'ses_caller', version: '0.6.2' },
+    ocTalk: { from: 'ses_caller', replyTo: 'ses_caller', version: pkg.version },
   });
   assert.deepEqual(out.from, { sessionID: 'ses_caller', title: 'active work' });
   assert.equal(out.replyTo, 'ses_caller');
 });
 
 test('a caller with no session id keeps the bare text and reports from: null', async () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, '..', 'package.json'), 'utf8'));
   const { tool, calls } = await toolWith('talk_send');
   const out = JSON.parse((await tool.execute({ session: 'ses_a', text: 'bare handoff' }, {})).content);
   assert.equal(out.error, undefined, 'a missing caller must not break the send');
@@ -418,7 +419,7 @@ test('a caller with no session id keeps the bare text and reports from: null', a
   assert.equal(out.replyTo, null);
   const body = syntheticBody(calls);
   assert.equal(body.text, 'bare handoff', 'compatibility: no envelope without a caller');
-  assert.deepEqual(body.metadata.ocTalk, { from: null, replyTo: null, version: '0.6.2' });
+  assert.deepEqual(body.metadata.ocTalk, { from: null, replyTo: null, version: pkg.version });
   assert.equal(body.description, 'oc-talk');
   assert.equal(calls.filter((a) => a[0] === 'session.get').length, 1, 'only the target is looked up');
 });
