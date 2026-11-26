@@ -14,6 +14,7 @@
   },
   "files": [
     "index.js",
+    "refresh.js",
     "state.js",
     "title.js",
     "write.js",
