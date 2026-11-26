@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { setTimeout as delay } from 'node:timers/promises';
 import { SessionManager, resolveSpawn } from '../lib/sessions.js';
 
 const WINDOWS_ONLY = process.platform !== 'win32';
@@ -26,6 +27,35 @@ async function readUntil(manager, sessionId, pattern, { timeoutMs = 10000 } = {}
     if (pattern.test(text)) return { text, cursor };
   }
   throw new Error(`timed out waiting for ${pattern} in ${JSON.stringify(text)}`);
+}
+
+// A .cmd shim stays mapped until cmd.exe exits, so the child must be gone
+// before the directory is removed. killAll is async and waits for exit; an
+// unawaited killAll lets rmSync race a still-running shim and fail EBUSY on
+// Windows. The bounded retry covers only the last handle release after exit;
+// a shim that is still busy after the deadline is a leak and fails by name
+// rather than being hidden by a silent retry.
+const UNLINK_ATTEMPTS = 10;
+const UNLINK_RETRY_MS = 50;
+
+async function removeShimDir(dir) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+      return;
+    } catch (err) {
+      if (err.code !== 'EBUSY' || attempt === UNLINK_ATTEMPTS) {
+        if (err.code === 'EBUSY') {
+          throw new Error(
+            `janua shim teardown: ${dir} stayed busy after ${UNLINK_ATTEMPTS} unlink attempts`,
+            { cause: err },
+          );
+        }
+        throw err;
+      }
+      await delay(UNLINK_RETRY_MS);
+    }
+  }
 }
 
 // A shim shaped like npm.cmd: it forwards its arguments to a real program, so
@@ -90,9 +120,9 @@ test('a resolved name keeps the casing the disk holds, not PATHEXT casing', { sk
 test('a .cmd shim found on PATH runs and its marker arrives', { skip: WINDOWS_ONLY }, async (t) => {
   const dir = writeShim();
   const manager = new SessionManager();
-  t.after(() => {
-    manager.killAll();
-    rmSync(dir, { recursive: true, force: true });
+  t.after(async () => {
+    await manager.killAll();
+    await removeShimDir(dir);
   });
 
   const { sessionId } = manager.spawn({
@@ -111,9 +141,9 @@ test('a .cmd shim found on PATH runs and its marker arrives', { skip: WINDOWS_ON
 test('an argument with a space survives the shim as one argument', { skip: WINDOWS_ONLY }, async (t) => {
   const dir = writeShim();
   const manager = new SessionManager();
-  t.after(() => {
-    manager.killAll();
-    rmSync(dir, { recursive: true, force: true });
+  t.after(async () => {
+    await manager.killAll();
+    await removeShimDir(dir);
   });
 
   const { sessionId } = manager.spawn({
@@ -129,7 +159,7 @@ test('an argument with a space survives the shim as one argument', { skip: WINDO
 
 test('a caret argument is refused on the batch path, not silently mangled', { skip: WINDOWS_ONLY }, (t) => {
   const dir = writeShim();
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  t.after(() => removeShimDir(dir));
   assert.throws(
     () => resolveSpawn('janua-shim', ['a^b'], { env: { PATH: `${dir};${process.env.PATH}` } }),
     (err) => err.code === 'invalid_args' && /\^/.test(err.message),
