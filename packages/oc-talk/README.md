@@ -52,6 +52,53 @@ The message enters the peer as synthetic session input: it schedules the peer, i
 
 The messaging tools work across sessions, subagents and agents: a reply is a real synthetic message back to the sender. The board tools coordinate claims through the repo's `<repo>/.nstack/board.yaml` rather than through prose.
 
+## Replies, ACKs and terminal rows
+
+`talk_send` is fire-and-forget unless the caller passes `wait`. A reply is a
+choice, not an obligation, and these are prose conventions between peers — the
+plugin adds no runtime trick and sends nothing on your behalf:
+
+- A message that needs an answer says what answer it wants. Only then does the
+  sender call `talk_send` with `wait`, and `wait` reports `timedOut:true` if the
+  peer never reaches a turn boundary.
+- A peer that is finished and needs no reply ends with a line of `ACK` or
+  `no reply needed`. The sender treats that as terminal and does not wait.
+- A peer that is handing a task on names the new owner and the seam, then stops.
+  Silence after an ACK is expected, not a failure to be polled forever.
+- On the board, `active` means live work, `parked` means deliberately waiting,
+  and `closed` means finished history. `closed` is the terminal row: a new claim
+  on that seam takes it over without asking.
+
+## Board leases and safe takeover
+
+Each claimed row carries an internal lease (a heartbeat and an expiry). Re-claiming
+your own seam is the heartbeat: it refreshes the lease without another tool call.
+The five public fields never change, so hand-edited YAML and the `{rows}` tool
+contract stay compatible with older boards.
+
+Another session may take a held seam only with an explicit
+`talk_claim { "seam": "...", "takeover": true, "reason": "..." }` **and** all four
+of these hold: the liveness check names that holder, the service answered
+`session_not_found` for it (a `backend_unavailable`, `timeout` or `backend_error`
+answer is not proof the holder is gone), the lease has expired, and a reason is
+recorded on the row. A live lessor is never stolen, a row with no lease is never
+stolen, and a takeover without a reason is refused. `takeover: false` is a
+harmless no-op boolean. Claims take a sidecar lock for the whole read-modify-write and compare
+the file before renaming it, so a hand edit landing mid-claim is reported as
+`board_changed` instead of silently losing a row. Retry the claim after reading
+the board again.
+
+## Reading a large board
+
+`talk_board` defaults to every row, unchanged. Pass `state`, `seam` or
+`session` to filter, and `limit` plus the returned `cursor.next` to page. The
+`rows` shape stays `{session, state, ticket, seam, since}`; a filtered read
+also reports `total` and `cursor`.
+
+`broadcastPlan(sessions, text)` is a read-only helper: it deduplicates targets
+and returns the `talk_send` calls to make. It adds no tool and sends nothing;
+`talk_send` typing is unchanged.
+
 ## Requirements
 
 - OpenCode V2.

@@ -15,6 +15,7 @@
 // - Top-level keys and per-row keys the contract does not model are preserved.
 import fs from 'node:fs';
 import path from 'node:path';
+import { isExpired, noteTakeover, stamp } from './lease.mjs';
 
 const BOARD_DIR = '.nstack';
 const BOARD_NAME = 'board.yaml';
@@ -179,7 +180,7 @@ function readBoard(file) {
   let stat;
   try { stat = fs.statSync(target); }
   catch (err) {
-    if (err && err.code === 'ENOENT') return { ok: true, rows: [], extra: [], version: BOARD_VERSION, file: target, message: 'no board at ' + target + '; the board is empty' };
+    if (err && err.code === 'ENOENT') return { ok: true, rows: [], extra: [], version: BOARD_VERSION, file: target, raw: '', message: 'no board at ' + target + '; the board is empty' };
     return { ok: false, error: 'board_unreadable', reason: 'cannot read ' + target + ': ' + String((err && err.code) || err) };
   }
   if (stat.size > MAX_BYTES) return { ok: false, error: 'board_too_large', reason: target + ' is ' + stat.size + ' bytes; the cap is ' + MAX_BYTES };
@@ -188,7 +189,7 @@ function readBoard(file) {
   catch (err) { return { ok: false, error: 'board_unreadable', reason: 'cannot read ' + target + ': ' + String((err && err.code) || err) }; }
   const parsed = parseBoard(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text);
   if (!parsed.ok) return parsed;
-  return { ok: true, rows: parsed.rows, extra: parsed.extra, version: parsed.version, file: target };
+  return { ok: true, rows: parsed.rows, extra: parsed.extra, version: parsed.version, file: target, raw: text };
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -252,10 +253,10 @@ function pruneRows(rows, keep) {
 // claim: the whole read-modify-write under one lock. decide(rows) returns { rows } or { error, reason }.
 async function claim(file, decide) {
   const target = file || defaultBoardFile();
-  return withLock(target, () => {
+  return withLock(target, async () => {
     const board = readBoard(target);
     if (!board.ok) return board;
-    const next = decide(board.rows, board.extra);
+    const next = await decide(board.rows, board.extra);
     if (next.error) return { ok: false, error: next.error, reason: next.reason };
     // Prune before the cap is checked: a board that only grew through history is
     // repaired by the next claim instead of refusing every claim forever.
@@ -263,6 +264,14 @@ async function claim(file, decide) {
     if (rows.length > MAX_ROWS) return { ok: false, error: 'board_too_large', reason: 'the write would hold ' + rows.length + ' rows; the cap is ' + MAX_ROWS };
     const candidate = boardYaml(rows, next.extra ?? board.extra);
     if (Buffer.byteLength(candidate, 'utf8') > MAX_BYTES) return { ok: false, error: 'board_too_large', reason: 'the write would be ' + Buffer.byteLength(candidate, 'utf8') + ' bytes; the cap is ' + MAX_BYTES };
+    // A hand-edited board never takes our sidecar lock. Compare what we read
+    // with what is on disk now: if a human wrote meanwhile, refuse instead of
+    // renaming over their row (no silent lost update).
+    let current;
+    try { current = fs.readFileSync(target, 'utf8'); } catch { current = null; }
+    // A missing board is an empty snapshot: a still-missing file is unchanged.
+    const expected = board.raw || '';
+    if ((current === null ? '' : current) !== expected) return { ok: false, error: 'board_changed', reason: target + ' changed between read and write; retry the claim' };
     const written = writeInner(target, rows, next.extra ?? board.extra);
     if (!written.ok) return written;
     return { ok: true, file: written.file, row: next.row };
@@ -291,20 +300,42 @@ function writeInner(target, rows, extra) {
 
 // planClaim: the claim rule, pure. Returns { rows, row } or { error, reason }.
 // A closed row is finished work, not a lock, so a new claim takes it over.
-export function planClaim(rows, { caller, seam, state, ticket, now }) {
+export function planClaim(rows, { caller, seam, state, ticket, now, takeover, reason, liveness }) {
   if (!caller) return { error: 'bad_request', reason: 'talk_claim needs the calling session id' };
   if (!seam) return { error: 'bad_request', reason: 'seam must be a non-empty string' };
   if (!BOARD_STATES.includes(state)) return { error: 'bad_request', reason: 'state must be one of ' + BOARD_STATES.join(', ') + '; got ' + String(state) };
   const unsafe = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/;
   if (unsafe.test(seam)) return { error: 'bad_request', reason: 'seam must not contain control characters or line breaks' };
   if (typeof ticket === 'string' && unsafe.test(ticket)) return { error: 'bad_request', reason: 'ticket must not contain control characters or line breaks' };
+  if (takeover !== undefined && takeover !== true && takeover !== false) return { error: 'bad_request', reason: 'takeover must be a boolean' };
+  if (takeover === true && (typeof reason !== 'string' || !reason.trim())) return { error: 'bad_request', reason: 'takeover needs a non-empty reason' };
   const holders = rows.filter((row) => row.seam === seam && row.session !== caller);
   const live = holders.find((row) => row.state !== 'closed');
+  let tookOver = false;
   if (live) {
-    return {
-      error: 'seam_taken',
-      reason: 'seam "' + seam + '" is held by ' + live.session + ' (state ' + live.state + '); no row was changed. Coordinate with that session through talk_send, or have it release the seam.',
-    };
+    if (takeover !== true) {
+      return {
+        error: 'seam_taken',
+        reason: 'seam "' + seam + '" is held by ' + live.session + ' (state ' + live.state + '); no row was changed. Coordinate with that session through talk_send, or have it release the seam.',
+      };
+    }
+    // Four gates, all required: the liveness check must name this holder, the
+    // service must have answered session_not_found, the lease must have run out,
+    // and a reason was checked above. A live lessor is never stolen, and a
+    // lookup that failed for any other reason is not proof the holder is gone.
+    if (!liveness || liveness.session !== live.session) {
+      return { error: 'seam_taken', reason: 'seam "' + seam + '" is held by ' + live.session + ' (state ' + live.state + '); no liveness check for that holder; no row was changed.' };
+    }
+    if (liveness.live) {
+      return { error: 'seam_taken', reason: 'seam "' + seam + '" is held by ' + live.session + ' (state ' + live.state + '); that session is still live, so its lease was not stolen. Coordinate through talk_send.' };
+    }
+    if (liveness.code !== 'session_not_found') {
+      return { error: 'seam_taken', reason: 'seam "' + seam + '" is held by ' + live.session + ' (state ' + live.state + '); the liveness check failed with ' + (liveness.code || 'an unknown error') + ', so the holder was not proven gone; no row was changed.' };
+    }
+    if (!isExpired(live, now)) {
+      return { error: 'seam_taken', reason: 'seam "' + seam + '" is held by ' + live.session + ' (state ' + live.state + '); its lease has not expired. Coordinate through talk_send.' };
+    }
+    tookOver = true;
   }
   const inherited = holders.length ? holders[holders.length - 1].ticket : undefined;
   for (const row of holders) rows.splice(rows.indexOf(row), 1);
@@ -317,6 +348,10 @@ export function planClaim(rows, { caller, seam, state, ticket, now }) {
     row = { session: caller, state, ticket: ticket || inherited || '', seam, since: at };
     rows.push(row);
   }
+  // Re-claiming your own row is a heartbeat: the lease moves forward without a
+  // second tool call. A takeover is recorded on the row, never silent.
+  stamp(row, at);
+  if (tookOver) noteTakeover(row, reason, at);
   return { rows, row };
 }
 
