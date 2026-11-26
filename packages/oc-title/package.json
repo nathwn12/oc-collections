@@ -1,0 +1,28 @@
+{
+  "name": "oc-title",
+  "version": "0.1.0",
+  "description": "Session titles carry their state: active, parked or closed.",
+  "license": "MIT",
+  "author": "nathwn12",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": {
+      "import": "./index.js",
+      "default": "./index.js"
+    }
+  },
+  "files": [
+    "index.js",
+    "state.js",
+    "title.js",
+    "write.js",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "bun test ."
+  },
+  "engines": {
+    "bun": ">=1.0.0"
+  }
+}

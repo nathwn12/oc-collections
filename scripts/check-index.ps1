@@ -82,7 +82,10 @@ $ua = @{ 'User-Agent' = 'oc-collections-index-check/1.0' }
 # failure too, so the table and this list can never both claim the same package.
 # No entry remains: the guard stays for any future private package a stranger
 # cannot install.
-$Omitted = @{}
+$Omitted = @{
+    'oc-title' = 'private: developed in-tree, wired by its checkout, no npm release'
+    'oc-fix'   = 'private: developed in-tree, wired by its checkout, no npm release'
+}
 
 # Kinds whose row ships an npm artifact, so a row of that kind with a version
 # pin is an installation target. `repo` is deliberately absent: the index's own

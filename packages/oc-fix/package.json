@@ -1,0 +1,26 @@
+{
+  "name": "oc-fix",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A silent local guard: every tool call has a hard deadline and no shell call can ask for hours.",
+  "license": "MIT",
+  "author": "nathwn12",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": {
+      "import": "./index.js",
+      "default": "./index.js"
+    }
+  },
+  "files": [
+    "index.js",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "bun test ."
+  },
+  "engines": {
+    "bun": ">=1.0.0"
+  }
+}
