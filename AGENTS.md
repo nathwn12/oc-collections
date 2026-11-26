@@ -1,91 +1,18 @@
 # oc-collections
 
-A curated index of the family's OpenCode plugins — one front door listing every plugin, installer, and bridge in the set, with its repo, its npm package, and its link. The same repo is the npm-workspaces monorepo where the family's packages are developed, one package per `packages/` directory. It is for OpenCode users discovering what to install, and for contributors keeping that list honest. Install the listed plugins, not this repo.
+## Landmines / do-not-touch
 
-## Quick start
+- The root is private and never installed: never add an install-time lifecycle script (`install`, `postinstall`, `preinstall`, `prepare`, `prepack`) to the root manifest. No check enforces this, and the index must not execute on install.
+- Updating from npm: delete the npm lockfile and `node_modules` before installing with bun; a second lockfile is a source of truth no check reads.
+  ```sh
+  rm -f package-lock.json && rm -rf node_modules
+  bun install
+  ```
 
-Use it: read the plugin table in `README.md` and follow a repo or npm link to the plugin you want.
+## Scope & routing
 
-Check the index from the repo root:
+- `packages/<name>/AGENTS.md` travels with its package: read it before changing that package's manifest.
 
-```powershell
-pwsh -NoProfile -File scripts/check-index.ps1 --structural
-```
+## Reporting
 
-The structural half is offline: it exits `0` only when every table name is well-formed and matches a package in this repo. It runs on every pull request.
-
-To prove it can still go red, run the self-test:
-
-```powershell
-pwsh -NoProfile -File scripts/check-index.selftest.ps1
-```
-
-It asserts a zero-row fixture and a phantom-package fixture exit non-zero, and the real README exits `0` — all offline.
-
-The registry half is the post-publish check (`--registry`): it verifies every listed package resolves and every claimed version is published. The eight packages released from this repo must also name this monorepo in their registry metadata; a package on another release lane would be existence/version-only by design (the table and its reasons live in `scripts/index-registry.ps1`). It cannot pass before a release.
-
-Check the packages from the repo root:
-
-```sh
-bun install --frozen-lockfile
-bun run check
-```
-
-`bun run check` runs every package's own check (typecheck, compile, tests) and exits `0` only when every package is green. One workspace runs on its own with `bun run --cwd packages/<name> <script>`.
-
-A repeat run reuses `.cache/checks` keyed on exact inputs; set `OC_CHECK_CACHE=0` to disable it.
-
-Updating from npm: delete the npm lockfile and `node_modules`, then install with bun.
-```sh
-rm -f package-lock.json && rm -rf node_modules
-bun install
-```
-
-## Layout
-
-- `README.md` — the index table; the table is the source of truth.
-- `CHANGELOG.md` — index and monorepo history; earlier implementation history was removed with the implementation.
-- `docs/MIGRATIONS.md` — what moved into `packages/`, from where, and which owner calls remain open.
-- `LICENSE` — license text.
-- `package.json` — the private root manifest: the workspaces list and the fan-out scripts.
-- `scripts/check-index.ps1` — `--structural` (offline, PR) checks table names against the repo; `--registry` (post-publish) checks the published world.
-- `scripts/index-registry.ps1` — the released/external package scope table (one reason per entry) and the repository-metadata assertion.
-- `scripts/check-index.selftest.ps1` — proves the structural red path and both repository-assertion directions, offline.
-- `scripts/workspace-run.mjs` — root fan-out that executes the shared plan.
-- `scripts/workspace-plan.mjs` — the shared plan both runners import: which packages exist and each package's exact check/build/test commands.
-- `scripts/pack-check.mjs` — packs and verifies every workspace tarball; fails closed on zero or unplanned workspaces.
-- `scripts/check-launcher.mjs` — offline validation for the npx launcher packages (bin, files, manifest consistency).
-- `Cargo.toml` — an intentionally empty virtual workspace: the frozen Rust MCP crates were removed on 2026-10-29 and their implementations now live in their own repositories; `members` stays an explicit empty list because a `crates/*` glob is an error when it matches nothing.
-- `packages/<name>/` — one family package per directory; each keeps its own manifest, tests, and version line.
-- `.github/workflows/ci.yml` — index integrity, the offline doc check, the vocabulary guard, and the workspace-wide check (static checks in the `static` job, workspace checks in the `workspaces` job).
-- `assets/signature-glyph.svg` — shared footer signature.
-- `.gitattributes` — line-ending and export settings.
-- `.gitignore` — local ignore rules.
-
-## Conventions
-
-- Write conventional commit subjects (for example `docs: ...`, `chore: ...`).
-- Branch as `<type>/<slug>` (for example `docs/repo-guide`).
-- Land only through a pull request, squash-merge it, then delete the branch.
-- Keep `CHANGELOG.md` and the docs current with every index change.
-- A new index row keeps the existing column order: repo, one-line description, npm package and version, links.
-- A package that moves in keeps its published npm name and its own version line; record the move in `docs/MIGRATIONS.md`.
-
-## What the index guarantees
-
-The table promises that every repo link reaches a live repository, every npm link names a package present on the registry, and every pinned version is actually published. `scripts/check-index.ps1 --structural` checks the table names against the repo's package inventory offline on every PR; `--registry` (post-publish) checks the repo and npm links and confirms each claimed version is published. There is no captured output block in `README.md` — run the script and read its output directly.
-
-## Release
-
-The root manifest is `private: true` and is never published. The repo's own release is an annotated tag `v<version>` recording a state of the index — this is not a package release tag; package releases use `<package>@<version>` below.
-
-Package releases run on a merge to `main`, not on a tag push. `scripts/derive-release.mjs --all` derives each package's next version from its highest tag and the conventional commits since it; the release lane and its derived version cells are owned by `docs/RELEASE.md`, and package moves by `docs/MIGRATIONS.md`. Current versions and release history live in the manifests, the tags and the registry, not in this policy file.
-
-## Guardrails
-
-- Never paste check output the script did not print — run the script and paste its real output.
-- A claimed version is a promise: the registry half checks it after publish, so a bumped pin is not installable until its release run completes.
-- Never rename a published package when it moves in — `@nathwn12/oc-bifrost` stays `@nathwn12/oc-bifrost`.
-- Never publish the root — it stays `private: true`.
-- Never add an install-time lifecycle script (`install`, `postinstall`, `preinstall`, `prepare`, `prepack`) to the root manifest: the root is never installed, and the index should not execute on install.
-- Package guardrails travel with the package; read `packages/<name>/AGENTS.md` before changing its manifest.
+- Never paste check output the script did not print. There is no captured output block in `README.md`; run the script and quote its real output.
