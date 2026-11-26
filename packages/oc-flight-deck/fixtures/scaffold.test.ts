@@ -115,7 +115,7 @@ describe("flight deck plugin", () => {
     // its own copy to the plugins it loads, but npm installs no optional peer,
     // so the published tarball carried no @opencode/plugin at all and both
     // entrypoints threw ERR_MODULE_NOT_FOUND. A dependency ships with it.
-    expect(dependencies["@opencode/plugin"]).toBe("^2.3.0");
+    expect(dependencies["@opencode/plugin"]).toBe("^2.3.2");
     expect(packageJson.peerDependencies["@opencode/plugin"]).toBeUndefined();
     expect(packageJson.peerDependenciesMeta?.["@opencode/plugin"]).toBeUndefined();
     // `jsonc-parser` stays out of the runtime: config parsing ships in `src/`.
