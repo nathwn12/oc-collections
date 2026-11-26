@@ -3,7 +3,12 @@
 
 const GUARD = Symbol("oc-fix.guarded");
 const SENTINEL = {};
-const CLAMPED = new Map();
+// CLAMPED_BY_INPUT is the primary path: execute.before writes it on the clamped
+// input object, and the execute wrapper that receives that object reads it, so
+// the mark is part of the value the tool actually returns. CLAMPED_BY_ID is a
+// legacy fallback for hosts that honour a post-hoc execute.after mutation.
+const CLAMPED_BY_INPUT = new WeakMap();
+const CLAMPED_BY_ID = new Map();
 
 const DEFAULT_TIMEOUT_MS = 600000; // 10 minutes for every tool
 const DEFAULT_SHELL_TIMEOUT_MS = 720000; // 12 minutes for shell/bash
@@ -32,7 +37,21 @@ function numericOption(options, key, fallback) {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
-// Mechanism A: clamp the shell timeout before execution.
+// Attach the stamp without changing the command output or the shape of a
+// structured result. Primitives and arrays are returned as-is: a mark there
+// would corrupt the payload or break a declared output schema, so the opt-in
+// trace is the record of the clamp instead.
+function withClampMark(result, stamp) {
+  if (result === null || typeof result !== "object" || Array.isArray(result)) return result;
+  const metadata =
+    result.metadata && typeof result.metadata === "object" && !Array.isArray(result.metadata)
+      ? result.metadata
+      : {};
+  return { ...result, metadata: { ...metadata, "oc-fix": stamp } };
+}
+
+// Mechanism A: clamp the shell timeout before execution and leave an
+// observable mark on the value the wrapper will return.
 function clampShell(event, capMs) {
   if (!event) return;
   if (!SHELL_TOOLS.has(event.tool)) return;
@@ -40,8 +59,14 @@ function clampShell(event, capMs) {
   if (input === null || typeof input !== "object") return;
   if (input.background === true) return;
   if (typeof input.timeout !== "number" || !(input.timeout > capMs)) return;
+  const stamp = { clamped: true, requested: input.timeout, applied: capMs };
   event.input = { ...input, timeout: capMs };
-  if (typeof event.id === "string") CLAMPED.set(event.id, { requested: input.timeout, applied: capMs });
+  // A harness may forward either the original input object or the replacement;
+  // index both so the mark survives whichever reference reaches execute.
+  CLAMPED_BY_INPUT.set(input, stamp);
+  CLAMPED_BY_INPUT.set(event.input, stamp);
+  if (typeof event.id === "string") CLAMPED_BY_ID.set(event.id, stamp);
+  trace(`clamped ${event.tool} timeout ${input.timeout}ms -> ${capMs}ms (call ${event.id ?? "?"})`);
 }
 
 // Mechanism B: a hard deadline on every (non-exempt) tool call.
@@ -67,7 +92,11 @@ function makeDeadline(original, id, limitMs) {
           `oc-fix: ${id} did not return within ${shown} and was abandoned so it could not hold the turn. It may still be running. Retry with a narrower scope, or run it in the background.`,
         );
       }
-      return result;
+      const stamp = CLAMPED_BY_INPUT.get(input);
+      if (!stamp) return result;
+      CLAMPED_BY_INPUT.delete(input);
+      trace(`${id}: returning clamped result with oc-fix metadata (requested ${stamp.requested}ms, applied ${stamp.applied}ms)`);
+      return withClampMark(result, stamp);
     } finally {
       clearTimeout(timer);
     }
@@ -121,13 +150,14 @@ export default {
       } catch {}
     }
 
-    // Leave an inspectable mark on a clamped call, so a caller can tell it from a natural timeout.
+    // Legacy fallback: a host that honours a post-hoc result mutation gets the
+    // same stamp here. The primary mark is on the wrapper's returned result.
     if (typeof tool?.hook === "function") {
       try {
         const registration = await tool.hook("execute.after", (event) => {
-          const mark = CLAMPED.get(event.id);
+          const mark = CLAMPED_BY_ID.get(event.id);
           if (!mark) return;
-          CLAMPED.delete(event.id);
+          CLAMPED_BY_ID.delete(event.id);
           const stamp = { clamped: true, requested: mark.requested, applied: mark.applied };
           try {
             if (event.status === "completed") {
