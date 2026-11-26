@@ -1,8 +1,11 @@
 // oc-talk — cross-session talk for any OpenCode harness.
 //
-// Two tools, and only two: `talk_send` puts one message into another session and
-// `talk_inbox` reads what a session has said. The other eleven lifecycle verbs
-// are gone: this package talks, it does not manage sessions.
+// Two tools, and only two, for a default install: `talk_send` puts one message
+// into another session and `talk_inbox` reads what a session has said. A host
+// that opts in with the `boardFile` option (or `board: true`) also gets the
+// board pair, `talk_board` and `talk_claim`, for its own coordination board;
+// that convention belongs to the host, not to this package. The other eleven
+// lifecycle verbs are gone: this package talks, it does not manage sessions.
 //
 // The backend is the harness's own local service, reached over HTTP with the
 // credential the service already publishes. No CLI child per call, no shell, no
@@ -458,6 +461,10 @@ async function ensureTools(ctx) {
   // The board path is configured, not guessed: cwd, session directory and project
   // root all disagree in a harness whose board lives one level down from home.
   const optionFile = ctx && ctx.options && typeof ctx.options.boardFile === 'string' ? ctx.options.boardFile : undefined;
+  // Board coordination is opt-in. An empty options object is the public default:
+  // no board path is guessed, no board tool is registered, and no host-only
+  // convention is advertised to a consumer who never configured one.
+  const boardOptIn = !!(optionFile || (ctx && ctx.options && ctx.options.board === true));
   const canonical = (ctx && ctx.location && ctx.location.project && ctx.location.project.canonical) || undefined;
   const resolveBoard = () => boardFileOverride || optionFile || defaultBoardFile(canonical || installDir);
   const transform = ctx && ctx.tool && ctx.tool.transform;
@@ -712,7 +719,10 @@ async function ensureTools(ctx) {
       },
     });
 
-    tools.add({
+    const addBoardTool = (tool) => {
+      if (boardOptIn) tools.add(tool);
+    };
+    addBoardTool({
       name: 'talk_board',
       description:
         'Read the nstack board at <repo>/.nstack/board.yaml as rows of session, state, ticket, seam and since. ' +
@@ -751,7 +761,7 @@ async function ensureTools(ctx) {
       },
     });
 
-    tools.add({
+    addBoardTool({
       name: 'talk_claim',
       description:
         'Claim a seam for the calling session in <repo>/.nstack/board.yaml, writing a row with session, state, ticket, seam and an ISO-8601 since; state defaults to active and ticket is optional. ' +

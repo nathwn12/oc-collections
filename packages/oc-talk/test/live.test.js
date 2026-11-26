@@ -19,9 +19,9 @@ const SKIP = LIVE ? false : 'set OC_TALK_LIVE=1 to run against the local service
 const ENTRY = path.join(import.meta.dirname, '..', 'src', 'index.js');
 const TRANSPORT = path.join(import.meta.dirname, '..', 'src', 'transport.mjs');
 
-function host() {
+function host(options) {
   const added = [];
-  const ctx = { tool: { transform: async (fn) => fn({ add: (tool) => added.push(tool) }) } };
+  const ctx = { ...(options === undefined ? {} : { options }), tool: { transform: async (fn) => fn({ add: (tool) => added.push(tool) }) } };
   return { ctx, added };
 }
 
@@ -34,9 +34,11 @@ test('live: talk_send delivers into a real session and talk_inbox reads it back'
   const sessionID = created.json.data.id;
   assert.match(sessionID, /^ses_/, 'the service must return a real session id');
 
-  const { ctx, added } = host();
+  // The live harness passes boardFile; the explicit board opt-in keeps the
+  // four-tool assertion true here while a default install stays at two.
+  const { ctx, added } = host({ board: true });
   await mod.default.setup(ctx);
-  assert.deepEqual(added.map((t) => t.name), ['talk_send', 'talk_inbox', 'talk_board', 'talk_claim'], 'live install must register exactly four tools');
+  assert.deepEqual(added.map((t) => t.name), ['talk_send', 'talk_inbox', 'talk_board', 'talk_claim'], 'opted-in live install must register exactly four tools');
 
   const context = { sessionID, signal: undefined };
   const text = 'oc-talk live probe ' + Date.now() + ' — reply with the single word OK.';
