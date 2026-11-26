@@ -11,6 +11,8 @@
 import { randomUUID } from 'node:crypto';
 import { Plugin } from '@opencode/plugin';
 import { BOARD_FIELDS, BOARD_STATES, claim, defaultBoardFile, plan, readBoard } from './board.mjs';
+import { viewBoard } from './board-view.mjs';
+import { broadcastPlan } from './broadcast.mjs';
 import { call as httpCall } from './transport.mjs';
 
 const READ_DEFAULT_LIMIT = 20;
@@ -710,17 +712,32 @@ async function ensureTools(ctx) {
         'Read-only: it never claims a seam or changes the board.',
       input: {
         type: 'object',
-        properties: {},
+        properties: {
+          state: { type: 'string', description: 'Only rows in this state (active, parked, closed)' },
+          seam: { type: 'string', description: 'Only rows for this seam' },
+          session: { type: 'string', description: 'Only rows held by this session' },
+          limit: { type: 'integer', description: 'Page size; ignored without cursor' },
+          cursor: { type: 'string', description: 'Opaque offset cursor from a previous page' },
+        },
         additionalProperties: false,
       },
       options: { codemode: false },
       execute: async (input, context) => {
         const signal = context && context.signal;
         if (signal && signal.aborted) return fail('cancelled', 'request cancelled');
+        const args = input || {};
         const board = readBoard(resolveBoard());
         if (!board.ok) return fail(board.error, board.reason);
         if (signal && signal.aborted) return fail('cancelled', 'request cancelled');
-        const out = { rows: board.rows.map(boardRow), file: board.file, version: board.version };
+        const filtered = ['state', 'seam', 'session', 'limit', 'cursor'].some((key) => args[key] !== undefined);
+        if (!filtered) {
+          const out = { rows: board.rows.map(boardRow), file: board.file, version: board.version };
+          if (board.message) out.message = board.message;
+          return done(out);
+        }
+        const view = viewBoard(board.rows, args);
+        if (view.error) return fail(view.error, view.reason);
+        const out = { rows: view.rows.map(boardRow), file: board.file, version: board.version, total: view.total, cursor: view.cursor };
         if (board.message) out.message = board.message;
         return done(out);
       },
@@ -738,6 +755,8 @@ async function ensureTools(ctx) {
           seam: { type: 'string', description: 'The seam to claim; one row per session per seam' },
           ticket: { type: 'string', description: 'Optional ticket written to the row' },
           state: { type: 'string', description: 'Row state, default active (also parked or closed)' },
+          takeover: { type: 'boolean', description: 'Take over another session expired lease; needs reason' },
+          reason: { type: 'string', description: 'Why this takeover is justified; recorded on the row' },
         },
         required: ['seam'],
         additionalProperties: false,
@@ -754,11 +773,25 @@ async function ensureTools(ctx) {
         if (args.ticket !== undefined && typeof args.ticket !== 'string') return fail('bad_request', 'ticket must be a string');
         const state = args.state === undefined ? 'active' : args.state;
         if (!BOARD_STATES.includes(state)) return fail('bad_request', 'state must be one of ' + BOARD_STATES.join(', ') + '; got ' + String(state));
+        if (args.takeover !== undefined && typeof args.takeover !== 'boolean') return fail('bad_request', 'takeover must be a boolean');
+        if (args.reason !== undefined && typeof args.reason !== 'string') return fail('bad_request', 'reason must be a string');
         const file = resolveBoard();
         if (signal && signal.aborted) return fail('cancelled', 'request cancelled');
+        // A takeover needs a real liveness answer taken before the lock. Bind
+        // that answer to the holder we saw; plan refuses if the holder changed.
+        let liveness;
+        if (args.takeover === true) {
+          const pre = readBoard(file);
+          if (!pre.ok) return fail(pre.error, pre.reason);
+          const holder = pre.rows.find((row) => row.seam === seam && row.session !== caller && row.state !== 'closed');
+          if (!holder) return fail('bad_request', 'takeover needs a held seam; ' + seam + ' is free');
+          const looked = await getSession(holder.session, { signal });
+          if (signal && signal.aborted) return fail('cancelled', 'request cancelled');
+          liveness = { session: holder.session, live: looked.ok, code: looked.code || '' };
+        }
         // One lock covers read, decide and write, so two claims cannot both see
         // a free seam. Row keys on (session, seam): a session may hold two seams.
-        const result = await claim(file, (rows) => plan(rows, { caller, seam, state, ticket: args.ticket }));
+        const result = await claim(file, (rows) => plan(rows, { caller, seam, state, ticket: args.ticket, takeover: args.takeover, reason: args.reason, liveness }));
         if (!result.ok) return fail(result.error, result.reason);
         return done(boardRow(result.row));
       },
@@ -769,6 +802,8 @@ async function ensureTools(ctx) {
 }
 
 export {
+  broadcastPlan,
+  viewBoard,
   classifyDelivery,
   collectMessages,
   ensureTools,
