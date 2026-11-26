@@ -60,7 +60,7 @@
     "@opencode/plugin": ">=2.2.6 <3"
   },
   "devDependencies": {
-    "@opencode/plugin": "2.3.0",
+    "@opencode/plugin": "2.3.2",
     "@types/node": "^26.6.6",
     "typescript": "^7.0.2"
   },
