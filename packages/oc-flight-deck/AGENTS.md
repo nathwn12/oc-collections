@@ -6,7 +6,7 @@ An OpenCode plugin that renders live session telemetry — agent, model, cost, t
 
 To use it, add the plugin name to the `plugins` array in `opencode.jsonc`, restart the OpenCode host, and check that the panel appears beside an open session. See `INSTALL.md` for the npm-only install route and `flight-deck.example.jsonc` for every option.
 
-To work on it, from this package's directory (`packages/oc-flight-deck` in the monorepo; the monorepo root works too with `-w oc-flight-deck`; dependencies come from the root `npm install`):
+To work on it, from this package's directory (`packages/oc-flight-deck` in the monorepo; the monorepo root works too with `-w oc-flight-deck`; dependencies come from the root manifest's lockfile install):
 
 ```sh
 bun run check
@@ -41,9 +41,9 @@ bun run compile
 
 ## Host contract
 
-- Targets the OpenCode host (compatible with opencode 2.1.1) through the official CLI plugin API.
+- Targets the OpenCode host through the official CLI plugin API; the compatible host floor is stated in `INSTALL.md`.
 - The host provides the renderer: `@opentui/core`, `@opentui/solid` and `solid-js` are peer dependencies, supplied by the host and never bundled.
-- `@opencode/plugin` is a runtime dependency (`^2.2.5`), installed with the package rather than taken from the host: relying on the host to supply it left it absent from the published install, and both entrypoints threw `ERR_MODULE_NOT_FOUND`. `@opentui/core`, `@opentui/solid` and `solid-js` stay optional peers and install correctly. The repo ships the compiled entries in `dist/` that the host actually loads — never raw source.
+- `@opencode/plugin` is a runtime dependency at the range declared in `package.json`, installed with the package rather than taken from the host: relying on the host to supply it left it absent from the published install, and both entrypoints threw `ERR_MODULE_NOT_FOUND`. `@opentui/core`, `@opentui/solid` and `solid-js` stay optional peers and install correctly. The repo ships the compiled entries in `dist/` that the host actually loads — never raw source.
 
 ## Release
 
