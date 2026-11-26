@@ -43,10 +43,11 @@ export default {
             if (!id) return { content: JSON.stringify({ ok: false, reason: "no session id" }) };
             let scope = typeof args.scope === "string" && args.scope.trim() ? args.scope : undefined;
             if (!scope) {
-              const list = ctx.session?.message?.list;
-              if (typeof list !== "function") return { content: JSON.stringify({ ok: false, reason: "no scope and no message reader" }) };
+              // Documented V2 SessionContext method: session.context({sessionID})
+              // returns the full SessionMessageInfo[]; there is no message.list.
+              if (typeof ctx?.session?.context !== "function") return { content: JSON.stringify({ ok: false, reason: "no scope and no session context reader" }) };
               try {
-                scope = scopeFromMessage(newestUserMessage(await list({ sessionID: id, limit: 20 })));
+                scope = scopeFromMessage(newestUserMessage(await ctx.session.context({ sessionID: id })));
               } catch (err) {
                 return { content: JSON.stringify({ ok: false, reason: "message read failed: " + (err?.message ?? err) }) };
               }

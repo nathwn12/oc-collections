@@ -135,11 +135,10 @@ export function createFakeCtx(options = {}, settings = {}) {
         const record = records.get(sessionID);
         return wrapGet ? { data: record } : record;
       },
-      // Default order is newest-first, matching session.message.list (rows[0] is newest).
-      message: {
-        async list({ sessionID, limit = 20 } = {}) {
-          return (messages.get(sessionID) ?? []).slice(0, limit);
-        },
+      // Mirrors the documented V2 SessionContext.context: the full message
+      // array for one session, with no invented message.list surface.
+      async context({ sessionID } = {}) {
+        return messages.get(sessionID) ?? [];
       },
       async list() {
         listCalls.push(true);
@@ -173,7 +172,7 @@ export function createFakeCtx(options = {}, settings = {}) {
     record(sessionID) {
       return records.get(sessionID);
     },
-    seedMessages(sessionID, rows) {
+    seedContext(sessionID, rows) {
       messages.set(sessionID, rows);
     },
     push(event, index = subscriptions.length - 1) {

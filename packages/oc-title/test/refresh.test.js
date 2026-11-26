@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { scopeFromMessage, newestUserMessage } from "../refresh.js";
 
-const userMsg = (text, extra = {}) => ({ role: "user", text, ...extra });
+const userMsg = (text, extra = {}) => ({ type: "user", text, time: { created: 2 }, ...extra });
 
 test("scopeFromMessage takes a user text message", () => {
   expect(scopeFromMessage(userMsg("Fix VST3 Audio"))).toBe("Fix VST3 Audio");
@@ -35,23 +35,29 @@ test("scopeFromMessage refuses a non-user message", () => {
 
 test("newestUserMessage finds the newest user row in a newest-first list", () => {
   const rows = [
-    { role: "assistant", text: "working" },
-    userMsg("newest request"),
-    userMsg("older request"),
+    { type: "assistant", text: "working", time: { created: 3 } },
+    userMsg("newest request", { time: { created: 9 } }),
+    userMsg("older request", { time: { created: 4 } }),
   ];
   expect(newestUserMessage(rows)?.text).toBe("newest request");
 });
 
-test("newestUserMessage uses timestamps when rows are not ordered", () => {
+test("newestUserMessage uses time.created, not array order", () => {
   const rows = [
-    userMsg("later", { time: { created: 20 } }),
-    userMsg("earlier", { time: { created: 10 } }),
+    userMsg("newest", { time: { created: 99 } }),
+    userMsg("older", { time: { created: 10 } }),
   ];
-  expect(newestUserMessage(rows)?.text).toBe("later");
+  expect(newestUserMessage(rows)?.text).toBe("newest");
+  expect(newestUserMessage([...rows].reverse())?.text).toBe("newest");
+});
+
+test("newestUserMessage refuses an unstamped user row instead of guessing", () => {
+  expect(newestUserMessage([{ type: "user", text: "no stamp" }])).toBeUndefined();
+  expect(newestUserMessage([userMsg("ok", { time: { created: 1 } }), { type: "user", text: "no stamp" }])).toBeUndefined();
 });
 
 test("newestUserMessage unwraps a data response and handles no user", () => {
   expect(newestUserMessage({ data: [userMsg("wrapped")] })?.text).toBe("wrapped");
-  expect(newestUserMessage([{ role: "assistant", text: "x" }])).toBeUndefined();
+  expect(newestUserMessage([{ type: "assistant", text: "x", time: { created: 1 } }])).toBeUndefined();
   expect(newestUserMessage(undefined)).toBeUndefined();
 });

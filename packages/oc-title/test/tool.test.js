@@ -23,9 +23,9 @@ test("the plugin registers one oc_title_refresh tool", async () => {
 test("the tool refreshes the scope from the latest user request", async () => {
   const ctx = createFakeCtx();
   ctx.seed("s1", stamped("active: old scope", "active"));
-  ctx.seedMessages("s1", [
-    { role: "user", text: "New Scope Now", time: 2 },
-    { role: "assistant", text: "working", time: 1 },
+  ctx.seedContext("s1", [
+    { type: "user", text: "New Scope Now", time: { created: 2 } },
+    { type: "assistant", text: "working", time: { created: 1 } },
   ]);
   const tool = mount(ctx);
   const out = payload(await call(tool, {}, "s1"));
@@ -49,7 +49,7 @@ test("an explicit scope wins over the message reader", async () => {
 test("a tool-only latest user message refreshes nothing", async () => {
   const ctx = createFakeCtx();
   ctx.seed("s3", stamped("active: old scope", "active"));
-  ctx.seedMessages("s3", [{ role: "user", text: "", tools: [{ name: "shell" }], time: 1 }]);
+  ctx.seedContext("s3", [{ type: "user", text: "", tools: [{ name: "shell" }], time: { created: 1 } }]);
   const tool = mount(ctx);
   const out = payload(await call(tool, {}, "s3"));
   await ctx.flush();

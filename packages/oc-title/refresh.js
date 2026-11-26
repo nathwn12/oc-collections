@@ -3,7 +3,21 @@
 
 const TOOL_PART = /^tool|tool_/i; // tool_use/tool_result parts carry no user request.
 
-// textFromParts: join only the text parts of a message, skipping tool parts.
+// isUser: a real OpenCode user message has type:"user" (Session.Message.User);
+// role:"user" is tolerated for older/fake rows.
+function isUser(m) {
+  return Boolean(m) && (m.type === "user" || m.role === "user");
+}
+
+// createdOf: Session.Message.User requires time.created as a number.
+function createdOf(m) {
+  const t = m?.time;
+  if (t && typeof t.created === "number") return t.created;
+  if (typeof t === "number") return t;
+  return undefined;
+}
+
+// textFromParts: tolerate a parts-shaped row; tool parts carry no user request.
 function textFromParts(parts) {
   if (!Array.isArray(parts)) return "";
   let out = "";
@@ -20,7 +34,7 @@ function textFromParts(parts) {
 // scopeFromMessage: the raw (uncleaned) scope from a user message, or undefined.
 // Cleaning, lowercasing and capping belong to title.js via the writer.
 export function scopeFromMessage(message) {
-  if (!message || typeof message !== "object" || message.role !== "user") return undefined;
+  if (!isUser(message)) return undefined;
   const raw = typeof message.text === "string" && message.text.trim()
     ? message.text
     : textFromParts(message.parts);
@@ -28,15 +42,13 @@ export function scopeFromMessage(message) {
   return scope.length > 0 ? scope : undefined;
 }
 
-// newestUserMessage: pick the latest user row from a bounded, newest-first read.
-// Explicit timestamps win when the rows are not ordered by the host.
+// newestUserMessage: the full context is read (no window), so the latest user
+// request is chosen by its required time.created stamp, never by array order.
+// If a user row has no usable stamp the answer is undefined, not a silent guess.
 export function newestUserMessage(response) {
   const rows = Array.isArray(response) ? response : Array.isArray(response?.data) ? response.data : [];
-  const users = rows.filter((m) => m && m.role === "user");
+  const users = rows.filter(isUser);
   if (!users.length) return undefined;
-  const stamp = (m) => (typeof m?.time?.created === "number" ? m.time.created : (typeof m?.time === "number" ? m.time : undefined));
-  if (users.every((m) => stamp(m) !== undefined)) {
-    return users.reduce((a, b) => (stamp(a) >= stamp(b) ? a : b));
-  }
-  return users[0];
+  if (!users.every((m) => createdOf(m) !== undefined)) return undefined;
+  return users.reduce((a, b) => (createdOf(a) >= createdOf(b) ? a : b));
 }
