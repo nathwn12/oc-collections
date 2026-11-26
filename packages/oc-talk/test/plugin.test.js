@@ -1,4 +1,5 @@
-// Offline contract tests for the four-tool surface.
+// Offline contract tests for both surfaces: two tools by default for a stranger,
+// four when a host opts in with boardFile/board.
 //
 // These prove what a host can break without any peer running: exactly four tools
 // register with their exact routing descriptions, title resolution answers with
@@ -27,7 +28,9 @@ let loads = 0;
 // state, and a cached module would carry one test's registration into the next.
 const load = () => import(pathToFileURL(ENTRY).href + '?n=' + ++loads);
 
+const DEFAULT_TOOLS = ['talk_send', 'talk_inbox'];
 const TOOLS = ['talk_send', 'talk_inbox', 'talk_board', 'talk_claim'];
+const BOARD_FILE = path.join(os.tmpdir(), 'oc-talk-optin-board.yaml');
 
 const DESCRIPTIONS = {
   talk_send:
@@ -58,9 +61,10 @@ const SESSIONS = [
 const scan = async () => ({ ok: true, sessions: SESSIONS });
 
 // A host-shaped ctx whose tool domain records everything the plugin adds.
-function host() {
+function host(options) {
   const added = [];
   const ctx = {
+    ...(options === undefined ? {} : { options }),
     tool: {
       transform: async (fn) => fn({ add: (tool) => added.push(tool) }),
     },
@@ -68,14 +72,14 @@ function host() {
   return { ctx, added };
 }
 
-test('the V2 definition registers exactly the four talk tools through setup', async () => {
+test('the V2 definition registers exactly the four talk tools when boardFile is set', async () => {
   const mod = await load();
 
   // A host with no tool domain registers nothing and must not throw.
   await assert.doesNotReject(() => mod.default.setup({ tool: {} }));
   await assert.doesNotReject(() => mod.default.setup(undefined));
 
-  const { ctx, added } = host();
+  const { ctx, added } = host({ boardFile: BOARD_FILE });
   await mod.default.setup(ctx);
   assert.deepEqual(added.map((t) => t.name), TOOLS);
 
@@ -86,11 +90,25 @@ test('the V2 definition registers exactly the four talk tools through setup', as
   }
 });
 
+test('a default install registers only two tools and leaks no board convention', async () => {
+  const mod = await load();
+  const { ctx, added } = host(); // no options: the surface a stranger installs
+  await mod.default.setup(ctx);
+  assert.deepEqual(added.map((t) => t.name), DEFAULT_TOOLS);
+
+  const surface = added.map(({ name, description, input, options }) => ({ name, description, input, options }));
+  assert.doesNotMatch(JSON.stringify(surface), /nstack/i, 'the default tool surface must not advertise a host-only board path');
+  const readme = fs.readFileSync(path.join(import.meta.dirname, '..', 'README.md'), 'utf8');
+  assert.doesNotMatch(readme, /nstack/i, 'the quick start and the whole README stay stranger-readable');
+  const pkg = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, '..', 'package.json'), 'utf8'));
+  assert.doesNotMatch(pkg.description, /nstack/i, 'the npm description stays about messaging');
+});
+
 // The eleven lifecycle and conversation verbs are gone, not hidden behind a flag:
 // an absent tool must fail here before a host can offer it again.
 test('the deleted verbs are absent from the surface and from the source', async () => {
   const mod = await load();
-  const { ctx, added } = host();
+  const { ctx, added } = host({ boardFile: BOARD_FILE });
   await mod.default.setup(ctx);
   const names = added.map((t) => t.name);
   assert.equal(names.length, 4, 'the surface is exactly four tools');
@@ -1015,6 +1033,7 @@ function reloadHost(location) {
   const registrations = [];
   const ctx = {
     location,
+    options: { boardFile: BOARD_FILE },
     tool: {
       transform: async (fn) => {
         const entry = { added: [], disposed: 0 };
@@ -1117,11 +1136,21 @@ async function boardTools(t, contents) {
   const file = path.join(dir, 'board.yaml');
   if (contents !== undefined) fs.writeFileSync(file, contents, 'utf8');
   mod.setBoardFile(file);
-  const { ctx, added } = host();
+  const { ctx, added } = host({ boardFile: file });
   await mod.default.setup(ctx);
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  return { file, byName: (name) => added.find((tool) => tool.name === name) };
+  return { file, added, byName: (name) => added.find((tool) => tool.name === name) };
 }
+
+test('boardFile opts in to all four tools and talk_claim keeps its gates', async (t) => {
+  const { added, byName } = await boardTools(t, BOARD);
+  assert.deepEqual(added.map((tool) => tool.name), TOOLS);
+  const refused = JSON.parse((await byName('talk_claim').execute(
+    { seam: 'parser', ticket: 'T-no' }, { ...CALLER, sessionID: 'ses_intruder' },
+  )).content);
+  assert.equal(refused.error, 'seam_taken', 'a held seam is still refused: ' + JSON.stringify(refused));
+  assert.match(refused.reason, /ses_a/, 'the holder is still named');
+});
 
 test('talk_board returns an empty list and a clear message when the board file is missing', async (t) => {
   const { byName, file } = await boardTools(t);

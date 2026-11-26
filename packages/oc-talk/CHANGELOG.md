@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The public surface is two tools again by default: `talk_send` and `talk_inbox`. The `talk_board` and `talk_claim` pair had shipped unconditionally with the board work, so a stranger installing the package was shown four tools and a host-only `.nstack/board.yaml` convention it never configured. Both board tools are now opt-in: they register only when the host passes the `boardFile` option (or `board: true`), with their descriptions, schemas, file resolution and takeover gates unchanged. The README documents the pair as an optional harness convention.
+
 
 - npm metadata alignment: README wording and keywords refreshed (cosmetic).
 ### Added

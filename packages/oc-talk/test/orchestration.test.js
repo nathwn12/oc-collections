@@ -178,7 +178,10 @@ async function toolHost(t, contents, api = async () => ({ ok: true, json: { data
   mod.setBoardFile(file);
   mod.setApiRunner(api);
   const added = [];
-  await mod.default.setup({ tool: { transform: async (fn) => fn({ add: (tool) => added.push(tool) }) } });
+  await mod.default.setup({
+    options: { boardFile: file },
+    tool: { transform: async (fn) => fn({ add: (tool) => added.push(tool) }) },
+  });
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return { file, byName: (name) => added.find((tool) => tool.name === name) };
 }
