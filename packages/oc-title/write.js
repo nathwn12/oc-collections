@@ -43,15 +43,20 @@ export function createWriter(ctx, { options = {}, trace = () => {} } = {}) {
       const rec = await readRecord(id);
       if (!rec) return skip(id, "no matching record");
       if (typeof rec.title !== "string") return skip(id, "no title");
+      // A closed title is final for every event, mapped or unmapped: the
+      // lifecycle map may not reopen a session the title has already closed.
+      const closed = stateOf(rec.title) === "closed";
       // A session the plugin has never stamped gets one pass from whatever event
-      // reaches it, so a missed session.created repairs itself. A closed title is
-      // final: a catch-up may confirm it, never reopen it.
+      // reaches it, so a missed session.created repairs itself. A catch-up may
+      // confirm a closed title, never reopen it.
       let target = state;
       if (target == null) {
         const meta = rec.metadata && typeof rec.metadata === "object" ? rec.metadata["oc-title"] : undefined;
         if (meta && meta.state) return skip(id, "already stamped");
-        target = stateOf(rec.title) === "closed" ? "closed" : deriveState(rec);
+        target = closed ? "closed" : deriveState(rec);
         trace("catch-up " + id + ": derived " + target);
+      } else if (closed) {
+        target = "closed";
       }
       const child = isChild(rec);
       const effective = isArchived(rec) ? "closed" : target;

@@ -146,6 +146,19 @@ test("a catch-up confirms a closed title instead of reopening it", async () => {
   expect(ctx.record("c3").metadata["oc-title"].state).toBe("closed");
 });
 
+test("a mapped lifecycle event does not reopen a closed title", async () => {
+  const ctx = createFakeCtx();
+  ctx.seed("c5", { title: "closed: done thing" });
+  mount(ctx);
+  await ctx.flush();
+  ctx.push(event("session.execution.started", { id: "c5", seq: 1 }));
+  await ctx.waitFor(() => ctx.consumed >= 1);
+  await ctx.flush();
+  await ctx.cleanup();
+  expect(ctx.record("c5").title).toBe("closed: done thing");
+  expect(ctx.record("c5").metadata["oc-title"].state).toBe("closed");
+});
+
 test("a created event that beats its own record still writes", async () => {
   const ctx = createFakeCtx({}, { getMisses: 2 });
   mount(ctx);
