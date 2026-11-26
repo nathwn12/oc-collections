@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+
+- npm metadata alignment: README wording and keywords refreshed (cosmetic).
 ## [1.1.0] - 2026-11-24
 
 ### Added

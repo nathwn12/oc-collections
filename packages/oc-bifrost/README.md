@@ -4,19 +4,13 @@
 
 <h1 align="center">oc-bifrost</h1>
 
-<p align="center"><strong>Run V1-era OpenCode plugins on OpenCode V2: supported hooks bridge across, the rest refuse out loud.</strong></p>
+<p align="center"><strong>Run V1-era OpenCode plugins on V2: supported hooks bridge, the rest refuse out loud.</strong></p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/@nathwn12/oc-bifrost"><img src="https://img.shields.io/npm/v/@nathwn12/oc-bifrost" alt="npm version"></a>
-  <img src="https://img.shields.io/badge/platform-windows--linux-2b3137" alt="platform">
-  <a href="https://github.com/nathwn12/oc-collections/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT"></a>
+  <a href="https://www.npmjs.com/package/@nathwn12/oc-bifrost"><img src="https://img.shields.io/npm/v/@nathwn12%2Foc-bifrost" alt="npm version" /></a>
+  <img src="https://img.shields.io/badge/platform-windows--linux-2b3137" alt="Windows and Linux" />
+  <a href="https://github.com/nathwn12/oc-collections/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT licence" /></a>
 </p>
-
-## Why
-
-The V1 plugin hook API does not mount unchanged on the V2 runtime. `oc-bifrost` takes 24 V1 hooks: 5 bridge fully, 10 bridge with a stated loss, and 9 refuse by design. A lost hook is named, never silently dropped.
-
-Every load prints one verdict per hook — `full`, `partial`, or `unsupported` — and mirrors it to a durable report file, because the host discards stdout in service and stdio modes. Four plugin sources are supported: a GitHub snapshot, a registry package, a local path, and the bundled offline `preset:rtk`.
 
 ## Install
 
@@ -27,22 +21,21 @@ Add one entry to the `plugins` array in your `opencode.jsonc` and restart OpenCo
   "plugins": [
     {
       "package": "@nathwn12/oc-bifrost",
-      "options": {
-        "plugins": ["github:obra/superpowers"],
-        "trustRemote": true
-      }
+      "options": { "plugins": ["github:obra/superpowers"], "trustRemote": true }
     }
   ]
 }
 ```
 
-## Use
+## Use it
 
-Name the plugins you want in the `plugins` option. A cold `github:` cache refuses until you set `trustRemote`, then pins the snapshot by commit and digest. Registry packages, local paths and `preset:rtk` need no remote trust.
+Name the plugins you want in the `plugins` option. Accepts four sources: a GitHub snapshot, a registry package, a local path, and the bundled offline `preset:rtk`. A cold `github:` cache refuses until you set `trustRemote`, then pins the snapshot by commit and digest. Registry packages, local paths and `preset:rtk` need no remote trust.
 
-On each start, read the mount report. It gives one line per hook, so a `partial` or `unsupported` verdict tells you exactly what changed before you blame your own plugin. The same lines are written to the durable report file for headless runs.
+The bridge takes 24 V1 hooks: 5 bridge fully, 10 bridge with a stated loss, and 9 refuse by design. A lost hook is named, never silently dropped. Every load prints `full`, `partial`, or `unsupported` per hook and mirrors it to a durable report file, because the host discards stdout in service and stdio modes.
 
-## Configure
+On each start, read the mount report so a `partial` or `unsupported` verdict tells you exactly what changed before you blame your own plugin.
+
+### Configure it
 
 All settings live in the `options` object of the entry above:
 
@@ -60,6 +53,10 @@ A stranded-file scan warns when a V1 plugin file sits in a discovery directory t
 - Node 22 or later.
 - The npm registry must be reachable for the first fetch of a registry or GitHub plugin.
 
+## Status
+
+**Unverified** — as-is, use at your own risk.
+
 ## Links
 
 - [Issues](https://github.com/nathwn12/oc-collections/issues)
@@ -67,5 +64,3 @@ A stranded-file scan warns when a V1 plugin file sits in a discovery directory t
 - [Guide](https://github.com/nathwn12/oc-collections/blob/main/packages/oc-bifrost/docs/GUIDE.md)
 - [Third-party notices](https://github.com/nathwn12/oc-collections/blob/main/packages/oc-bifrost/THIRD-PARTY-NOTICES.md)
 - [MIT licence](https://github.com/nathwn12/oc-collections/blob/main/LICENSE)
-
-<p align="center"><sub>Built by nathwn12</sub></p>

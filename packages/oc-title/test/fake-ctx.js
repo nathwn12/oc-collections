@@ -20,6 +20,8 @@ export function createFakeCtx(options = {}, settings = {}) {
   const listCalls = [];
   const subscribeArgs = [];
   const subscriptions = [];
+  const tools = [];
+  const messages = new Map();
   let activeStream = null;
   let attachedCleanup = null;
   let cleanupStarted = false;
@@ -103,6 +105,15 @@ export function createFakeCtx(options = {}, settings = {}) {
     updates,
     getCalls,
     listCalls,
+    tools,
+    messages,
+
+    tool: {
+      async transform(cb) {
+        cb({ add: (tool) => tools.push(tool) });
+        return { dispose() {} };
+      },
+    },
 
     event: {
       subscribe(args = {}) {
@@ -123,6 +134,11 @@ export function createFakeCtx(options = {}, settings = {}) {
         if (missed < getMisses) { missed++; return wrapGet ? { data: undefined } : undefined; }
         const record = records.get(sessionID);
         return wrapGet ? { data: record } : record;
+      },
+      // Mirrors the documented V2 SessionContext.context: the full message
+      // array for one session, with no invented message.list surface.
+      async context({ sessionID } = {}) {
+        return messages.get(sessionID) ?? [];
       },
       async list() {
         listCalls.push(true);
@@ -155,6 +171,9 @@ export function createFakeCtx(options = {}, settings = {}) {
     },
     record(sessionID) {
       return records.get(sessionID);
+    },
+    seedContext(sessionID, rows) {
+      messages.set(sessionID, rows);
     },
     push(event, index = subscriptions.length - 1) {
       const stream = subscriptions[index];

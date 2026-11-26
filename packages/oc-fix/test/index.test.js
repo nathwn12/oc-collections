@@ -140,3 +140,83 @@ test("10. an unclamped call leaves no mark", async () => {
   after.cb(done);
   expect(done.result.metadata).toBeUndefined();
 });
+
+test("11. clamped shell call marks the result it returns", async () => {
+  const out = { content: "ok" };
+  const tools = [{ id: "shell", execute: () => Promise.resolve(out) }];
+  const { ctx, hooks } = ctxFor({ tools });
+  await plugin.setup(ctx);
+  const before = hooks.find((h) => h.name === "execute.before");
+  const event = { tool: "shell", id: "clamp_mark", input: { command: "echo hi", timeout: 9999999 } };
+  before.cb(event);
+  const result = await tools[0].execute(event.input, {});
+  expect(result.metadata["oc-fix"].clamped).toBe(true);
+  expect(result.metadata["oc-fix"].requested).toBe(9999999);
+  expect(result.metadata["oc-fix"].applied).toBe(600000);
+  expect(result.content).toBe("ok");
+});
+
+test("12. unclamped shell input returns the exact original result", async () => {
+  const out = { content: "ok" };
+  const tools = [{ id: "shell", execute: () => Promise.resolve(out) }];
+  const { ctx, hooks } = ctxFor({ tools });
+  await plugin.setup(ctx);
+  const before = hooks.find((h) => h.name === "execute.before");
+  const event = { tool: "shell", id: "unclamped", input: { command: "echo hi", timeout: 120000 } };
+  before.cb(event);
+  const result = await tools[0].execute(event.input, {});
+  expect(result).toBe(out);
+  expect(result.metadata).toBeUndefined();
+});
+
+test("13. background shell is not clamped and returns unchanged", async () => {
+  const out = { content: "ok" };
+  const tools = [{ id: "shell", execute: () => Promise.resolve(out) }];
+  const { ctx, hooks } = ctxFor({ tools });
+  await plugin.setup(ctx);
+  const before = hooks.find((h) => h.name === "execute.before");
+  const event = { tool: "shell", id: "bg", input: { command: "x", background: true, timeout: 14400000 } };
+  before.cb(event);
+  expect(event.input.timeout).toBe(14400000);
+  const result = await tools[0].execute(event.input, {});
+  expect(result).toBe(out);
+  expect(result.metadata).toBeUndefined();
+});
+
+test("14. a clamped schema-shaped result keeps its nested fields", async () => {
+  const out = {
+    content: [{ type: "text", text: "done" }],
+    metadata: { schema: "v1", nested: { a: 1 } },
+  };
+  const tools = [{ id: "bash", execute: () => Promise.resolve(out) }];
+  const { ctx, hooks } = ctxFor({ tools });
+  await plugin.setup(ctx);
+  const before = hooks.find((h) => h.name === "execute.before");
+  const event = { tool: "bash", id: "nested", input: { command: "x", timeout: 9999999 } };
+  before.cb(event);
+  const result = await tools[0].execute(event.input, {});
+  expect(result.content).toEqual([{ type: "text", text: "done" }]);
+  expect(result.metadata.schema).toBe("v1");
+  expect(result.metadata.nested).toEqual({ a: 1 });
+  expect(result.metadata["oc-fix"].clamped).toBe(true);
+  expect(out.metadata["oc-fix"]).toBeUndefined();
+});
+
+test("15. a second setup keeps one wrapper and one clamp mark", async () => {
+  const out = { content: "ok" };
+  const tools = [{ id: "shell", execute: () => Promise.resolve(out) }];
+  const { ctx, hooks } = ctxFor({ tools });
+  await plugin.setup(ctx);
+  const once = tools[0].execute;
+  await plugin.setup(ctx);
+  expect(tools[0].execute).toBe(once);
+  const before = hooks.find((h) => h.name === "execute.before");
+  const event = { tool: "shell", id: "double", input: { command: "x", timeout: 9999999 } };
+  before.cb(event);
+  const result = await tools[0].execute(event.input, {});
+  const stamp = result.metadata["oc-fix"];
+  expect(stamp.clamped).toBe(true);
+  expect(typeof stamp.clamped).toBe("boolean");
+  expect(stamp.requested).toBe(9999999);
+  expect(stamp.applied).toBe(600000);
+});

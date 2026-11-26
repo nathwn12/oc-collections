@@ -1,7 +1,7 @@
 {
   "name": "oc-plugin-view",
   "version": "0.2.0",
-  "description": "A Plugins section for the OpenCode sidebar that lists installed and loaded server plugins.",
+  "description": "See every loaded OpenCode server plugin in the sidebar, without opening a dialog.",
   "type": "module",
   "license": "MIT",
   "author": "nathwn12",
@@ -15,8 +15,12 @@
   "keywords": [
     "opencode",
     "opencode-plugin",
+    "plugin",
     "tui",
-    "plugin"
+    "sidebar",
+    "typescript",
+    "tooling",
+    "server"
   ],
   "exports": {
     ".": {

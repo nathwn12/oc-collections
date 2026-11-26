@@ -3,6 +3,7 @@
 import { normalizeTitle, stateOf } from "./title.js";
 import { STATE_FOR, sessionIDOf, seqOf, deriveState, isChild } from "./state.js";
 import { createWriter, counters } from "./write.js";
+import { scopeFromMessage, newestUserMessage } from "./refresh.js";
 
 function sleep(ms, signal) { // Wait for a backoff delay or an immediate abort.
   return new Promise((resolve) => {
@@ -20,6 +21,45 @@ export default {
     const o = ctx.options ?? {};
     const options = { ...(Number.isFinite(o.maxLength) && { maxLength: o.maxLength }), ...(typeof o.fallbackTitle === "string" && { fallbackTitle: o.fallbackTitle }) };
     const writer = createWriter(ctx, { options, trace });
+
+    // Explicit scope refresh: a small tool that rewrites only the scope text of a
+    // title this plugin already stamped. The writer owns every guard and ordering.
+    if (ctx.tool && typeof ctx.tool.transform === "function") {
+      void ctx.tool.transform((editor) => {
+        editor.add({
+          name: "oc_title_refresh",
+          description: "Refresh an OpenCode session title's scope from the session's latest user request (or an explicit scope), without changing its state, closing a closed session, or touching a title oc-title has not stamped. Returns JSON with ok, sessionID and outcome.",
+          input: {
+            type: "object",
+            properties: {
+              session: { type: "string", description: "Session id to refresh; defaults to the calling session" },
+              scope: { type: "string", description: "Explicit scope text; defaults to the latest user request in the session" },
+            },
+            additionalProperties: false,
+          },
+          execute: async (input, context) => {
+            const args = input && typeof input === "object" ? input : {};
+            const id = (typeof args.session === "string" && args.session) || (typeof context?.sessionID === "string" ? context.sessionID : "");
+            if (!id) return { content: JSON.stringify({ ok: false, reason: "no session id" }) };
+            let scope = typeof args.scope === "string" && args.scope.trim() ? args.scope : undefined;
+            if (!scope) {
+              // Documented V2 SessionContext method: session.context({sessionID})
+              // returns the full SessionMessageInfo[]; there is no message.list.
+              if (typeof ctx?.session?.context !== "function") return { content: JSON.stringify({ ok: false, reason: "no scope and no session context reader" }) };
+              try {
+                scope = scopeFromMessage(newestUserMessage(await ctx.session.context({ sessionID: id })));
+              } catch (err) {
+                return { content: JSON.stringify({ ok: false, reason: "message read failed: " + (err?.message ?? err) }) };
+              }
+            }
+            if (!scope) return { content: JSON.stringify({ ok: false, reason: "no user scope" }) };
+            const outcome = await writer.refresh(id, scope);
+            return { content: JSON.stringify({ ok: outcome === "refreshed", sessionID: id, outcome }) };
+          },
+        });
+      });
+    }
+
     const controller = new AbortController();
 
     void (async () => { // Sweep existing sessions without ever throwing out.

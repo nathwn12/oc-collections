@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+
+- npm metadata alignment: README wording and keywords refreshed (cosmetic).
 ### Added
 
 - `talk_board`: read `<repo>/.nstack/board.yaml` as rows of `{session, state, ticket, seam, since}`; a missing file returns an empty list and a clear message instead of an error. Read-only: it never claims a seam or changes the board.

@@ -1,16 +1,18 @@
 {
   "name": "oc-flight-deck",
   "version": "0.24.0",
-  "description": "Live OpenCode V2 session telemetry — agent, model, branch, cost, tokens, cache hit rate and context usage in your sidebar.",
+  "description": "Live cost, token, cache and context telemetry for every OpenCode session in your sidebar.",
   "keywords": [
     "opencode",
     "opencode-plugin",
-    "opencode-tui",
+    "plugin",
     "tui",
-    "cli",
-    "sidebar",
     "telemetry",
-    "cost"
+    "cost",
+    "tokens",
+    "typescript",
+    "tooling",
+    "session"
   ],
   "license": "MIT",
   "author": "nathwn12",

@@ -1,6 +1,6 @@
 // The only ctx-touching module: serialized, guarded title writes.
 
-import { normalizeTitle, stateOf } from "./title.js";
+import { normalizeTitle, stateOf, STATES } from "./title.js";
 import { isChild, isArchived, deriveState } from "./state.js";
 
 export const counters = { events: 0, writes: 0, skips: 0, failures: 0 }; // Shared health counters.
@@ -76,15 +76,53 @@ export function createWriter(ctx, { options = {}, trace = () => {} } = {}) {
     }
   }
 
-  function enqueue(id, state, seq) { // Serialize a write and never reject the returned promise.
+  function enqueueRun(id, run) { // Serialize any write on one session's chain and never reject.
     const prev = chains.get(id) ?? Promise.resolve();
-    const run = prev.then(() => apply(id, state, seq));
-    chains.set(id, run);
-    // Forget a settled chain unless a newer event replaced it, so neither the map
+    const chained = prev.then(run);
+    chains.set(id, chained);
+    // Forget a settled chain unless a newer write replaced it, so neither the map
     // nor flush() grows with every session the process has ever seen.
-    const settle = () => { if (chains.get(id) === run) chains.delete(id); };
-    void run.then(settle, settle);
-    return run;
+    const settle = () => { if (chains.get(id) === chained) chains.delete(id); };
+    void chained.then(settle, settle);
+    return chained;
+  }
+
+  function enqueue(id, state, seq) { // A lifecycle event write.
+    return enqueueRun(id, () => apply(id, state, seq));
+  }
+
+  async function applyRefresh(id, scope) { // Rewrite only the scope of an existing auto title.
+    try {
+      if (typeof scope !== "string" || !scope.trim()) return skip(id, "no scope");
+      const rec = await readRecord(id);
+      if (!rec) return skip(id, "no matching record");
+      if (typeof rec.title !== "string") return skip(id, "no title");
+      const old = rec.metadata && typeof rec.metadata === "object" ? rec.metadata : {};
+      const meta = old["oc-title"];
+      if (!meta || typeof meta !== "object") return skip(id, "not stamped");
+      const state = meta.state;
+      if (!STATES.includes(state)) return skip(id, "unknown state");
+      // Closed is final whether the record is archived or the title/metadata
+      // already reads closed: a refresh never reopens a session.
+      if (state === "closed" || stateOf(rec.title) === "closed" || isArchived(rec)) return skip(id, "closed is final");
+      const effective = state; // Keep the state: a parked session stays parked.
+      const next = normalizeTitle(scope, isChild(rec) ? null : effective, options);
+      if (rec.title === next) return skip(id, "unchanged");
+      const metadata = { ...old, "oc-title": { state: effective, at: Date.now() } };
+      await ctx.session.update({ sessionID: id, title: next, metadata });
+      counters.writes++;
+      trace("refresh " + id + ": " + next);
+      return "refreshed";
+    } catch (err) {
+      counters.failures++;
+      trace("refresh fail " + id + ": " + (err?.message ?? err));
+      return "failed";
+    }
+  }
+
+  // refresh: explicit scope update, serialized with lifecycle events on one chain.
+  function refresh(id, scope) {
+    return enqueueRun(id, () => applyRefresh(id, scope));
   }
 
   async function flush(timeoutMs = 2000) { // Await in-flight writes, capped by a timeout.
@@ -96,5 +134,5 @@ export function createWriter(ctx, { options = {}, trace = () => {} } = {}) {
     clearTimeout(timer);
   }
 
-  return { enqueue, flush };
+  return { enqueue, refresh, flush };
 }

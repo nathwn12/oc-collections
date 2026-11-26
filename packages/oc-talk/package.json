@@ -1,7 +1,7 @@
 {
   "name": "oc-talk",
   "version": "0.6.2",
-  "description": "Two-way synthetic messaging between OpenCode sessions: send an addressed note into a peer and read the reply.",
+  "description": "Two-way cross-session messaging for OpenCode: send an addressed note and read the reply.",
   "keywords": [
     "opencode",
     "opencode-plugin",

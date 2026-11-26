@@ -9,6 +9,11 @@ deadline and clamps a foreground shell timeout, so a tool cannot hold a turn for
 - task, agent and subagent are exempt: they own their own lifetime.
 - An expired call throws one line naming the tool and the budget, so the failure is
   a fact in the transcript instead of a stalled turn.
+- A clamped call is observable: the tool's returned result carries
+  `metadata["oc-fix"] = { clamped: true, requested, applied }` alongside the
+  original output. Unclamped calls return the result untouched, and primitive or
+  array output is never reshaped. If a host drops the result metadata, the same
+  clamp decision is logged when `OC_FIX_TRACE=1` is set.
 
 ## Shape
 
@@ -19,4 +24,5 @@ Tests sit in test/.
 
     bun test .
 
-Set OC_FIX_TRACE=1 to log each guard decision.
+Set OC_FIX_TRACE=1 to log each guard decision, including every clamp and the
+mark attached to its returned result (the fallback when a host drops metadata).
