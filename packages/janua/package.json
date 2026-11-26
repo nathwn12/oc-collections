@@ -1,7 +1,7 @@
 {
   "name": "@nathwn12/janua",
   "version": "0.5.2",
-  "description": "A stdio MCP server that gives an agent persistent interactive terminals: spawn a program in a real PTY, talk to it, read what it answers.",
+  "description": "Persistent interactive terminals for agents: spawn once, then write and read across calls.",
   "license": "MIT",
   "author": "nathwn12",
   "repository": {
@@ -9,6 +9,7 @@
     "url": "git+https://github.com/nathwn12/oc-collections.git",
     "directory": "packages/janua"
   },
+  "homepage": "https://github.com/nathwn12/oc-collections/tree/main/packages/janua",
   "engines": {
     "node": "^22.23.4 || ^24.22.1 || >=26.12.1"
   },
@@ -33,11 +34,15 @@
   ],
   "keywords": [
     "mcp",
+    "mcp-server",
+    "model-context-protocol",
     "pty",
     "terminal",
     "interactive",
-    "stdio",
-    "agent"
+    "agent",
+    "typescript",
+    "opencode",
+    "tooling"
   ],
   "dependencies": {
     "@lydell/node-pty": "^1.1.0",

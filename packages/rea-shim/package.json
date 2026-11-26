@@ -1,13 +1,14 @@
 {
   "name": "rea-shim",
   "version": "0.4.0",
-  "description": "Unofficial one-line shortcut to Craft Anything on Windows x64. Starts the desktop app with no flag, or serves an MCP JSON-RPC channel with --mcp. Verifies a pinned portable release before use. Ships no upstream code. All credit to the Craft Anything authors.",
+  "description": "One command installs Craft Anything on Windows x64; --mcp serves a JSON-RPC client.",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/nathwn12/oc-collections.git",
     "directory": "packages/rea-shim"
   },
+  "homepage": "https://github.com/nathwn12/oc-collections/tree/main/packages/rea-shim",
   "engines": {
     "node": "^22.23.4 || ^24.22.1 || >=26.12.1"
   },
@@ -30,14 +31,16 @@
     "assets"
   ],
   "keywords": [
-    "reverse-engineer-anything",
-    "rea",
     "mcp",
-    "craft-anything",
+    "mcp-server",
     "installer",
     "launcher",
     "windows",
-    "desktop"
+    "desktop",
+    "craft-anything",
+    "typescript",
+    "tooling",
+    "app"
   ],
   "author": "nathwn12"
 }

@@ -58,26 +58,6 @@ The messaging tools work across sessions, subagents and agents: a reply is a rea
 - Node 22 or newer.
 - The harness's own local service with a readable state file. No network, no telemetry.
 
-## Development
-
-From `packages/oc-talk`:
-
-```text
-node --test "test/**/*.test.js"
-OC_TALK_LIVE=1 node --test "test/**/*.test.js"
-```
-
-```text
-src/index.js           plugin and the four tools
-src/board.mjs          the plain-YAML board seam
-src/transport.mjs      the only HTTP client
-test/plugin.test.js    offline tool contracts
-test/transport.test.js wire shape and credential redaction
-test/live.test.js      opt-in service probe
-package.json           manifest
-README.md              this file
-```
-
 ## Status
 
 **Unverified** — as-is, use at your own risk.
@@ -88,5 +68,3 @@ README.md              this file
 - [Releases](https://github.com/nathwn12/oc-collections/releases)
 - [Package source](https://github.com/nathwn12/oc-collections/tree/main/packages/oc-talk)
 - [MIT licence](https://github.com/nathwn12/oc-collections/blob/main/LICENSE)
-
-<p align="center"><sub>Built by nathwn12</sub></p>
