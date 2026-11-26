@@ -24,8 +24,8 @@ An MCP goes into your client's server list, a plugin into `plugins` in your `ope
 
 ## Requirements
 
-- Node 22 or newer. `janua` and `rea-shim` narrow that to `^22.23.4`, `^24.22.1` or `>=26.12.1`; `oc-flight-deck` and `oc-plugin-view` also run under Bun 1.4 or newer.
-- OpenCode 2 for the plugins and the starter. The floors differ per package: `2.1.1` for `oc-flight-deck`, `2.2.0` for `oc-harness-setup`, `2.2.6` for `oc-bifrost` and `oc-plugin-view`. Each package README states its own.
+- Node 22 or newer. Each workspace's `package.json` declares its own engines range; read that source instead of a copied list.
+- OpenCode 2 for the plugins and the starter. Each package's install guide and manifest state its own host floor; read those sources rather than a copied table.
 - Windows 10 or 11 x64 for `oc-harness-setup` and `rea-shim`. `janua` runs on Windows, Linux and macOS.
 - An MCP client for `janua`.
 

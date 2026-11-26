@@ -28,7 +28,7 @@ opencode plugin check     # re-resolves online
 opencode plugin list      # shows what is actually loaded
 ```
 
-Route floors, all per `INSTALL.md`: `github:` needs oc-bifrost 0.4.0 or later; registry specifiers need 1.6.0 or later; `preset:rtk` needs the `rtk` binary (>= 0.23.0) on `PATH`. Confirm the host is OpenCode V2 first (`opencode --version` reports `2.x`) and read the config path from `opencode debug paths` rather than assuming a default location.
+Route floors are stated in `INSTALL.md`: each specifier route has its own minimum there, as does the `rtk` binary for `preset:rtk`. Confirm the host is OpenCode V2 first (`opencode --version` reports `2.x`) and read the config path from `opencode debug paths` rather than assuming a default location.
 
 To work on it, from this package's directory (`packages/oc-bifrost` in the monorepo; the monorepo root works too with `-w @nathwn12/oc-bifrost`) — only the scripts `package.json` declares:
 
@@ -78,7 +78,7 @@ npm run test        # node test runner over test/*.test.js
 
 ## Host contract
 
-- Targets the OpenCode V2 runtime: the host provides plugin loading, the `plugins` array config surface, and the `@opencode/plugin` API the bridge registers against (peer `>=2.2.6 <3`, so the host supplies it). The host needs Node 22 or later.
+- Targets the OpenCode V2 runtime: the host provides plugin loading, the `plugins` array config surface, and the `@opencode/plugin` API the bridge registers against; the accepted peer range is declared in `package.json`, so the host supplies it. The host needs Node 22 or later.
 - What the host provides versus what the repo ships, as `package.json` states it: the peer above comes from the host; the repo ships zero runtime dependencies (no `dependencies` field) and bundles the vendored preset plus its docs in the published file list.
 - What the bridge translates between API versions: V1 hook keys become V2 registration calls (`src/hooks.ts`); the V1 `PluginInput` facade (`src/context.ts`); the shell facade (`src/shell.ts`). Modules route by shape — V1 factory / V1 module bridges hook by hook at the matrix level (`full` = bridged with write-back, `partial` = bridged with a stated loss, `unsupported` = refused out loud, never faked); a V2 `{ id, setup }` definition mounts as-is exactly as the host would mount it; an Effect-only `{ id, effect }` definition is refused out loud. Anything unmapped warns at load and `strict: true` aborts instead.
 
