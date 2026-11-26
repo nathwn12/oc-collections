@@ -38,7 +38,7 @@ test('takeover of an expired lease from a dead session is allowed and recorded',
   const file = path.join(dir, '.nstack', 'board.yaml');
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, boardYaml([leasedRow()]));
-  const result = await claim(file, (rows) => plan(rows, held({ takeover: true, reason: 'holder exited', liveness: { session: 'ses_a', live: false } })));
+  const result = await claim(file, (rows) => plan(rows, held({ takeover: true, reason: 'holder exited', liveness: { session: 'ses_a', live: false, code: 'session_not_found' } })));
   assert.equal(result.ok, true, JSON.stringify(result));
   const parsed = parseBoard(fs.readFileSync(file, 'utf8'));
   assert.equal(parsed.rows.length, 1);
@@ -51,7 +51,7 @@ test('takeover of an expired lease from a dead session is allowed and recorded',
 
 // 3. All three takeover gates are mandatory.
 test('takeover without a reason, liveness, a matching holder or expiry is refused', () => {
-  const noReason = plan([leasedRow()], held({ takeover: true, liveness: { session: 'ses_a', live: false } }));
+  const noReason = plan([leasedRow()], held({ takeover: true, liveness: { session: 'ses_a', live: false, code: 'session_not_found' } }));
   assert.equal(noReason.error, 'bad_request');
   assert.match(noReason.reason, /reason/);
 
@@ -59,11 +59,11 @@ test('takeover without a reason, liveness, a matching holder or expiry is refuse
   assert.equal(noLiveness.error, 'seam_taken');
   assert.match(noLiveness.reason, /liveness check/);
 
-  const wrongHolder = plan([leasedRow()], held({ takeover: true, reason: 'x', liveness: { session: 'ses_z', live: false } }));
+  const wrongHolder = plan([leasedRow()], held({ takeover: true, reason: 'x', liveness: { session: 'ses_z', live: false, code: 'session_not_found' } }));
   assert.equal(wrongHolder.error, 'seam_taken');
   assert.match(wrongHolder.reason, /liveness check/);
 
-  const fresh = plan([leasedRow({ leaseUntil: '2026-01-03T00:00:00.000Z' })], held({ takeover: true, reason: 'x', liveness: { session: 'ses_a', live: false } }));
+  const fresh = plan([leasedRow({ leaseUntil: '2026-01-03T00:00:00.000Z' })], held({ takeover: true, reason: 'x', liveness: { session: 'ses_a', live: false, code: 'session_not_found' } }));
   assert.equal(fresh.error, 'seam_taken');
   assert.match(fresh.reason, /lease has not expired/);
 });
@@ -235,4 +235,48 @@ test('readBoard exposes the raw snapshot used by the compare guard', (t) => {
   const out = readBoard(file);
   assert.equal(out.ok, true);
   assert.equal(out.raw, text);
+});
+
+// --- cold-review finding 1: only an explicit session_not_found proves "gone".
+
+test('a non-not-found liveness failure never authorizes takeover', () => {
+  for (const code of ['backend_unavailable', 'timeout', 'backend_error', '']) {
+    const out = plan([leasedRow()], held({ takeover: true, reason: 'x', liveness: { session: 'ses_a', live: false, code } }));
+    assert.equal(out.error, 'seam_taken', 'code ' + JSON.stringify(code));
+    assert.match(out.reason, /not proven gone/, JSON.stringify(out));
+    assert.match(out.reason, /ses_a/);
+  }
+});
+
+test('a live service answer still refuses takeover with a reason present', () => {
+  const out = plan([leasedRow()], held({ takeover: true, reason: 'x', liveness: { session: 'ses_a', live: true, code: '' } }));
+  assert.equal(out.error, 'seam_taken');
+  assert.match(out.reason, /still live/);
+});
+
+test('takeover:false is a harmless boolean and a non-boolean is bad_request', () => {
+  const free = plan([], held({ takeover: false }));
+  assert.ok(free.row, JSON.stringify(free));
+  assert.equal(free.row.session, 'ses_b');
+  const taken = plan([leasedRow()], held({ takeover: false }));
+  assert.equal(taken.error, 'seam_taken');
+  const bad = plan([], held({ takeover: 'yes' }));
+  assert.equal(bad.error, 'bad_request');
+});
+
+test('talk_claim refuses takeover on each non-not-found backend failure and writes nothing', async (t) => {
+  for (const code of ['backend_unavailable', 'timeout', 'backend_error']) {
+    const api = async (args) => {
+      if (args[0] === 'session.get') return { ok: false, code, detail: 'lookup failed' };
+      return { ok: true, json: { data: {} } };
+    };
+    const { file, byName } = await toolHost(t, boardYaml([leasedRow()]), api);
+    const before = fs.readFileSync(file, 'utf8');
+    const out = JSON.parse((await byName('talk_claim').execute(
+      { seam: 'parser', takeover: true, reason: 'x' }, { sessionID: 'ses_b' },
+    )).content);
+    assert.equal(out.error, 'seam_taken', code + ': ' + JSON.stringify(out));
+    assert.match(out.reason, /not proven gone/);
+    assert.equal(fs.readFileSync(file, 'utf8'), before, code + ': the board must be untouched');
+  }
 });

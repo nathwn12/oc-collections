@@ -77,11 +77,13 @@ The five public fields never change, so hand-edited YAML and the `{rows}` tool
 contract stay compatible with older boards.
 
 Another session may take a held seam only with an explicit
-`talk_claim { "seam": "...", "takeover": true, "reason": "..." }` **and** all three
-of these hold: the holder session is gone (checked against the running service),
-the lease has expired, and a reason is recorded on the row. A live lessor is never
-stolen, a row with no lease is never stolen, and a takeover without a reason is
-refused. Claims take a sidecar lock for the whole read-modify-write and compare
+`talk_claim { "seam": "...", "takeover": true, "reason": "..." }` **and** all four
+of these hold: the liveness check names that holder, the service answered
+`session_not_found` for it (a `backend_unavailable`, `timeout` or `backend_error`
+answer is not proof the holder is gone), the lease has expired, and a reason is
+recorded on the row. A live lessor is never stolen, a row with no lease is never
+stolen, and a takeover without a reason is refused. `takeover: false` is a
+harmless no-op boolean. Claims take a sidecar lock for the whole read-modify-write and compare
 the file before renaming it, so a hand edit landing mid-claim is reported as
 `board_changed` instead of silently losing a row. Retry the claim after reading
 the board again.

@@ -307,7 +307,7 @@ export function planClaim(rows, { caller, seam, state, ticket, now, takeover, re
   const unsafe = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/;
   if (unsafe.test(seam)) return { error: 'bad_request', reason: 'seam must not contain control characters or line breaks' };
   if (typeof ticket === 'string' && unsafe.test(ticket)) return { error: 'bad_request', reason: 'ticket must not contain control characters or line breaks' };
-  if (takeover !== undefined && takeover !== true) return { error: 'bad_request', reason: 'takeover must be true when supplied' };
+  if (takeover !== undefined && takeover !== true && takeover !== false) return { error: 'bad_request', reason: 'takeover must be a boolean' };
   if (takeover === true && (typeof reason !== 'string' || !reason.trim())) return { error: 'bad_request', reason: 'takeover needs a non-empty reason' };
   const holders = rows.filter((row) => row.seam === seam && row.session !== caller);
   const live = holders.find((row) => row.state !== 'closed');
@@ -319,14 +319,18 @@ export function planClaim(rows, { caller, seam, state, ticket, now, takeover, re
         reason: 'seam "' + seam + '" is held by ' + live.session + ' (state ' + live.state + '); no row was changed. Coordinate with that session through talk_send, or have it release the seam.',
       };
     }
-    // Three gates, all required: the liveness check must name this holder, the
-    // holder must be gone, and its lease must have run out. A live lessor is
-    // never stolen, whatever the board says.
+    // Four gates, all required: the liveness check must name this holder, the
+    // service must have answered session_not_found, the lease must have run out,
+    // and a reason was checked above. A live lessor is never stolen, and a
+    // lookup that failed for any other reason is not proof the holder is gone.
     if (!liveness || liveness.session !== live.session) {
       return { error: 'seam_taken', reason: 'seam "' + seam + '" is held by ' + live.session + ' (state ' + live.state + '); no liveness check for that holder; no row was changed.' };
     }
     if (liveness.live) {
       return { error: 'seam_taken', reason: 'seam "' + seam + '" is held by ' + live.session + ' (state ' + live.state + '); that session is still live, so its lease was not stolen. Coordinate through talk_send.' };
+    }
+    if (liveness.code !== 'session_not_found') {
+      return { error: 'seam_taken', reason: 'seam "' + seam + '" is held by ' + live.session + ' (state ' + live.state + '); the liveness check failed with ' + (liveness.code || 'an unknown error') + ', so the holder was not proven gone; no row was changed.' };
     }
     if (!isExpired(live, now)) {
       return { error: 'seam_taken', reason: 'seam "' + seam + '" is held by ' + live.session + ' (state ' + live.state + '); its lease has not expired. Coordinate through talk_send.' };
