@@ -1,0 +1,17 @@
+project: .
+name: oc-collections
+goal: |-
+  Adopt the canonical phase-1 docs gate locally, report-only, in one isolated docs commit.
+seam: |-
+  .nstack/plan.yaml, spec/docs-structure.md, spec/checker.md, adr/0001-vendor-docs-gate.yaml,
+  docs-check.mjs, docs-check.json, .gitattributes, .github/workflows/docs-report.yml
+check: |-
+  node docs-check.mjs --report exits 0; a planted wrong checker SHA makes --strict exit 1 with the exact mismatch on the real checkout; the byte-exact restored config clears the checker finding; git diff --cached --check exits 0; staged paths exact; clean after commit.
+undo: |-
+  git revert <sha>
+state: |-
+  Plan, spec and ADR written before the vendored pair. Existing root AGENTS.md and README.md preserved verbatim.
+  Local-only: scratch worktree cut from refs/heads/main, no network, no push; PR #139 checkout untouched.
+log:
+  - cycle: 0
+    note: report green; strict red on planted pin then checker-clean on restore; pre-existing AGENTS.md facts remain report-only findings by design; receipt recorded on commit.
