@@ -25,7 +25,7 @@
  *
  * Order is the workspace-plan order, the same list the root fan-out uses;
  * packs run concurrently but install and probe in that order. The release lane
- * passes --package to scope this to the released package; a bare run still proves all seven.
+ * passes --package to scope this to the released package; a bare run still proves every workspace.
  *
  * `--check` proves this harness in both directions, offline against fixtures:
  * a good fixture installs and probes clean; a wrong `main`, an entry file

@@ -48,8 +48,8 @@ function releasedPackages() {
   let m;
   while ((m = re.exec(text))) found.push({ dir: `packages/${m[2]}`, name: m[1] });
   const dirs = new Set(found.map((p) => p.dir));
-  if (found.length !== 7 || dirs.size !== 7 || found.some((p) => !p.name || !p.dir)) {
-    throw new Error(`check-docs: expected 7 released packages in scripts/index-registry.ps1, parsed ${found.length}`);
+  if (found.length !== 8 || dirs.size !== 8 || found.some((p) => !p.name || !p.dir)) {
+    throw new Error(`check-docs: expected 8 released packages in scripts/index-registry.ps1, parsed ${found.length}`);
   }
   return found;
 }

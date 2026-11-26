@@ -80,10 +80,11 @@ $ua = @{ 'User-Agent' = 'oc-collections-index-check/1.0' }
 # This is a reasoned omission, not an allowlist of names to skip: each one must
 # still exist in the tree (a vanish is a failure), and a table row for one is a
 # failure too, so the table and this list can never both claim the same package.
-# No entry remains: the guard stays for any future private package a stranger
+# oc-title was omitted here while it was private; the owner has since admitted
+# it as a public package, so it is released from this repo and has its own table
+# row. oc-fix stays omitted: the guard remains for private packages a stranger
 # cannot install.
 $Omitted = @{
-    'oc-title' = 'private: developed in-tree, wired by its checkout, no npm release'
     'oc-fix'   = 'private: developed in-tree, wired by its checkout, no npm release'
 }
 
@@ -297,8 +298,8 @@ foreach ($row in $rows) {
     # The Version cell is the table's own claim about published bytes, so its
     # backticked pin is what gets asserted -- never a link. A row carrying no pin
     # is not an installation target: `oc-collections` (kind `repo`, this
-    # monorepo's private root manifest) and `oc-talk` (private, owner
-    # ruling) both say so in their own cells, so no name list is needed. A
+    # monorepo's private root manifest) says so in its own cell, so no name
+    # list is needed. A
     # released package that drops its pin is still caught, by structural mode's
     # "version cell names no version".
     $pin = if ($versionCell -match '`([^`]+)`') { $Matches[1].Split('@')[-1] } else { $null }

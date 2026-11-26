@@ -31,6 +31,10 @@ $script:RegistryScope = [ordered]@{
         Scope  = 'released'
         Reason = 'packages/oc-talk; published by this repo''s release workflow.'
     }
+    'oc-title' = [pscustomobject]@{
+        Scope  = 'released'
+        Reason = 'packages/oc-title; published by this repo''s release workflow.'
+    }
     'rea-shim' = [pscustomobject]@{
         Scope  = 'released'
         Reason = 'packages/rea-shim; published by this repo''s release workflow.'
