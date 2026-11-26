@@ -1123,17 +1123,21 @@ async function boardTools(t, contents) {
 }
 
 test('talk_board returns an empty list and a clear message when the board file is missing', async (t) => {
-  const { byName } = await boardTools(t);
+  const { byName, file } = await boardTools(t);
   const out = JSON.parse((await byName('talk_board').execute({}, CALLER)).content);
   assert.equal(out.error, undefined, 'a missing board is not an error: ' + JSON.stringify(out));
+  assert.equal(out.file, file);
+  assert.equal(out.version, 1);
   assert.deepEqual(out.rows, []);
   assert.match(out.message, /no board.*board\.yaml.*empty/);
 });
 
 test('talk_board returns every existing row with the five contract fields', async (t) => {
-  const { byName } = await boardTools(t, BOARD);
+  const { byName, file } = await boardTools(t, BOARD);
   const out = JSON.parse((await byName('talk_board').execute({}, CALLER)).content);
   assert.equal(out.error, undefined);
+  assert.equal(out.file, file);
+  assert.equal(out.version, 1);
   assert.equal(out.message, undefined);
   assert.deepEqual(out.rows, [
     { session: 'ses_a', state: 'active', ticket: 'T-parser', seam: 'parser', since: '2026-11-26T00:00:00.000Z' },

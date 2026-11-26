@@ -720,7 +720,7 @@ async function ensureTools(ctx) {
         const board = readBoard(resolveBoard());
         if (!board.ok) return fail(board.error, board.reason);
         if (signal && signal.aborted) return fail('cancelled', 'request cancelled');
-        const out = { rows: board.rows.map(boardRow) };
+        const out = { rows: board.rows.map(boardRow), file: board.file, version: board.version };
         if (board.message) out.message = board.message;
         return done(out);
       },
