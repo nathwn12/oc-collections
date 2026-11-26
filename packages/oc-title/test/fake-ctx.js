@@ -20,6 +20,8 @@ export function createFakeCtx(options = {}, settings = {}) {
   const listCalls = [];
   const subscribeArgs = [];
   const subscriptions = [];
+  const tools = [];
+  const messages = new Map();
   let activeStream = null;
   let attachedCleanup = null;
   let cleanupStarted = false;
@@ -103,6 +105,15 @@ export function createFakeCtx(options = {}, settings = {}) {
     updates,
     getCalls,
     listCalls,
+    tools,
+    messages,
+
+    tool: {
+      async transform(cb) {
+        cb({ add: (tool) => tools.push(tool) });
+        return { dispose() {} };
+      },
+    },
 
     event: {
       subscribe(args = {}) {
@@ -123,6 +134,12 @@ export function createFakeCtx(options = {}, settings = {}) {
         if (missed < getMisses) { missed++; return wrapGet ? { data: undefined } : undefined; }
         const record = records.get(sessionID);
         return wrapGet ? { data: record } : record;
+      },
+      // Default order is newest-first, matching session.message.list (rows[0] is newest).
+      message: {
+        async list({ sessionID, limit = 20 } = {}) {
+          return (messages.get(sessionID) ?? []).slice(0, limit);
+        },
       },
       async list() {
         listCalls.push(true);
@@ -155,6 +172,9 @@ export function createFakeCtx(options = {}, settings = {}) {
     },
     record(sessionID) {
       return records.get(sessionID);
+    },
+    seedMessages(sessionID, rows) {
+      messages.set(sessionID, rows);
     },
     push(event, index = subscriptions.length - 1) {
       const stream = subscriptions[index];
