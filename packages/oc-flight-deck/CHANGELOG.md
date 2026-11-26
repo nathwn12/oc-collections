@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+
+- npm metadata alignment: README wording and keywords refreshed (cosmetic).
 ### Fixed
 
 - The `caution` row no longer reports `no progress` for an idle session: silent-turn now needs an open turn, not just a stale host `running` flag. The `status` row reads idle on stale running, paused when a permission or a question tool waits, and running only with real evidence.
