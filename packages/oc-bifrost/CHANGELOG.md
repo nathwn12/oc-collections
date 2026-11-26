@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+
+- npm metadata alignment: README wording and keywords refreshed (cosmetic).
 ### Changed
 
 - **The dev pin moved to `@opencode/plugin` `2.2.1` -> `2.2.2`, then to
