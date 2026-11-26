@@ -1,0 +1,3 @@
+- {session: ses_def6fb2bcffeNO7rVIYW4waZuN, state: active, ticket: harness alignment, seam: spec/nstack.yaml, since: "2026-11-26T08:00:00+08:00"}
+- {session: ses_deb005279ffe2gVrIzbvTsAYNG, state: active, ticket: oc-talk board v2 hardening, seam: 'Q:/PROJECTS/PERSONAL/public/oc-collections/packages/oc-talk/src/board.mjs + test/board-rules.test.js', since: "2026-11-26T08:40:00+08:00"}
+- {session: ses_deb393b04ffe6dKiYiINyfcR9X, state: active, ticket: fast-forward dirty local repository, seam: fast-forward dirty local repository, since: "2026-11-26T07:57:16+08:00"}

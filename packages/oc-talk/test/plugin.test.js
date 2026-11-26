@@ -1,6 +1,6 @@
-// Offline contract tests for the two-tool surface.
+// Offline contract tests for the four-tool surface.
 //
-// These prove what a host can break without any peer running: exactly two tools
+// These prove what a host can break without any peer running: exactly four tools
 // register with their exact routing descriptions, title resolution answers with
 // candidates or near-misses instead of a guess, a capped resolution refuses
 // instead of authorizing a single match, every send steers and carries a client
@@ -14,6 +14,7 @@
 // live round trip is `test/live.test.js`, which runs only under OC_TALK_LIVE=1.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
@@ -26,7 +27,7 @@ let loads = 0;
 // state, and a cached module would carry one test's registration into the next.
 const load = () => import(pathToFileURL(ENTRY).href + '?n=' + ++loads);
 
-const TOOLS = ['talk_send', 'talk_inbox'];
+const TOOLS = ['talk_send', 'talk_inbox', 'talk_board', 'talk_claim'];
 
 const DESCRIPTIONS = {
   talk_send:
@@ -37,6 +38,14 @@ const DESCRIPTIONS = {
     'Read one session\'s messages as id, role, text, tools and time, newest first, default 20; peer mail arrives as synthetic notes carrying the `[oc-talk] from` envelope, and `session` defaults to the session that called this tool. ' +
     '`since` keeps only what is newer, `type` filters, `cursor` pages, and `wait` seconds blocks until the session idles again before reading. ' +
     'Reads only: it never sends, wakes, or steers another session, and an unknown title returns candidates instead of a guess.',
+  talk_board:
+    'Read the nstack board at <repo>/.nstack/board.yaml as rows of session, state, ticket, seam and since. ' +
+    'A missing file returns an empty list and a clear message instead of an error. ' +
+    'Read-only: it never claims a seam or changes the board.',
+  talk_claim:
+    'Claim a seam for the calling session in <repo>/.nstack/board.yaml, writing a row with session, state, ticket, seam and an ISO-8601 since; state defaults to active and ticket is optional. ' +
+    'A seam held by an active or parked row is refused with the holder named; a closed row is finished work and is taken over. ' +
+    'Re-claiming your own seam updates that row instead of adding a duplicate.',
 };
 
 const SESSIONS = [
@@ -59,7 +68,7 @@ function host() {
   return { ctx, added };
 }
 
-test('the V2 definition registers exactly talk_send and talk_inbox through setup', async () => {
+test('the V2 definition registers exactly the four talk tools through setup', async () => {
   const mod = await load();
 
   // A host with no tool domain registers nothing and must not throw.
@@ -84,7 +93,7 @@ test('the deleted verbs are absent from the surface and from the source', async 
   const { ctx, added } = host();
   await mod.default.setup(ctx);
   const names = added.map((t) => t.name);
-  assert.equal(names.length, 2, 'the surface is exactly two tools');
+  assert.equal(names.length, 4, 'the surface is exactly four tools');
 
   const banned = ['await', 'list', 'send', 'read', 'close', 'open', 'kick', 'park', 'kill', 'ask', 'wait', 'reply', 'thread', 'broadcast'].map((v) => 'session_' + v);
   for (const name of banned) {
@@ -1080,4 +1089,111 @@ test('two host locations each keep their own live registration', async () => {
   assert.equal(first.registrations[1].disposed, 0, 'the re-registered transform is live');
   assert.equal(second.registrations.length, 1, 'the other location must not re-register');
   assert.equal(second.registrations[0].disposed, 0, 'the other location must be untouched');
+});
+
+// The board tools go through the same host registration as the two messaging
+// tools. Only the board path is swapped: the module's own seam points them at a
+// temp file, so the real read/write code runs with no harness service.
+const BOARD = [
+  '# nstack board',
+  'rows:',
+  "  - session: 'ses_a'",
+  "    state: 'active'",
+  "    ticket: 'T-parser'",
+  "    seam: 'parser'",
+  "    since: '2026-11-26T00:00:00.000Z'",
+  "  - session: 'ses_b'",
+  "    state: 'parked'",
+  "    ticket: 'T-docs'",
+  "    seam: 'docs'",
+  "    since: '2026-11-26T01:00:00.000Z'",
+  '',
+].join('\n');
+
+async function boardTools(t, contents) {
+  const mod = await load();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-talk-board-'));
+  const file = path.join(dir, 'board.yaml');
+  if (contents !== undefined) fs.writeFileSync(file, contents, 'utf8');
+  mod.setBoardFile(file);
+  const { ctx, added } = host();
+  await mod.default.setup(ctx);
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  return { file, byName: (name) => added.find((tool) => tool.name === name) };
+}
+
+test('talk_board returns an empty list and a clear message when the board file is missing', async (t) => {
+  const { byName } = await boardTools(t);
+  const out = JSON.parse((await byName('talk_board').execute({}, CALLER)).content);
+  assert.equal(out.error, undefined, 'a missing board is not an error: ' + JSON.stringify(out));
+  assert.deepEqual(out.rows, []);
+  assert.match(out.message, /no board.*board\.yaml.*empty/);
+});
+
+test('talk_board returns every existing row with the five contract fields', async (t) => {
+  const { byName } = await boardTools(t, BOARD);
+  const out = JSON.parse((await byName('talk_board').execute({}, CALLER)).content);
+  assert.equal(out.error, undefined);
+  assert.equal(out.message, undefined);
+  assert.deepEqual(out.rows, [
+    { session: 'ses_a', state: 'active', ticket: 'T-parser', seam: 'parser', since: '2026-11-26T00:00:00.000Z' },
+    { session: 'ses_b', state: 'parked', ticket: 'T-docs', seam: 'docs', since: '2026-11-26T01:00:00.000Z' },
+  ]);
+});
+
+test('talk_claim on a free seam writes a plain-YAML row with an ISO-8601 since', async (t) => {
+  const { byName, file } = await boardTools(t);
+  const row = JSON.parse((await byName('talk_claim').execute({ seam: 'parser', ticket: 'T-7' }, { ...CALLER, sessionID: 'ses_me' })).content);
+  assert.equal(row.error, undefined, JSON.stringify(row));
+  assert.deepEqual(Object.keys(row).sort(), ['seam', 'session', 'since', 'state', 'ticket']);
+  assert.equal(row.session, 'ses_me');
+  assert.equal(row.state, 'active', 'state defaults to active');
+  assert.equal(row.ticket, 'T-7');
+  assert.equal(row.seam, 'parser');
+  assert.match(row.since, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/, 'ISO-8601 since');
+  const text = fs.readFileSync(file, 'utf8');
+  assert.match(text, /^rows:/m, 'plain YAML, readable without the plugin');
+  assert.match(text, /session: 'ses_me'/);
+  assert.match(text, /seam: 'parser'/);
+  // The other tool on the same registration reads back exactly that row.
+  const board = JSON.parse((await byName('talk_board').execute({}, CALLER)).content);
+  assert.deepEqual(board.rows, [row]);
+});
+
+test('talk_claim on a taken seam is refused with the holder named and writes nothing', async (t) => {
+  const { byName, file } = await boardTools(t, BOARD);
+  const out = JSON.parse(
+    (await byName('talk_claim').execute({ seam: 'parser', ticket: 'T-x' }, { ...CALLER, sessionID: 'ses_intruder' })).content,
+  );
+  assert.equal(out.error, 'seam_taken');
+  assert.match(out.reason, /ses_a/, 'the holder is named');
+  assert.match(out.reason, /active/, 'the holder\'s state is named');
+  assert.equal(fs.readFileSync(file, 'utf8'), BOARD, 'the authoritative file is untouched');
+});
+
+test('a parked row on the seam is not silently stolen by another session', async (t) => {
+  const { byName, file } = await boardTools(t, BOARD);
+  const out = JSON.parse((await byName('talk_claim').execute({ seam: 'docs' }, { ...CALLER, sessionID: 'ses_other' })).content);
+  assert.equal(out.error, 'seam_taken');
+  assert.match(out.reason, /ses_b/);
+  assert.match(out.reason, /parked/);
+  assert.equal(fs.readFileSync(file, 'utf8'), BOARD, 'a stale row is refused, not overwritten');
+});
+
+test('re-claiming your own seam updates its row instead of adding a duplicate', async (t) => {
+  const { byName, file } = await boardTools(t, BOARD);
+  const context = { ...CALLER, sessionID: 'ses_a' };
+  const first = JSON.parse((await byName('talk_claim').execute({ seam: 'parser', ticket: 'T-9' }, context)).content);
+  assert.equal(first.error, undefined, JSON.stringify(first));
+  assert.equal(first.ticket, 'T-9');
+  const second = JSON.parse((await byName('talk_claim').execute({ seam: 'parser', state: 'parked' }, context)).content);
+  assert.equal(second.error, undefined);
+  assert.equal(second.ticket, 'T-9', 'an omitted ticket keeps the existing one');
+  assert.equal(second.state, 'parked');
+  const text = fs.readFileSync(file, 'utf8');
+  assert.equal(text.split('session:').length - 1, 2, 'still two rows, not three');
+  const board = JSON.parse((await byName('talk_board').execute({}, CALLER)).content);
+  assert.equal(board.rows.length, 2);
+  assert.deepEqual(board.rows.find((row) => row.session === 'ses_a'), second);
+  assert.equal(board.rows.find((row) => row.session === 'ses_b').seam, 'docs', 'the other row is untouched');
 });

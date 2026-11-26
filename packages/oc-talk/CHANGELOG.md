@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `talk_board`: read `<repo>/.nstack/board.yaml` as rows of `{session, state, ticket, seam, since}`; a missing file returns an empty list and a clear message instead of an error. Read-only: it never claims a seam or changes the board.
+- `talk_claim`: claim a `seam` for the calling session with an optional `ticket` and `state` (default `active`), writing a row with an ISO-8601 `since`. The file is authoritative and is re-read on every call: a seam held by another session is refused with the holder named (active, parked or closed), a stale row is never silently stolen, and re-claiming your own row updates it in place instead of adding a duplicate. The board stays plain YAML, readable and editable without the plugin.
+- `src/board.mjs`: the package's only board-file reader and writer, with the same small fixed-shape contract as the transport seam and no YAML dependency.
+
+### Changed
+
+- The board lock carries an owner token. A stale lock can still be stolen by rename, but its former owner can no longer unlink the lock a new claimant just took.
+- Closed rows are bounded history: a session's own closed rows are drained at its next claim, and other sessions' closed rows keep the newest 20.
+- `talk_board` reports the resolved `file` and board `version`; a missing board names the path it looked at.
+
 ## [0.6.2] - 2026-11-20
 
 Delivery moves off the user prompt and onto the host's synthetic route.

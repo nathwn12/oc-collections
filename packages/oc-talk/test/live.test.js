@@ -36,7 +36,7 @@ test('live: talk_send delivers into a real session and talk_inbox reads it back'
 
   const { ctx, added } = host();
   await mod.default.setup(ctx);
-  assert.deepEqual(added.map((t) => t.name), ['talk_send', 'talk_inbox'], 'live install must register exactly two tools');
+  assert.deepEqual(added.map((t) => t.name), ['talk_send', 'talk_inbox', 'talk_board', 'talk_claim'], 'live install must register exactly four tools');
 
   const context = { sessionID, signal: undefined };
   const text = 'oc-talk live probe ' + Date.now() + ' — reply with the single word OK.';

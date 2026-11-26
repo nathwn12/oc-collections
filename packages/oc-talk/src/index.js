@@ -10,6 +10,7 @@
 // endpoint once and is the only file that speaks to the wire.
 import { randomUUID } from 'node:crypto';
 import { Plugin } from '@opencode/plugin';
+import { BOARD_FIELDS, BOARD_STATES, claim, defaultBoardFile, plan, readBoard } from './board.mjs';
 import { call as httpCall } from './transport.mjs';
 
 const READ_DEFAULT_LIMIT = 20;
@@ -100,6 +101,28 @@ function runApi(args, opts) {
 
 function setApiRunner(fn) {
   apiRunner = typeof fn === 'function' ? fn : httpCall;
+}
+
+// The board file is a seam for the same reason as apiRunner: the offline suite
+// points the real tools at a fixture, while production always reads the current
+// repo's `.nstack/board.yaml`. No row is held in module state — the file is the
+// only truth, re-read on every call.
+let boardFileOverride = null; // the offline suite's seam; production never sets it
+
+function setBoardFile(file) {
+  boardFileOverride = typeof file === 'string' && file ? file : null;
+}
+
+function boardFileFor(directory) {
+  return boardFileOverride || defaultBoardFile(directory);
+}
+
+// The board's public row: exactly the five fields the contract names, whatever
+// extra keys a human kept in the file.
+function boardRow(row) {
+  const out = {};
+  for (const field of BOARD_FIELDS) out[field] = row[field] || '';
+  return out;
 }
 
 const ID_RE = /^ses_/;
@@ -421,6 +444,12 @@ function dropRegistration(key) {
 }
 
 async function ensureTools(ctx) {
+  const installDir = (ctx && ctx.location && ctx.location.directory) || undefined;
+  // The board path is configured, not guessed: cwd, session directory and project
+  // root all disagree in a harness whose board lives one level down from home.
+  const optionFile = ctx && ctx.options && typeof ctx.options.boardFile === 'string' ? ctx.options.boardFile : undefined;
+  const canonical = (ctx && ctx.location && ctx.location.project && ctx.location.project.canonical) || undefined;
+  const resolveBoard = () => boardFileOverride || optionFile || defaultBoardFile(canonical || installDir);
   const transform = ctx && ctx.tool && ctx.tool.transform;
   if (typeof transform !== 'function') return null;
   const key = locationKey(ctx);
@@ -672,6 +701,68 @@ async function ensureTools(ctx) {
         return done(out);
       },
     });
+
+    tools.add({
+      name: 'talk_board',
+      description:
+        'Read the nstack board at <repo>/.nstack/board.yaml as rows of session, state, ticket, seam and since. ' +
+        'A missing file returns an empty list and a clear message instead of an error. ' +
+        'Read-only: it never claims a seam or changes the board.',
+      input: {
+        type: 'object',
+        properties: {},
+        additionalProperties: false,
+      },
+      options: { codemode: false },
+      execute: async (input, context) => {
+        const signal = context && context.signal;
+        if (signal && signal.aborted) return fail('cancelled', 'request cancelled');
+        const board = readBoard(resolveBoard());
+        if (!board.ok) return fail(board.error, board.reason);
+        if (signal && signal.aborted) return fail('cancelled', 'request cancelled');
+        const out = { rows: board.rows.map(boardRow) };
+        if (board.message) out.message = board.message;
+        return done(out);
+      },
+    });
+
+    tools.add({
+      name: 'talk_claim',
+      description:
+        'Claim a seam for the calling session in <repo>/.nstack/board.yaml, writing a row with session, state, ticket, seam and an ISO-8601 since; state defaults to active and ticket is optional. ' +
+        'A seam held by an active or parked row is refused with the holder named; a closed row is finished work and is taken over. ' +
+        'Re-claiming your own seam updates that row instead of adding a duplicate.',
+      input: {
+        type: 'object',
+        properties: {
+          seam: { type: 'string', description: 'The seam to claim; one row per session per seam' },
+          ticket: { type: 'string', description: 'Optional ticket written to the row' },
+          state: { type: 'string', description: 'Row state, default active (also parked or closed)' },
+        },
+        required: ['seam'],
+        additionalProperties: false,
+      },
+      options: { codemode: false },
+      execute: async (input, context) => {
+        const args = input ?? {};
+        const signal = context && context.signal;
+        if (signal && signal.aborted) return fail('cancelled', 'request cancelled');
+        const caller = context && typeof context.sessionID === 'string' && context.sessionID ? context.sessionID : '';
+        if (!caller) return fail('bad_request', 'talk_claim needs the calling session id');
+        if (typeof args.seam !== 'string' || !args.seam.trim()) return fail('bad_request', 'seam must be a non-empty string');
+        const seam = args.seam.trim();
+        if (args.ticket !== undefined && typeof args.ticket !== 'string') return fail('bad_request', 'ticket must be a string');
+        const state = args.state === undefined ? 'active' : args.state;
+        if (!BOARD_STATES.includes(state)) return fail('bad_request', 'state must be one of ' + BOARD_STATES.join(', ') + '; got ' + String(state));
+        const file = resolveBoard();
+        if (signal && signal.aborted) return fail('cancelled', 'request cancelled');
+        // One lock covers read, decide and write, so two claims cannot both see
+        // a free seam. Row keys on (session, seam): a session may hold two seams.
+        const result = await claim(file, (rows) => plan(rows, { caller, seam, state, ticket: args.ticket }));
+        if (!result.ok) return fail(result.error, result.reason);
+        return done(boardRow(result.row));
+      },
+    });
   });
   registrations.set(key, registration);
   return registration;
@@ -685,6 +776,7 @@ export {
   messageRow,
   resolveTarget,
   setApiRunner,
+  setBoardFile,
   waitForIdle,
 };
 
