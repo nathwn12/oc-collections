@@ -146,6 +146,40 @@ test("a catch-up confirms a closed title instead of reopening it", async () => {
   expect(ctx.record("c3").metadata["oc-title"].state).toBe("closed");
 });
 
+test("a mapped lifecycle event does not reopen a closed title", async () => {
+  const ctx = createFakeCtx();
+  ctx.seed("c5", { title: "closed: done thing" });
+  mount(ctx);
+  await ctx.flush();
+  ctx.push(event("session.execution.started", { id: "c5", seq: 1 }));
+  await ctx.waitFor(() => ctx.consumed >= 1);
+  await ctx.flush();
+  await ctx.cleanup();
+  expect(ctx.record("c5").title).toBe("closed: done thing");
+  expect(ctx.record("c5").metadata["oc-title"].state).toBe("closed");
+});
+
+test("a mapped lifecycle event does not reopen a closed child with a bare title", async () => {
+  const ctx = createFakeCtx();
+  // Children carry bare titles: closed must be read from the metadata state or
+  // the archived flag, never from a state prefix the title does not have.
+  ctx.seed("c6", { title: "done thing", parentID: "p1", archived: true, metadata: { "oc-title": { state: "closed", at: 1 } } });
+  ctx.seed("c7", { title: "other thing", parentID: "p1", metadata: { "oc-title": { state: "closed", at: 1 } } });
+  mount(ctx);
+  await ctx.flush();
+  ctx.updates.length = 0;
+  ctx.push(event("session.execution.started", { id: "c6", seq: 1 }));
+  ctx.push(event("session.execution.started", { id: "c7", seq: 1 }));
+  await ctx.waitFor(() => ctx.consumed >= 2);
+  await ctx.flush();
+  await ctx.cleanup();
+  expect(ctx.record("c6").title).toBe("done thing");
+  expect(ctx.record("c6").metadata["oc-title"].state).toBe("closed");
+  expect(ctx.record("c7").title).toBe("other thing");
+  expect(ctx.record("c7").metadata["oc-title"].state).toBe("closed");
+  expect(ctx.updates.length).toBe(0);
+});
+
 test("a created event that beats its own record still writes", async () => {
   const ctx = createFakeCtx({}, { getMisses: 2 });
   mount(ctx);
