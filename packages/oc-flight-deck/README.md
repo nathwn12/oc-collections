@@ -14,7 +14,7 @@
 
 ## Install
 
-Add the entry to the `plugins` array in your `opencode.jsonc`, then restart OpenCode:
+Install with `npm i oc-flight-deck`, or let the host fetch it. Add the entry to the `plugins` array in your `opencode.jsonc`, then restart OpenCode:
 
 ```json
 { "plugins": ["oc-flight-deck"] }
@@ -46,7 +46,7 @@ All settings live in one global file; there are no per-project files. Start from
 
 ## Status
 
-**Active** — maintained, issues welcome.
+**Unverified** — as-is, use at your own risk.
 
 ## Links
 

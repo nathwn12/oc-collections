@@ -14,7 +14,7 @@
 
 ## Install
 
-Add one entry to the `plugins` array in your `opencode.jsonc` and restart OpenCode. OpenCode fetches the package itself; you run no install command:
+Add one entry to the `plugins` array in your `opencode.jsonc` and restart OpenCode. OpenCode fetches the package itself; you run no install command. To place the package yourself first, run `npm i @nathwn12/oc-bifrost`:
 
 ```jsonc
 {
@@ -55,7 +55,7 @@ A stranded-file scan warns when a V1 plugin file sits in a discovery directory t
 
 ## Status
 
-**Active** — maintained, issues welcome.
+**Unverified** — as-is, use at your own risk.
 
 ## Links
 

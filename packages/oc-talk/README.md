@@ -11,7 +11,7 @@
 
 ## Install
 
-Add the plugin to `~/.config/opencode/opencode.jsonc` and restart OpenCode:
+Install with `npm i oc-talk`, or let the host fetch it. Add the plugin to `~/.config/opencode/opencode.jsonc` and restart OpenCode:
 
 ```json
 { "plugins": ["oc-talk"] }

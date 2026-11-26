@@ -70,7 +70,7 @@ No config file. The MCP client block above is the whole setup. These environment
 
 ## Status
 
-**Active** — maintained, issues welcome.
+**Unverified** — as-is, use at your own risk.
 
 ## Links
 

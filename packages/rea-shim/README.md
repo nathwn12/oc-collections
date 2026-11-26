@@ -36,7 +36,7 @@ Existing settings are never read, rewritten or reformatted. The app is pointed a
 
 ### Upstream
 
-REA means Reverse Engineer Anything. This shim keeps the name but no longer installs base REA. It installs Craft Anything, a separate product by its own authors. The two are not affiliated. The shim ships no upstream code; see the official site and release page in ## Links.
+REA means Reverse Engineer Anything. This shim keeps the name but no longer installs base REA. It installs Craft Anything, a separate product by its own authors. The two are not affiliated. The shim ships no upstream code; see the official site and release page below.
 
 ## Requirements
 
@@ -45,7 +45,7 @@ REA means Reverse Engineer Anything. This shim keeps the name but no longer inst
 
 ## Status
 
-**Active** — maintained, issues welcome.
+**Unverified** — as-is, use at your own risk.
 
 ## Links
 

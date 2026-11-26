@@ -14,7 +14,7 @@
 opencode plugin add oc-plugin-view
 ```
 
-Restart OpenCode. List this package before any other sidebar TUI plugin to keep its Plugins section above other rows:
+You can also install the package directly with `npm i oc-plugin-view` before adding the plugin entry. Restart OpenCode. List this package before any other sidebar TUI plugin to keep its Plugins section above other rows:
 
 ```jsonc
 { "plugins": ["oc-plugin-view", "another-plugin"] }
@@ -45,7 +45,7 @@ No config file. Order is set by where the entry sits in the `plugins` array. To 
 
 ## Status
 
-**Active** — maintained, issues welcome.
+**Unverified** — as-is, use at your own risk.
 
 ## Links
 

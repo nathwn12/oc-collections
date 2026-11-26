@@ -56,7 +56,7 @@ Setup records progress in `state/setup-state.yaml` in the config dir. Plain `set
 
 ## Status
 
-**Active** — maintained, issues welcome.
+**Unverified** — as-is, use at your own risk.
 
 ## Links
 
