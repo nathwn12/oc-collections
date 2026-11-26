@@ -45,7 +45,10 @@ export function createWriter(ctx, { options = {}, trace = () => {} } = {}) {
       if (typeof rec.title !== "string") return skip(id, "no title");
       // A closed title is final for every event, mapped or unmapped: the
       // lifecycle map may not reopen a session the title has already closed.
-      const closed = stateOf(rec.title) === "closed";
+      // Children carry bare titles, so closed must also be read from the
+      // oc-title metadata state and from the archived flag - the same three
+      // signals applyRefresh uses to keep a closed session final.
+      const closed = stateOf(rec.title) === "closed" || rec.metadata?.["oc-title"]?.state === "closed" || isArchived(rec);
       // A session the plugin has never stamped gets one pass from whatever event
       // reaches it, so a missed session.created repairs itself. A catch-up may
       // confirm a closed title, never reopen it.
