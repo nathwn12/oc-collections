@@ -14,7 +14,7 @@
 
 ## Install
 
-Add one entry to the `plugins` array in your `opencode.jsonc` and restart OpenCode. OpenCode fetches the package itself; you run no install command. To place the package yourself first, run `npm i @nathwn12/oc-bifrost`:
+Add one entry to the `plugins` array in your `opencode.jsonc` and restart OpenCode. OpenCode fetches the package itself; you run no install command:
 
 ```jsonc
 {
