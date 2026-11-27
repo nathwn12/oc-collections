@@ -25,7 +25,7 @@ Point your MCP client at the package, then restart it:
 
 If the client cannot launch `npx` directly on Windows, use `"command": "cmd", "args": ["/c", "npx", "-y", "@nathwn12/janua"]`.
 
-## Use it
+## First use
 
 Start a session, write to it, and read the answer in later calls:
 

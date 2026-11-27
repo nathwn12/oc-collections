@@ -19,7 +19,7 @@ Add the plugin to `~/.config/opencode/opencode.jsonc` and restart OpenCode:
 
 The plugin reads the harness service state and needs no other config. A default install registers exactly two tools: `talk_send` and `talk_inbox`.
 
-## Use it
+## First use
 
 Send a message, then read the session:
 
@@ -108,7 +108,7 @@ also reports `total` and `cursor`.
 and returns the `talk_send` calls to make. It adds no tool and sends nothing;
 `talk_send` typing is unchanged.
 
-## Registry drift
+## Troubleshooting
 
 `opencode plugin check` compares the installed version with the config pin, not with npm's latest: a pin can report "current" while a newer version is already published. Check `npm view oc-talk version` for the registry latest. A `plugin check --registry` flag is an upstream proposal, not a flag this package ships.
 

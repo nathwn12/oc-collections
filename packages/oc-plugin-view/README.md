@@ -20,7 +20,7 @@ Restart OpenCode. List this package before any other sidebar TUI plugin to keep 
 { "plugins": ["oc-plugin-view", "another-plugin"] }
 ```
 
-## Use it
+## First use
 
 The plugin manager hides its list behind a dialog. `oc-plugin-view` puts the loaded plugins in a sidebar section with their state, so you can see at a glance which ones the server actually mounted. It ships a no-op server entry next to the TUI export; that is what places the section in the plugin order.
 

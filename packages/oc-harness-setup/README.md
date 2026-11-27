@@ -20,7 +20,7 @@ npx --yes oc-harness-setup setup
 
 Setup checks your host, finds your config dir, collects the files and prints a plan before it writes anything. It waits for your `y` at the plan, then backs up what it replaces, merges your config, runs the doctor and prints a summary. `--dry-run` changes nothing at all.
 
-## Use it
+## First use
 
 Run `setup` to install the starter, then answer `y` at the plan. The pack puts ten agents on one routing table, seven skills behind seven commands, five playbooks behind `/playbook`, and twelve on-demand references loaded one at a time from an index.
 

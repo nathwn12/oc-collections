@@ -10,29 +10,44 @@
 
 ## Install
 
-Add the plugin to `~/.config/opencode/opencode.jsonc` and restart OpenCode:
+Use the published [PC plugin 2.3.0](https://www.npmjs.com/package/oc-phone-link/v/2.3.0). Add `oc-phone-link` to `~/.config/opencode/opencode.jsonc` and restart OpenCode:
 
 ```json
 { "plugins": ["oc-phone-link"] }
 ```
 
-The plugin starts the beacon during setup and stops it when the session disposes. There is no tray app, no separate service and no QR code: the beacon is a keyed reverse proxy in front of the OpenCode server your PC already runs.
+The PC plugin and Android app use separate version numbers. The plugin starts the beacon during setup and stops it when the session disposes. There is no tray app, no separate service and no QR code: the beacon is a keyed reverse proxy in front of the OpenCode server your PC already runs.
 
-## Pair a phone
+## First use
 
-1. Open `https://localhost:41338` on the PC. That page is the beacon's own control panel.
-2. Set an 8-digit PIN there. The phone enters it once, and only after the fingerprint check below.
-3. Open the phone app. It finds the beacon over UDP port 41337 on the local network and shows a short TLS fingerprint.
-4. Compare that short fingerprint with the Verify line on the PC page, then enter the PIN.
-5. The phone receives a device key: valid for 90 days, rotated after 45, and one of at most 16 keys the beacon will hold.
+1. Connect the PC and Android phone to the same Wi-Fi.
+2. Install the [Android 2.2.0 APK](https://github.com/nathwn12/oc-collections/releases/tag/oc-phone-link%402.3.0) (`oc-phone-link-v2.2.0.apk`) on the phone.
+3. Open `https://localhost:41338` on the PC. That page is the beacon's own control panel. Set an 8-digit PIN there.
+4. Open the phone app. It finds the beacon over UDP port 41337 on the local network and shows a short TLS fingerprint.
+5. Compare that short fingerprint with the Verify line on the PC page. Enter the PIN only after the fingerprints match.
+6. The phone receives a device key: valid for 90 days, rotated after 45, and one of at most 16 keys the beacon will hold.
 
 The PC page also lists paired devices with issue date, last use and last IP, and can revoke one device, revoke all of them, or reset the PIN.
-
-## Use it
 
 Once paired, the phone sends its requests to the beacon on port 41340, which checks the device key and forwards to OpenCode on its own port (28894 by default). The beacon also keeps a loopback port on 41339 for the PC itself and an exposed port on 41341 for setup actions, which it refuses when the request did not come from the local machine.
 
 The phone drives the same server session the PC does. Nothing is uploaded anywhere: discovery, pairing and proxying all stay on your network.
+
+## Troubleshooting
+
+- **The phone cannot find the beacon.** Confirm both devices are on the same Wi-Fi and that UDP port 41337 can reach the PC. `OC_PHONE_LINK_NO_UDP=1` disables discovery for pair-by-address setups.
+- **The TLS fingerprints differ.** Do not enter the PIN. Confirm the phone is showing this PC's beacon and compare its short fingerprint with the Verify line on the PC page before trying again.
+- **The Android app cannot pair.** The old Android 1.4.1 APK is not compatible with this PC plugin. Install the 2.2.0 APK linked above.
+- **The control panel does not open.** Confirm the plugin loaded after the OpenCode restart. If a port is taken, set `OC_PHONE_LINK_PORT_BASE` to shift the fixed port block.
+
+## Development
+
+```text
+node --test packages/oc-phone-link/beacon.test.mjs
+node packages/oc-phone-link/probe-bench.mjs
+```
+
+The test file covers PIN derivation, key revoke and rotation, discovery and the proxy gate. The bench script measures UDP discovery and the first proxied response on loopback through the public startBeacon seam.
 
 ## Security
 
@@ -54,15 +69,6 @@ The beacon reads these environment variables and nothing else:
 - `OC_PHONE_LINK_PASSWORD` (or `OPENCODE_SERVER_PASSWORD`) - upstream password the proxy presents when OpenCode asks for one.
 - `OC_PHONE_LINK_UPSTREAM` - upstream port override when OpenCode is not on 28894.
 - `OC_PHONE_LINK_TRANSPORT` - set to `tunnel` to use the tunnel transport instead of the local network.
-
-## Development
-
-```text
-node --test packages/oc-phone-link/beacon.test.mjs
-node packages/oc-phone-link/probe-bench.mjs
-```
-
-The test file covers PIN derivation, key revoke and rotation, discovery and the proxy gate. The bench script measures UDP discovery and the first proxied response on loopback through the public startBeacon seam.
 
 ## Requirements
 

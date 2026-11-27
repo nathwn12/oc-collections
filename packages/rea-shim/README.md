@@ -16,7 +16,7 @@ npx -y rea-shim@latest
 
 No argument installs the app. One optional flag, `--mcp`, serves a client instead. No path, configuration file or extra setup.
 
-## Use it
+## First use
 
 The first run downloads the official portable build, checks it against a pinned SHA-256 before extracting, puts it under your user profile, writes one first-run setting and starts the app. Later runs start the same install without downloading again and leave your settings as they are.
 
