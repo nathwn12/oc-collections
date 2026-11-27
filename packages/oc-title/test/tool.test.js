@@ -58,6 +58,18 @@ test("a tool-only latest user message refreshes nothing", async () => {
   await ctx.cleanup();
 });
 
+test("a tool-only session can still be refreshed with an explicit scope", async () => {
+  const ctx = createFakeCtx();
+  ctx.seed("s5", stamped("active: old scope", "active"));
+  ctx.seedContext("s5", [{ type: "user", text: "", tools: [{ name: "shell" }], time: { created: 1 } }]);
+  const tool = mount(ctx);
+  const out = payload(await call(tool, { scope: "Synthetic Scope" }, "s5"));
+  await ctx.flush();
+  expect(out.ok).toBe(true);
+  expect(updates(ctx, "s5").at(-1).title).toBe("active: synthetic scope");
+  await ctx.cleanup();
+});
+
 test("a closed session is never refreshed through the tool", async () => {
   const ctx = createFakeCtx();
   ctx.seed("s4", stamped("closed: old scope", "closed"));

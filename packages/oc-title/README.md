@@ -17,6 +17,9 @@ stamped, keeps the current state (parked stays parked), keeps a child's bare tit
 keeps other metadata, applies the same cap, and never reopens a closed session.
 An empty, tool-only or unstamped session produces no write. The refresh shares the
 writer's per-session chain, so it cannot race a lifecycle event.
+Synthetic, steered or tool-only sessions have no user request to read: pass the
+`scope` argument explicitly to refresh those. No scope is invented from a note
+or summary.
 
 ## Events
 
