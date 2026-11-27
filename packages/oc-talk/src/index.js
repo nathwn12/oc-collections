@@ -479,9 +479,9 @@ async function ensureTools(ctx) {
     tools.add({
       name: 'talk_send',
       description:
-        'Deliver one text message into another session by id (ses_...) or unambiguous title substring as synthetic session input: it schedules the peer, appears in its inbox as a synthetic note, and never renders as a TUI user turn. ' +
-        'The text carries an envelope with your session id, title and reply target so the peer can answer with talk_send, and metadata.ocTalk carries the same fields for tools; `wait` seconds returns only messages newer than this send. ' +
-        'Never guesses: an unknown or ambiguous title returns the candidate list as data.',
+        'Deliver one text message into another session by `session` (id `ses_...` or unambiguous title substring; never `session_id`), as synthetic session input: it schedules the peer, appears in its inbox as a synthetic note, and never renders as a TUI user turn. ' +
+        'The text carries an envelope with your session id, title and reply target so the peer can answer with talk_send, and metadata.ocTalk carries the same fields for tools; a positive `wait` polls until the peer idles and returns only messages newer than this send, not a fixed delay. ' +
+        'Never guesses: an unknown or ambiguous title returns the candidate list as data, and only `delivery: "steer"` is accepted because queue delivery was removed.',
       input: {
         type: 'object',
         properties: {
@@ -608,8 +608,8 @@ async function ensureTools(ctx) {
     tools.add({
       name: 'talk_inbox',
       description:
-        'Read one session\'s messages as id, role, text, tools and time, newest first, default 20; peer mail arrives as synthetic notes carrying the `[oc-talk] from` envelope, and `session` defaults to the session that called this tool. ' +
-        '`since` keeps only what is newer, `type` filters, `cursor` pages, and `wait` seconds blocks until the session idles again before reading. ' +
+        'Read one session\'s messages as id, role, text, tools and time, newest first, default 20; peer mail arrives as synthetic notes carrying the `[oc-talk] from` envelope, and `session` (never `session_id`) defaults to the session that called this tool. ' +
+        '`since` keeps only what is newer, `type` filters, `wait` seconds blocks until the session idles again before reading, and an opaque `cursor` from a previous read is reused rather than reconstructed. ' +
         'Reads only: it never sends, wakes, or steers another session, and an unknown title returns candidates instead of a guess.',
       input: {
         type: 'object',
@@ -725,7 +725,7 @@ async function ensureTools(ctx) {
     addBoardTool({
       name: 'talk_board',
       description:
-        'Read the nstack board at <repo>/.nstack/board.yaml as rows of session, state, ticket, seam and since. ' +
+        'Read the nstack board at <repo>/.nstack/board.yaml as rows of session, state, ticket, seam and since; the file\'s `heartbeat` and `leaseUntil` are internal lease fields outside this row contract. ' +
         'A missing file returns an empty list and a clear message instead of an error. ' +
         'Read-only: it never claims a seam or changes the board.',
       input: {

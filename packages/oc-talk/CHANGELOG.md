@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The tool contracts now name `session` (never `session_id`), state that a positive `wait` polls for the peer's idle boundary instead of a fixed delay, and say plainly that queue delivery was removed and only `delivery: "steer"` is accepted. The envelope carried by every send and the candidate list returned for unknown or ambiguous titles are spelled out in both tool descriptions and the README.
+- `talk_inbox` docs now say to reuse the opaque `cursor` tokens a read returns, rather than reconstructing anchors.
+- `talk_board` docs now name the board file's internal `heartbeat` and `leaseUntil` lease fields while keeping the five public `{rows}` fields and the lease-gating rules unchanged.
+- The README now notes that `opencode plugin check` compares the config pin, not the registry latest, and points to `npm view oc-talk version` for drift checks.
+
 - The public surface is two tools again by default: `talk_send` and `talk_inbox`. The `talk_board` and `talk_claim` pair had shipped unconditionally with the board work, so a stranger installing the package was shown four tools and a host-only `.nstack/board.yaml` convention it never configured. Both board tools are now opt-in: they register only when the host passes the `boardFile` option (or `board: true`), with their descriptions, schemas, file resolution and takeover gates unchanged. The README documents the pair as an optional harness convention.
 
 
@@ -24,6 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The board lock carries an owner token. A stale lock can still be stolen by rename, but its former owner can no longer unlink the lock a new claimant just took.
 - Closed rows are bounded history: a session's own closed rows are drained at its next claim, and other sessions' closed rows keep the newest 20.
 - `talk_board` reports the resolved `file` and board `version`; a missing board names the path it looked at.
+
+### Roadmap (not shipped)
+
+- A one-line board summary in `talk_inbox` when the host configures `boardFile` would let any seat smoke-test board state without the board tools; it needs a config-aware read and its own test, so it stays out of this patch.
+- `plugin check --registry`, a pin-only reinstall path (`plugin reinstall` or a smarter `plugin update`) and resolving `plugin list` versions from the npm cache are harness-level changes, left as upstream proposals.
+- `talk_send` already echoes the resolved target as `sessionID`; no code change was needed. The dash printed by `plugin list` for a bumped pin is a harness cache display artifact, not a package bug.
 
 ## [0.6.2] - 2026-11-20
 

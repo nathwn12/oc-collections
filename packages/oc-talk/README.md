@@ -35,8 +35,8 @@ The message enters the peer as synthetic session input: it schedules the peer, i
 
 ## Tools
 
-- `talk_send` — deliver one message into a session by id (`ses_...`) or unique title. It admits `POST /api/session/{id}/synthetic`, reports `{id, sessionID, title, from, replyTo, delivered, delivery, deliveryReason}`, and accepts an optional `wait` that returns only messages newer than the send. `delivery: "steer"` is accepted; `delivery: "queue"` is a typed `bad_request`. A leading `[steer]` or `STEER:` is stripped.
-- `talk_inbox` — read any session's messages as `{id, role, text, tools, time}`, newest first, default 20, including synthetic peer mail. `session` defaults to the calling session; `since` keeps only newer messages, `type` filters, `cursor` pages, and `wait` blocks until the session idles again. Unknown or ambiguous titles return candidates, never a guess.
+- `talk_send` — deliver one message by `session` (id `ses_...` or unique title; never `session_id`). It admits `POST /api/session/{id}/synthetic`, reports `{id, sessionID, title, from, replyTo, delivered, delivery, deliveryReason}` — including the resolved `sessionID` — and accepts an optional `wait` that polls until that session idles, not a fixed delay, returning only messages newer than the send. Queue delivery was removed: `delivery: "steer"` is the only accepted value and `delivery: "queue"` is a typed `bad_request`. A leading `[steer]` or `STEER:` is stripped.
+- `talk_inbox` — read any session's messages as `{id, role, text, tools, time}`, newest first, default 20, including synthetic peer mail. `session` (never `session_id`) defaults to the calling session; `since` keeps only newer messages, `type` filters, `wait` blocks until the session idles again, and opaque `cursor` tokens from a previous read are reused rather than reconstructed. Unknown or ambiguous titles return the candidate list as data, never a guess.
 The messaging tools work across sessions, subagents and agents: a reply is a real synthetic message back to the sender. The optional board pair is documented below; it is not part of the default surface.
 
 ## Replies, ACKs and terminal rows
@@ -83,7 +83,7 @@ who installs it sees only the two messaging tools above. When opted in:
 Each claimed row carries an internal lease (a heartbeat and an expiry). Re-claiming
 your own seam is the heartbeat: it refreshes the lease without another tool call.
 The five public fields never change, so hand-edited YAML and the `{rows}` tool
-contract stay compatible with older boards.
+contract stay compatible with older boards. The file's `heartbeat` and `leaseUntil` are internal lease metadata; read the file directly if you need those timestamps, because `talk_board` projects only the five public fields.
 
 Another session may take a held seam only with an explicit
 `talk_claim { "seam": "...", "takeover": true, "reason": "..." }` **and** all four
@@ -107,6 +107,10 @@ also reports `total` and `cursor`.
 `broadcastPlan(sessions, text)` is a read-only helper: it deduplicates targets
 and returns the `talk_send` calls to make. It adds no tool and sends nothing;
 `talk_send` typing is unchanged.
+
+## Registry drift
+
+`opencode plugin check` compares the installed version with the config pin, not with npm's latest: a pin can report "current" while a newer version is already published. Check `npm view oc-talk version` for the registry latest. A `plugin check --registry` flag is an upstream proposal, not a flag this package ships.
 
 ## Requirements
 
