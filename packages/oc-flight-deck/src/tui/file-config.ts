@@ -23,12 +23,16 @@ import { isAbsolute, join } from "node:path";
 export const CONFIG_FILE_CANDIDATES: readonly string[] = ["flight-deck.jsonc", "flight-deck.json"];
 
 /**
- * The one directory Flight Deck reads its config from: `$XDG_CONFIG_HOME/opencode`
- * when that variable holds an absolute path, else `~/.config/opencode`. A
- * relative value is ignored, as the XDG base directory spec requires — otherwise
- * the lookup would resolve against the host's working directory.
+ * The one directory Flight Deck reads its config from, in order: an absolute
+ * `OPENCODE_CONFIG_DIR` (the host's pinned global config directory, used as
+ * given), then `$XDG_CONFIG_HOME/opencode` when that variable holds an
+ * absolute path, else `~/.config/opencode`. Relative values are ignored — an
+ * XDG-relative value would resolve against the host's working directory, and a
+ * pinned config directory is only trustworthy when it is absolute.
  */
 export function globalConfigDirectory(): string {
+  const pinned = process.env["OPENCODE_CONFIG_DIR"]?.trim();
+  if (pinned !== undefined && pinned.length > 0 && isAbsolute(pinned)) return pinned;
   const xdg = process.env["XDG_CONFIG_HOME"]?.trim();
   return xdg !== undefined && xdg.length > 0 && isAbsolute(xdg)
     ? join(xdg, "opencode")
@@ -69,7 +73,7 @@ export function parseJsonc(text: string): unknown {
 
 /**
  * Load the first config file that exists in `directory`, which defaults to the
- * global config directory (`$XDG_CONFIG_HOME/opencode`, else `~/.config/opencode`).
+ * global config directory (`OPENCODE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/opencode`, else `~/.config/opencode`).
  * There is no per-project lookup.
  *
  * A missing file is normal and silent. A present-but-broken file is reported in

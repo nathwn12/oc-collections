@@ -11,9 +11,12 @@ import flightDeck from "../src/tui/index.js";
 
 const created: string[] = [];
 let savedXdg: string | undefined;
+let savedConfigDir: string | undefined;
 
 beforeEach(() => {
   savedXdg = process.env.XDG_CONFIG_HOME;
+  savedConfigDir = process.env.OPENCODE_CONFIG_DIR;
+  delete process.env.OPENCODE_CONFIG_DIR;
   const directory = mkdtempSync(join(tmpdir(), "flight-deck-toast-"));
   created.push(directory);
   process.env.XDG_CONFIG_HOME = directory;
@@ -22,7 +25,10 @@ beforeEach(() => {
 afterEach(() => {
   if (savedXdg === undefined) delete process.env.XDG_CONFIG_HOME;
   else process.env.XDG_CONFIG_HOME = savedXdg;
+  if (savedConfigDir === undefined) delete process.env.OPENCODE_CONFIG_DIR;
+  else process.env.OPENCODE_CONFIG_DIR = savedConfigDir;
   savedXdg = undefined;
+  savedConfigDir = undefined;
   while (created.length > 0) {
     const directory = created.pop();
     if (directory !== undefined) rmSync(directory, { recursive: true, force: true });

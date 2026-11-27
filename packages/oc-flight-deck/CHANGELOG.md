@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - npm metadata alignment: README wording and keywords refreshed (cosmetic).
 ### Fixed
 
+- The lifetime ledger now caches parsed values behind an mtime/size probe and coalesces its writes off the render path, so the 100 ms rail no longer reopens and re-parses the file on every tick or rewrites it on every climb.
+- The config lookup now honours an absolute `OPENCODE_CONFIG_DIR`, matching the host's pinned config directory, and the Go panel memoizes its file probe for 250 ms.
 - The `caution` row no longer reports `no progress` for an idle session: silent-turn now needs an open turn, not just a stale host `running` flag. The `status` row reads idle on stale running, paused when a permission or a question tool waits, and running only with real evidence.
 
 ### Added

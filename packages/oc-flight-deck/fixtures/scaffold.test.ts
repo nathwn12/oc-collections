@@ -12,11 +12,14 @@ import { footerLine, sidebarLines } from "../src/tui/presentation.js";
 const root = join(import.meta.dir, "..");
 const created: string[] = [];
 let savedXdg: string | undefined;
+let savedConfigDir: string | undefined;
 
 beforeEach(() => {
   // `setup()` reads one global config file, so every test points the lookup at
   // an empty throwaway directory: the real machine config can never leak in.
   savedXdg = process.env.XDG_CONFIG_HOME;
+  savedConfigDir = process.env.OPENCODE_CONFIG_DIR;
+  delete process.env.OPENCODE_CONFIG_DIR;
   const xdg = mkdtempSync(join(tmpdir(), "flight-deck-xdg-"));
   created.push(xdg);
   process.env.XDG_CONFIG_HOME = xdg;
@@ -26,7 +29,10 @@ afterEach(() => {
   // An unset variable must go back to being unset, never the string "undefined".
   if (savedXdg === undefined) delete process.env.XDG_CONFIG_HOME;
   else process.env.XDG_CONFIG_HOME = savedXdg;
+  if (savedConfigDir === undefined) delete process.env.OPENCODE_CONFIG_DIR;
+  else process.env.OPENCODE_CONFIG_DIR = savedConfigDir;
   savedXdg = undefined;
+  savedConfigDir = undefined;
   while (created.length > 0) {
     const directory = created.pop();
     if (directory !== undefined) rmSync(directory, { recursive: true, force: true });

@@ -12,6 +12,7 @@ import { footerLine, sidebarLines } from "../src/tui/presentation.js";
 
 const created: string[] = [];
 let savedXdg: string | undefined;
+let savedConfigDir: string | undefined;
 let xdgRoot: string | undefined;
 
 function workspace(): string {
@@ -24,8 +25,10 @@ beforeEach(() => {
   // Never let a test that forgets to isolate reach the real machine config:
   // point the lookup at a throwaway XDG root unless the test says otherwise.
   savedXdg = process.env.XDG_CONFIG_HOME;
+  savedConfigDir = process.env.OPENCODE_CONFIG_DIR;
   xdgRoot = workspace();
   process.env.XDG_CONFIG_HOME = xdgRoot;
+  delete process.env.OPENCODE_CONFIG_DIR;
 });
 
 afterEach(() => {
@@ -33,7 +36,10 @@ afterEach(() => {
   // string "undefined".
   if (savedXdg === undefined) delete process.env.XDG_CONFIG_HOME;
   else process.env.XDG_CONFIG_HOME = savedXdg;
+  if (savedConfigDir === undefined) delete process.env.OPENCODE_CONFIG_DIR;
+  else process.env.OPENCODE_CONFIG_DIR = savedConfigDir;
   savedXdg = undefined;
+  savedConfigDir = undefined;
   xdgRoot = undefined;
   while (created.length > 0) {
     const directory = created.pop();
@@ -66,6 +72,32 @@ describe("globalConfigDirectory", () => {
     // which is the directory-dependence the global lookup exists to remove.
     process.env.XDG_CONFIG_HOME = "rel/path";
     expect(globalConfigDirectory()).toBe(join(homedir(), ".config", "opencode"));
+  });
+
+  test("prefers an absolute OPENCODE_CONFIG_DIR over XDG_CONFIG_HOME", () => {
+    const pinned = workspace();
+    const xdg = workspace();
+    process.env.OPENCODE_CONFIG_DIR = `  ${pinned}  `;
+    process.env.XDG_CONFIG_HOME = xdg;
+    // The host's pinned directory holds the config files directly; it is not
+    // a base directory to append `opencode` to.
+    expect(globalConfigDirectory()).toBe(pinned);
+  });
+
+  test("ignores a relative OPENCODE_CONFIG_DIR and falls back to XDG", () => {
+    process.env.OPENCODE_CONFIG_DIR = "rel/config";
+    const xdg = workspace();
+    process.env.XDG_CONFIG_HOME = xdg;
+    expect(globalConfigDirectory()).toBe(join(xdg, "opencode"));
+  });
+
+  test("loads flight-deck.jsonc from the pinned directory by default", () => {
+    const pinned = workspace();
+    process.env.OPENCODE_CONFIG_DIR = pinned;
+    writeFileSync(join(pinned, "flight-deck.jsonc"), `{ "footer": { "text": "pinned rail" } }`);
+    const loaded = loadConfigFile();
+    expect(loaded.source).toBe(join(pinned, "flight-deck.jsonc"));
+    expect(footerLine(resolveConfig(mergeOptions(loaded.options, undefined)).config)).toBe("pinned rail");
   });
 
   test("still honours an absolute XDG_CONFIG_HOME", () => {
