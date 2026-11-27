@@ -69,7 +69,7 @@ Which rows draw is `sidebar.rows`; what each row's number means is the Rows tabl
 
 ## Configure it
 
-One global file: `~/.config/opencode/flight-deck.jsonc`. The `.json` name is also read, and `.jsonc` is tried first. When `$XDG_CONFIG_HOME` holds an absolute path, the file lives at `$XDG_CONFIG_HOME/opencode/flight-deck.jsonc` instead. There is no per-project lookup, so a copy left in a project root configures nothing. A missing file is normal and silent: you get the defaults. Comments and trailing commas are accepted by the Bun-hosted TUI.
+One global file: `~/.config/opencode/flight-deck.jsonc`. The `.json` name is also read, and `.jsonc` is tried first. When the host pins an absolute `OPENCODE_CONFIG_DIR`, the file lives directly in it; otherwise, when `$XDG_CONFIG_HOME` holds an absolute path, the file lives at `$XDG_CONFIG_HOME/opencode/flight-deck.jsonc` instead. There is no per-project lookup, so a copy left in a project root configures nothing. A missing file is normal and silent: you get the defaults. Comments and trailing commas are accepted by the Bun-hosted TUI.
 
 ```jsonc
 {

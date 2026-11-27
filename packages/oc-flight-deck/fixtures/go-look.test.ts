@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mergeOptions, resolveConfig } from "../src/tui/config.js";
 import { loadConfigFile } from "../src/tui/file-config.js";
 import { createGoLookReader } from "../src/tui/go-look.js";
@@ -13,6 +13,16 @@ const REST = String.fromCharCode(0x25cb);
 const NOW = 1_700_000_000_000;
 
 const created: string[] = [];
+let savedXdg: string | undefined;
+let savedConfigDir: string | undefined;
+
+beforeEach(() => {
+  // Config lookup is global: keep a pinned host directory from leaking in.
+  savedXdg = process.env.XDG_CONFIG_HOME;
+  savedConfigDir = process.env.OPENCODE_CONFIG_DIR;
+  delete process.env.XDG_CONFIG_HOME;
+  delete process.env.OPENCODE_CONFIG_DIR;
+});
 
 function workspace(): string {
   const directory = mkdtempSync(join(tmpdir(), "flight-deck-go-look-"));
@@ -21,6 +31,12 @@ function workspace(): string {
 }
 
 afterEach(() => {
+  if (savedXdg === undefined) delete process.env.XDG_CONFIG_HOME;
+  else process.env.XDG_CONFIG_HOME = savedXdg;
+  if (savedConfigDir === undefined) delete process.env.OPENCODE_CONFIG_DIR;
+  else process.env.OPENCODE_CONFIG_DIR = savedConfigDir;
+  savedXdg = undefined;
+  savedConfigDir = undefined;
   while (created.length > 0) {
     const directory = created.pop();
     if (directory !== undefined) rmSync(directory, { recursive: true, force: true });
@@ -51,7 +67,7 @@ function asRecord(value: unknown): Record<string, unknown> {
 }
 
 describe("go look reader", () => {
-  test("adopts the new look after the config file's mtime changes", () => {
+  test("adopts the new look after the config file's mtime changes", async () => {
     const directory = workspace();
     const first = writeConfig(directory, `{ "sidebar": { "footer": { "go": { "reset": false } } } }`, 1_700_000_000_000);
     void first;
@@ -69,6 +85,9 @@ describe("go look reader", () => {
       `{ "sidebar": { "footer": { "go": { "reset": false, "blink": false } } } }`,
       1_700_000_100_000,
     );
+    // The probe is memoized for 250 ms; an edit is picked up on the next
+    // repaint after that window.
+    await Bun.sleep(270);
     const after = asRecord(reader.current());
     expect(after["reset"]).toBe(false);
     expect(after["blink"]).toBe(false);
@@ -92,7 +111,7 @@ describe("go look reader", () => {
     expect(reader.reads()).toBe(0);
   });
 
-  test("keeps the last good look when the file is missing, unreadable, or malformed", () => {
+  test("keeps the last good look when the file is missing, unreadable, or malformed", async () => {
     const directory = workspace();
     writeConfig(directory, `{ "sidebar": { "footer": { "go": { "reset": false } } } }`, 1_700_000_000_000);
     const reader = createGoLookReader({ directory, initial: setupLayout(directory, undefined) });
@@ -101,6 +120,7 @@ describe("go look reader", () => {
     // Malformed: unparseable text with a newer mtime still re-reads (cheaply,
     // once) but never replaces the look and never throws.
     writeConfig(directory, `{ "sidebar": { "footer": { "go": `, 1_700_000_100_000);
+    await Bun.sleep(270);
     expect(() => reader.current()).not.toThrow();
     expect(reader.current()).toBe(good);
 
@@ -114,7 +134,7 @@ describe("go look reader", () => {
     expect(reader.current()).toBe(good);
   });
 
-  test("lets host-forwarded options keep precedence over later file edits", () => {
+  test("lets host-forwarded options keep precedence over later file edits", async () => {
     const directory = workspace();
     writeConfig(directory, `{ "sidebar": { "footer": { "go": { "reset": false } } } }`, 1_700_000_000_000);
     const hostOptions = { sidebar: { footer: { go: { blink: false } } } };
@@ -133,12 +153,52 @@ describe("go look reader", () => {
       `{ "sidebar": { "footer": { "go": { "reset": true, "blink": true } } } }`,
       1_700_000_100_000,
     );
+    await Bun.sleep(270);
     const live = asRecord(reader.current());
     expect(live["blink"]).toBe(false);
     expect(live["reset"]).toBe(true);
   });
 
-  test("starts from the setup look when no config file exists yet", () => {
+  test("memoizes the fs probe for at least 250 ms while keeping mtime re-reads", async () => {
+    const directory = workspace();
+    writeConfig(directory, `{ "sidebar": { "footer": { "go": { "reset": false } } } }`, 1_700_000_000_000);
+    const reader = createGoLookReader({ directory, initial: setupLayout(directory, undefined) });
+    expect(asRecord(reader.current())["blink"]).toBe(true);
+
+    // An edit inside the memo window is invisible: no existsSync/statSync runs.
+    writeConfig(
+      directory,
+      `{ "sidebar": { "footer": { "go": { "reset": false, "blink": false } } } }`,
+      1_700_000_100_000,
+    );
+    expect(asRecord(reader.current())["blink"]).toBe(true);
+    expect(reader.reads()).toBe(0);
+
+    // Past the window the same mtime/size comparison triggers one re-read.
+    await Bun.sleep(270);
+    expect(asRecord(reader.current())["blink"]).toBe(false);
+    expect(reader.reads()).toBe(1);
+  });
+
+  test("watches the pinned OPENCODE_CONFIG_DIR when no directory is passed", async () => {
+    const directory = workspace();
+    process.env.OPENCODE_CONFIG_DIR = directory;
+    writeConfig(directory, `{ "sidebar": { "footer": { "go": { "reset": false } } } }`, 1_700_000_000_000);
+    const reader = createGoLookReader({ initial: setupLayout(directory, undefined) });
+    expect(asRecord(reader.current())["reset"]).toBe(false);
+    expect(reader.reads()).toBe(0);
+
+    writeConfig(
+      directory,
+      `{ "sidebar": { "footer": { "go": { "reset": false, "blink": false } } } }`,
+      1_700_000_100_000,
+    );
+    await Bun.sleep(270);
+    expect(asRecord(reader.current())["blink"]).toBe(false);
+    expect(reader.reads()).toBe(1);
+  });
+
+  test("starts from the setup look when no config file exists yet", async () => {
     const directory = workspace();
     const reader = createGoLookReader({ directory, initial: undefined });
     expect(reader.current()).toBeUndefined();
@@ -146,6 +206,7 @@ describe("go look reader", () => {
 
     // A file created after setup is a change like any other: it is adopted.
     writeConfig(directory, `{ "sidebar": { "footer": { "go": { "reset": false } } } }`, 1_700_000_100_000);
+    await Bun.sleep(270);
     expect(asRecord(reader.current())["reset"]).toBe(false);
     expect(reader.reads()).toBe(1);
   });

@@ -4,8 +4,8 @@
 // panel's look until the next client restart: editing `flight-deck.jsonc`
 // never re-ran setup, so the running panel kept its old look. This reader
 // re-resolves the look from the file at render time, without reading or
-// parsing per frame: each render cheap-stats the file (mtime + size) and
-// re-reads + re-parses only when either moved. The last good look is cached,
+// parsing per frame: at most one cheap stat probe per 250 ms compares mtime +
+// size, and the file is re-read + re-parsed only when either moved. The last good look is cached,
 // so a missing, unreadable, or malformed file keeps the panel exactly as it
 // was and never throws out of a render.
 //
@@ -22,6 +22,9 @@ import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { mergeOptions, resolveConfig } from "./config.js";
 import { CONFIG_FILE_CANDIDATES, globalConfigDirectory, loadConfigFile } from "./file-config.js";
+
+/** Minimum time between fs probes: the footer repaints every `refresh` ms (100 by default). */
+const PROBE_MS = 250;
 
 export interface GoLookReader {
   /** The current look for `goPanelLines`' `layout`: `undefined` or a `GoPanelLook`. Never throws. */
@@ -80,8 +83,18 @@ export function createGoLookReader(input: {
   let seenPath: string | undefined = findCandidate(directory);
   let seen: { mtimeMs: number; size: number } | undefined =
     seenPath === undefined ? undefined : snapshotOf(seenPath);
+  // Primed at creation so the first render takes the cached path.
+  let probedAt = Date.now();
 
   const current = (): unknown => {
+    // existsSync + statSync cost real work even when nothing changed, and the
+    // footer renders on a 100 ms ticker. One probe per PROBE_MS still adopts an
+    // edit on the next repaint, without putting fs on every frame. The
+    // mtime/size comparison below still decides whether to re-read.
+    const now = Date.now();
+    const age = now - probedAt;
+    if (age >= 0 && age < PROBE_MS) return look;
+    probedAt = now;
     try {
       const path = findCandidate(directory);
       if (path === undefined) {

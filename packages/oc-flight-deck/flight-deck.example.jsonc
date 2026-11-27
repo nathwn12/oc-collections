@@ -17,7 +17,8 @@
   //  every project. Flight Deck does NOT look in a project root or in a
   //  project's `.opencode/` directory: a copy left there configures nothing.
   //
-  //  If `$XDG_CONFIG_HOME` is set, the path is
+  //  If the host pins an absolute `OPENCODE_CONFIG_DIR`, put the file directly
+  //  in it. Otherwise, if `$XDG_CONFIG_HOME` is set, the path is
   //  `$XDG_CONFIG_HOME/opencode/flight-deck.jsonc` instead.
   //
   //  The file is optional. Having none is the normal case, and it is silent —

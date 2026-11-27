@@ -61,6 +61,7 @@ const LIVE_SESSION = {
 
 const created: string[] = [];
 let savedXdg: string | undefined;
+let savedConfigDir: string | undefined;
 let xdgDirectory: string | undefined;
 
 function workspace(): string {
@@ -78,6 +79,8 @@ function globalConfigFile(): string {
 
 beforeEach(() => {
   savedXdg = process.env.XDG_CONFIG_HOME;
+  savedConfigDir = process.env.OPENCODE_CONFIG_DIR;
+  delete process.env.OPENCODE_CONFIG_DIR;
   xdgDirectory = workspace();
   process.env.XDG_CONFIG_HOME = xdgDirectory;
   // Default the fake host to a verified write; a test that cares overrides it.
@@ -88,7 +91,10 @@ afterEach(() => {
   // An unset variable must go back to being unset, never the string "undefined".
   if (savedXdg === undefined) delete process.env.XDG_CONFIG_HOME;
   else process.env.XDG_CONFIG_HOME = savedXdg;
+  if (savedConfigDir === undefined) delete process.env.OPENCODE_CONFIG_DIR;
+  else process.env.OPENCODE_CONFIG_DIR = savedConfigDir;
   savedXdg = undefined;
+  savedConfigDir = undefined;
   xdgDirectory = undefined;
   while (created.length > 0) {
     const directory = created.pop();
