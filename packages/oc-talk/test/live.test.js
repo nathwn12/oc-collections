@@ -44,7 +44,7 @@ test('live: talk_send delivers into a real session and talk_inbox reads it back'
   const text = 'oc-talk live probe ' + Date.now() + ' — reply with the single word OK.';
   const sent = JSON.parse((await added.find((t) => t.name === 'talk_send').execute({ session: sessionID, text }, context)).content);
   assert.equal(sent.error, undefined, 'send failed: ' + JSON.stringify(sent));
-  assert.equal(sent.delivered, true);
+  assert.equal(sent.admitted, true);
   assert.equal(sent.sessionID, sessionID);
   assert.ok(sent.id, 'the admission must carry a message id');
 
@@ -120,7 +120,7 @@ test('live: a steer send is admitted into a real session, and the enum is the se
     (await added.find((t) => t.name === 'talk_send').execute({ session: sessionID, text, delivery: 'steer' }, context)).content,
   );
   assert.equal(sent.error, undefined, 'steer send failed: ' + JSON.stringify(sent));
-  assert.equal(sent.delivered, true);
+  assert.equal(sent.admitted, true);
   assert.equal(sent.delivery, 'steer', 'an explicit steer must be the lane the server accepted');
   assert.equal(sent.deliveryReason, 'explicit');
 

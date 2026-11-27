@@ -21,6 +21,9 @@ import { call as httpCall } from './transport.mjs';
 
 const READ_DEFAULT_LIMIT = 20;
 const READ_MAX_LIMIT = 100;
+// A reply read starts at the newest page and pages backwards until it reaches
+// the pre-send baseline: an old session can hold far more than one page.
+const REPLY_MAX_PAGES = 20;
 // The version stamped into the machine-readable envelope. It comes from the
 // shipped manifest, never a literal: release.yml rewrites package.json to the
 // derived version before it runs the tests, so a baked-in version goes stale
@@ -213,12 +216,14 @@ function nearMisses(sessions, query) {
 }
 
 // One shared resolver. Id-shaped `session` (/^ses_/) resolves by a direct
-// GET /api/session/{id}: never a search, never ambiguous. Anything else is an
-// exact-substring title match (case-sensitive) over the server's search pages:
-// zero hits fail with nearMisses, several fail with candidates, and a scan that
-// hit its page cap refuses with ambiguous_scan even on a single hit — an
-// unscanned session may match too, so uniqueness is unproven. Never guesses, and
-// the candidate list comes back as data rather than as a throw.
+// GET /api/session/{id}: never a search, never ambiguous. Anything else is a
+// case-insensitive substring title match over the server's search pages: the
+// host's search treats % and _ as wildcards, so those characters are refused
+// before any search rather than silently broadening the query. Zero hits fail
+// with nearMisses, several fail with candidates, and a scan that hit its page
+// cap refuses with ambiguous_scan even on a single hit — an unscanned session
+// may match too, so uniqueness is unproven. Never guesses, and the candidate
+// list comes back as data rather than as a throw.
 //
 // `scan` and `get` are injectable so resolution can be proved offline; the tools
 // always call them with the real backend.
@@ -235,10 +240,17 @@ async function resolveTarget(session, scan = scanSessions, get = getSession, opt
     }
     return { ok: true, id: g.session.id, title: g.session.title || '' };
   }
+  // The host's search treats % and _ as wildcards; a title query carrying
+  // either cannot be matched literally, so refuse it instead of resolving a
+  // session the caller did not name.
+  if (session.includes('%') || session.includes('_')) {
+    return { ok: false, error: 'bad_request', reason: 'title substring must not contain % or _ (host search wildcards); use the full session id' };
+  }
   const scanned = await scan(session, opts);
   if (opts.signal && opts.signal.aborted) return { ok: false, error: 'cancelled', reason: 'request cancelled' };
   if (!scanned.ok) return { ok: false, error: scanned.code, reason: 'search failed: ' + scanned.detail };
-  const hits = scanned.sessions.filter((s) => s.title.includes(session));
+  const needle = session.toLowerCase();
+  const hits = scanned.sessions.filter((s) => String(s.title).toLowerCase().includes(needle));
   // A capped scan cannot prove uniqueness: an unscanned session may match too,
   // so even a single hit is not an authorization. Refuse and hand back what was
   // seen. The id path above never scans, so it is unaffected.
@@ -422,10 +434,41 @@ async function waitForIdle(sessionID, waitMs, sinceID, opts = {}) {
   }
 }
 
+// A reply-boundary scan starts newest-first (the server's default) and pages
+// backwards with the opaque cursor until the pre-send baseline is seen, then
+// reverses the pages into the canonical ascending order. An ascending scan
+// starts at the oldest message: with more than one page of history the baseline
+// is absent from it and every old message looks like a fresh reply. No
+// order=asc is sent here: a cursor already carries the newest-first order, and
+// the server rejects cursor+order.
+async function collectMessagesSince(sessionID, sinceID, perPage, maxPages, signal) {
+  const desc = [];
+  let cursor = null;
+  let found = !sinceID; // no prior message means every message in the session is new
+  for (let page = 0; page < maxPages; page++) {
+    const args = ['session.message.list', '--param', 'sessionID=' + sessionID, '--param', 'limit=' + perPage];
+    if (cursor) args.push('--param', 'cursor=' + cursor);
+    const r = await runApi(args, { signal });
+    if (!r.ok) return r;
+    const rows = Array.isArray(r.json.data) ? r.json.data : [];
+    desc.push(...rows);
+    if (sinceID && rows.some((m) => m && m.id === sinceID)) { found = true; break; }
+    const next = (r.json.cursor && r.json.cursor.next) || null;
+    if (!next) break;
+    cursor = next;
+  }
+  // found=false with a cursor still outstanding means the scan hit its page
+  // cap; found=false with no cursor means the baseline vanished. Either way
+  // the boundary is unproven and no message may be labeled a reply.
+  return { ok: true, messages: desc.reverse(), found, truncated: !found && !!cursor };
+}
+
 // Canonical internal order is chronological ascending (oldest first):
 // the first page asks order=asc explicitly and cursor pages follow with the
 // cursor alone (the cursor preserves that order; cursor+order is 400), so the
 // accumulation is oldest-to-newest with no reversal anywhere on this path.
+// talk_inbox uses this path; the reply scan above must not, because it needs
+// the newest page first to find the baseline.
 async function collectMessages(sessionID, perPage, maxPages, signal) {
   const asc = [];
   let cursor = null;
@@ -479,13 +522,13 @@ async function ensureTools(ctx) {
     tools.add({
       name: 'talk_send',
       description:
-        'Deliver one text message into another session by `session` (id `ses_...` or unambiguous title substring; never `session_id`), as synthetic session input: it schedules the peer, appears in its inbox as a synthetic note, and never renders as a TUI user turn. ' +
+        'Admit one text message into another session by `session` (id `ses_...` or unambiguous case-insensitive title substring; never `session_id`) as a synthetic note in its inbox: admission is not delivery — the host wakes the peer separately and may skip delivery when a revert is staged. ' +
         'The text carries an envelope with your session id, title and reply target so the peer can answer with talk_send, and metadata.ocTalk carries the same fields for tools; a positive `wait` polls until the peer idles and returns only messages newer than this send, not a fixed delay. ' +
-        'Never guesses: an unknown or ambiguous title returns the candidate list as data, and only `delivery: "steer"` is accepted because queue delivery was removed.',
+        'Never guesses: an unknown or ambiguous title returns the candidate list as data, titles containing % or _ are refused as host-search wildcards, and only `delivery: "steer"` is accepted because queue delivery was removed.',
       input: {
         type: 'object',
         properties: {
-          session: { type: 'string', description: 'Session id (ses_...) or exact title substring' },
+          session: { type: 'string', description: 'Session id (ses_...) or case-insensitive title substring; % and _ are refused' },
           text: { type: 'string', description: 'Message text; a leading [steer] or STEER: marker is stripped before delivery' },
           delivery: { type: 'string', enum: DELIVERY_VALUES, description: 'Always steer: the synthetic note is admitted with delivery "steer"; queue delivery is removed' },
           wait: { type: 'number', description: 'Seconds to return only messages newer than this send after admission; default 0 (never block)' },
@@ -572,7 +615,10 @@ async function ensureTools(ctx) {
           title: t.title || '',
           from: callerID ? { sessionID: callerID, title: callerTitle } : null,
           replyTo: callerID || null,
-          delivered: true,
+          // POST /synthetic admits a note to the inbox. The host wakes the
+          // peer separately and skips delivery when a revert is staged, so
+          // this call cannot claim the message was delivered.
+          admitted: true,
           delivery: route.delivery,
           deliveryReason: route.reason,
         };
@@ -595,9 +641,17 @@ async function ensureTools(ctx) {
           if (signal.aborted) {
             out.replyReadError = { code: context && context.signal && context.signal.aborted ? 'cancelled' : 'timeout', reason: 'message read did not complete within the wait deadline' };
           } else {
-            const got = await collectMessages(t.id, READ_MAX_LIMIT, 1, signal);
-            if (got.ok) out.messages = replyRows(got.messages, baseline, new Set([clientID, d.id].filter(Boolean)));
-            else out.replyReadError = { code: got.code || 'backend_error', reason: got.detail || 'read failed' };
+            const got = await collectMessagesSince(t.id, baseline, READ_MAX_LIMIT, REPLY_MAX_PAGES, signal);
+            if (!got.ok) {
+              out.replyReadError = { code: got.code || 'backend_error', reason: got.detail || 'read failed' };
+            } else if (baseline && !got.found) {
+              // The pre-send boundary could not be located: do not relabel
+              // older history as a reply just because it was readable.
+              out.replyScanIncomplete = true;
+              out.messages = [];
+            } else {
+              out.messages = replyRows(got.messages, baseline, new Set([clientID, d.id].filter(Boolean)));
+            }
           }
           clearTimeout(waitTimer);
         }
@@ -824,6 +878,7 @@ export {
   viewBoard,
   classifyDelivery,
   collectMessages,
+  collectMessagesSince,
   ensureTools,
   listSessions,
   messageRow,

@@ -65,6 +65,24 @@ function stateFile(contents) {
 
 const SECRET = 'pw-do-not-leak-4c1f9e';
 
+test('XDG_STATE_HOME locates service.json when no explicit state file is set', () => {
+  const xdg = path.join(SCRATCH, 'xdg-state');
+  fs.mkdirSync(path.join(xdg, 'opencode'), { recursive: true });
+  fs.writeFileSync(
+    path.join(xdg, 'opencode', 'service.json'),
+    JSON.stringify({ url: 'http://0.0.0.0:41234', password: 'pw' }),
+  );
+  // A fresh process: the transport captures its state-file path at import time.
+  const script =
+    'import("' + pathToFileURL(TRANSPORT).href + '")' +
+    '.then((m) => { const ep = m.serviceEndpoint(); console.log(JSON.stringify(ep.error ? ep.error : { port: ep.port })); })';
+  const env = { ...process.env, XDG_STATE_HOME: xdg };
+  delete env.OC_TALK_STATE_FILE;
+  const child = spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', env });
+  assert.equal(child.status, 0, child.stderr);
+  assert.deepEqual(JSON.parse(child.stdout.trim()), { port: 41234 }, 'XDG state home must be honored');
+});
+
 test('a malformed state file never puts its own bytes in the detail', async () => {
   // Missing closing brace: the reader's error message would quote this text, and
   // that text carries the password.

@@ -14,7 +14,10 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 
-const STATE_FILE = process.env.OC_TALK_STATE_FILE || path.join(os.homedir(), '.local', 'state', 'opencode', 'service.json');
+// The host locates service.json under XDG_STATE_HOME when it is set; only
+// fall back to ~/.local/state when it is not. An explicit override still wins.
+const STATE_HOME = process.env.XDG_STATE_HOME || path.join(os.homedir(), '.local', 'state');
+const STATE_FILE = process.env.OC_TALK_STATE_FILE || path.join(STATE_HOME, 'opencode', 'service.json');
 const AUTH_USER = 'opencode';
 const REQUEST_TIMEOUT_MS = 20000;
 // One keep-alive agent for the whole module: the service is a sibling process on

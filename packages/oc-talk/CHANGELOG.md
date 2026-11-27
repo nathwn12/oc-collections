@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `talk_send` no longer claims `delivered: true`: `POST /synthetic` only admits a note to the inbox, and delivery needs a separate host wake that can be skipped when a revert is staged. The result now reports `admitted: true`; `wait` still reports what it actually observed.
+- A positive `wait` used to read one ascending page of 100 messages, so the pre-send baseline was missing in a busy session and old messages were returned as replies. The reply scan now reads newest-first and pages back by cursor until the baseline appears, then presents messages ascending; an unlocatable boundary reports `replyScanIncomplete` instead of relabeling history.
+- Title resolution now matches case-insensitively (as the host search does), and refuses `%` and `_` explicitly because the host treats them as wildcards.
+- The service state file is now found under `XDG_STATE_HOME` when the host sets it, with `~/.local/state` as the fallback.
 - The tool contracts now name `session` (never `session_id`), state that a positive `wait` polls for the peer's idle boundary instead of a fixed delay, and say plainly that queue delivery was removed and only `delivery: "steer"` is accepted. The envelope carried by every send and the candidate list returned for unknown or ambiguous titles are spelled out in both tool descriptions and the README.
 - `talk_inbox` docs now say to reuse the opaque `cursor` tokens a read returns, rather than reconstructing anchors.
 - `talk_board` docs now name the board file's internal `heartbeat` and `leaseUntil` lease fields while keeping the five public `{rows}` fields and the lease-gating rules unchanged.

@@ -34,9 +34,9 @@ const BOARD_FILE = path.join(os.tmpdir(), 'oc-talk-optin-board.yaml');
 
 const DESCRIPTIONS = {
   talk_send:
-    'Deliver one text message into another session by `session` (id `ses_...` or unambiguous title substring; never `session_id`), as synthetic session input: it schedules the peer, appears in its inbox as a synthetic note, and never renders as a TUI user turn. ' +
+    'Admit one text message into another session by `session` (id `ses_...` or unambiguous case-insensitive title substring; never `session_id`) as a synthetic note in its inbox: admission is not delivery — the host wakes the peer separately and may skip delivery when a revert is staged. ' +
     'The text carries an envelope with your session id, title and reply target so the peer can answer with talk_send, and metadata.ocTalk carries the same fields for tools; a positive `wait` polls until the peer idles and returns only messages newer than this send, not a fixed delay. ' +
-    'Never guesses: an unknown or ambiguous title returns the candidate list as data, and only `delivery: "steer"` is accepted because queue delivery was removed.',
+    'Never guesses: an unknown or ambiguous title returns the candidate list as data, titles containing % or _ are refused as host-search wildcards, and only `delivery: "steer"` is accepted because queue delivery was removed.',
   talk_inbox:
     'Read one session\'s messages as id, role, text, tools and time, newest first, default 20; peer mail arrives as synthetic notes carrying the `[oc-talk] from` envelope, and `session` (never `session_id`) defaults to the session that called this tool. ' +
     '`since` keeps only what is newer, `type` filters, `wait` seconds blocks until the session idles again before reading, and an opaque `cursor` from a previous read is reused rather than reconstructed. ' +
@@ -146,10 +146,22 @@ test('an ambiguous title returns candidates instead of guessing', async () => {
   const one = await resolveTarget('smoke', scan);
   assert.deepEqual(one, { ok: true, id: 'ses_solo', title: 'smoke tests' });
 
-  // Case-sensitive by contract: a differently-cased title is a miss, not a guess.
+  // The host search is case-insensitive, so a differently-cased query matches.
+  // 'build lane' matches two titles; 'SMOKE' matches one.
   const cased = await resolveTarget('Build lane', scan);
-  assert.equal(cased.error, 'session_not_found');
-  assert.deepEqual(cased.candidates.map((c) => c.id), ['ses_a', 'ses_b', 'ses_solo']);
+  assert.equal(cased.error, 'ambiguous_session');
+  assert.deepEqual(cased.candidates.map((c) => c.id), ['ses_a', 'ses_b']);
+  assert.deepEqual(await resolveTarget('SMOKE', scan), { ok: true, id: 'ses_solo', title: 'smoke tests' });
+});
+
+test('title queries with host wildcard characters are refused, not searched', async () => {
+  const { resolveTarget } = await load();
+  for (const q of ['build%lane', 'build_lane', '%', '_']) {
+    const r = await resolveTarget(q, scan);
+    assert.equal(r.ok, false, q + ' must not be sent to the wildcard search');
+    assert.equal(r.error, 'bad_request', q + ': ' + JSON.stringify(r));
+    assert.match(r.reason, /wildcard/i, 'the reason names the rejected wildcard');
+  }
 });
 
 test('a missing session returns a typed error, never a throw', async () => {
@@ -379,7 +391,7 @@ test('every send steers, carries a client id, and returns the admission', async 
     title: 'active work',
     from: { sessionID: 'ses_caller', title: 'active work' },
     replyTo: 'ses_caller',
-    delivered: true,
+    admitted: true,
     delivery: 'steer',
     deliveryReason: 'default',
   });
@@ -392,7 +404,7 @@ test('every send steers, carries a client id, and returns the admission', async 
 
   // Two sends are two admissions, never one idempotent replay.
   const again = JSON.parse((await tool.execute({ session: 'ses_a', text: 'again' }, CALLER)).content);
-  assert.equal(again.delivered, true);
+  assert.equal(again.admitted, true);
   const bodies = calls.filter((a) => a[0] === 'post' && String(a[1]).endsWith('/synthetic')).map((a) => JSON.parse(a[3]));
   assert.notEqual(bodies[0].id, bodies[1].id);
 });
@@ -451,8 +463,9 @@ test('an incoming envelope is not wrapped a second time', async () => {
   assert.equal(text.split('[oc-talk] from ').length - 1, 1, 'exactly one envelope on the wire');
 });
 
-// A wait backend that reads one fixed ascending history after a one-shot send.
-// The baseline is `msg_before`; the newest row turns fresh and idle once posted.
+// A wait backend that reads one fixed history after a one-shot send. The
+// baseline is `msg_before`; the newest row turns fresh and idle once posted.
+// The server pages newest-first, so the fixture is reversed on the wire.
 async function replyTool(history) {
   const mod = await load();
   let posted = false;
@@ -466,7 +479,7 @@ async function replyTool(history) {
     if (args.includes('limit=1')) {
       return { ok: true, json: { data: [{ id: posted ? 'msg_idle_new' : 'msg_before', type: 'idle' }] } };
     }
-    return { ok: true, json: { data: history, cursor: {} } };
+    return { ok: true, json: { data: [...history].reverse(), cursor: {} } };
   });
   const { ctx, added } = host();
   await mod.default.setup(ctx);
@@ -605,6 +618,14 @@ test('a message that is only a [steer] marker fails as bad_request and sends not
 // `wait` is a poll that runs after the send. It cannot choose a lane, because the
 // message has already been admitted by the time it starts; what it can do is read
 // the turn boundary that follows and hand back what the peer said.
+test('a synthetic send reports admission, never delivery', async () => {
+  const { tool } = await toolWith('talk_send');
+  const out = JSON.parse((await tool.execute({ session: 'ses_a', text: 'do the thing' }, CALLER)).content);
+  assert.equal(out.admitted, true, 'POST /synthetic admits to the inbox: ' + JSON.stringify(out));
+  assert.equal(out.delivered, undefined, 'delivery needs a wake and may be skipped; it is not proven here');
+  assert.equal(out.delivery, 'steer', 'the requested lane is still reported');
+});
+
 test('wait polls after an explicit steer send and never changes the lane', async () => {
   const { tool, calls } = await waitingTool();
   const out = JSON.parse(
@@ -638,6 +659,64 @@ test('wait on a plain send steers first and polls the boundary that follows it',
   // boundary that counts is the one this send produced.
   const reads = calls.filter((a) => a[0] === 'session.message.list');
   assert.ok(reads.length >= 2, 'a bounded wait reads a baseline and then polls: ' + reads.length);
+});
+
+test('collectMessagesSince pages back through newest-first pages to the baseline', async () => {
+  const mod = await load();
+  const calls = [];
+  mod.setApiRunner(async (args) => {
+    calls.push(args);
+    if (args.includes('cursor=back')) {
+      return { ok: true, json: { data: [
+        { id: 'msg_base', type: 'user', text: 'baseline' },
+        { id: 'msg_old', type: 'user', text: 'old' },
+      ], cursor: { next: null } } };
+    }
+    return { ok: true, json: { data: [
+      { id: 'msg_new', type: 'assistant', text: 'new' },
+    ], cursor: { next: 'back' } } };
+  });
+  const got = await mod.collectMessagesSince('ses_a', 'msg_base', 100, 3, undefined);
+  assert.equal(got.ok, true);
+  assert.equal(got.found, true);
+  assert.equal(got.truncated, false);
+  assert.deepEqual(got.messages.map((m) => m.id), ['msg_old', 'msg_base', 'msg_new'], 'ascending after paging back');
+  assert.ok(!calls.some((a) => a.includes('order=asc')), 'the scan is newest-first, never ascending');
+});
+
+test('a wait reply scan never mistakes the oldest page for messages after the baseline', async () => {
+  const mod = await load();
+  const calls = [];
+  let posted = false;
+  mod.setApiRunner(async (args) => {
+    calls.push(args);
+    const [verb, target] = args;
+    if (verb === 'session.get') return { ok: true, json: { data: { id: 'ses_a', title: 'active work' } } };
+    if (verb === 'post' && String(target).endsWith('/synthetic')) {
+      posted = true;
+      return { ok: true, json: { data: { id: 'msg_sent', sessionID: 'ses_a' } } };
+    }
+    if (args.includes('limit=1')) {
+      return { ok: true, json: { data: [{ id: posted ? 'msg_reply' : 'msg_base', type: 'idle' }] } };
+    }
+    if (args.includes('order=asc')) {
+      // The trap: an ascending scan hands back the oldest messages, which do
+      // not contain the baseline and would all be reported as replies.
+      return { ok: true, json: { data: [{ id: 'msg_ancient', type: 'user', text: 'ancient mail' }], cursor: { next: 'older' } } };
+    }
+    if (args.includes('cursor=older-page')) {
+      return { ok: true, json: { data: [{ id: 'msg_base', type: 'idle' }], cursor: { next: null } } };
+    }
+    // Newest-first: the fresh idle that ends the turn is on page one, and the
+    // baseline is only found by paging back.
+    return { ok: true, json: { data: [{ id: 'msg_reply', type: 'idle' }], cursor: { next: 'older-page' } } };
+  });
+  const { ctx, added } = host();
+  await mod.default.setup(ctx);
+  const out = JSON.parse((await added.find((t) => t.name === 'talk_send').execute({ session: 'ses_a', text: 'hi', wait: 5 }, CALLER)).content);
+  assert.equal(out.error, undefined, JSON.stringify(out));
+  assert.deepEqual(out.messages, [{ role: 'idle', text: '' }], 'only the message after the baseline: ' + JSON.stringify(out.messages));
+  assert.ok(!calls.some((a) => a[0] === 'session.message.list' && a.includes('order=asc')), 'the reply scan starts at the newest page');
 });
 
 test('classifyDelivery is pure: it strips a [steer] marker and never picks a lane', async () => {
@@ -688,13 +767,20 @@ test('talk_send is fire-and-forget by default and reports timedOut only when ask
       posted = true;
       return { ok: true, json: { data: { id: 'msg_sent', sessionID: 'ses_a' } } };
     }
-    // Before the send the session already sits at a boundary; after it, a new one.
-    return { ok: true, json: { data: [{ id: posted ? 'msg_new_idle' : 'msg_prev_idle', type: 'idle', time: { created: 6000 } }] } };
+    // Before the send the session already sits at a boundary; after it, a new
+    // one. The full reply read shows the newest-first history, baseline last.
+    if (args.includes('limit=1')) {
+      return { ok: true, json: { data: [{ id: posted ? 'msg_new_idle' : 'msg_prev_idle', type: 'idle', time: { created: 6000 } }] } };
+    }
+    return { ok: true, json: { data: [
+      { id: 'msg_new_idle', type: 'idle', time: { created: 7000 } },
+      { id: 'msg_prev_idle', type: 'idle', time: { created: 6000 } },
+    ], cursor: {} } };
   });
   const { ctx, added } = host();
   await mod.default.setup(ctx);
   const waited = JSON.parse((await added.find((t) => t.name === 'talk_send').execute({ session: 'ses_a', text: 'hi', wait: 5 }, CALLER)).content);
-  assert.equal(waited.delivered, true);
+  assert.equal(waited.admitted, true);
   assert.equal(waited.timedOut, false);
   assert.ok(typeof waited.waitedMs === 'number');
   assert.deepEqual(waited.messages.map((m) => m.role), ['idle']);
@@ -715,7 +801,7 @@ test('a turn boundary that predates the send never counts as completion', async 
   const { ctx, added } = host();
   await mod.default.setup(ctx);
   const out = JSON.parse((await added.find((t) => t.name === 'talk_send').execute({ session: 'ses_a', text: 'hi', wait: 0.3 }, CALLER)).content);
-  assert.equal(out.delivered, true);
+  assert.equal(out.admitted, true);
   assert.equal(out.timedOut, true, 'an idle marker older than the send is not the turn ending');
   assert.ok(typeof out.waitedMs === 'number' && out.waitedMs >= 0);
 });
@@ -739,7 +825,7 @@ test('a peer that never reaches a turn boundary reports timedOut:true, never suc
   assert.equal(out.timedOut, true, 'a bounded block that gave up must say so');
 });
 
-test('a delivered send reports final reply-read failures without erasing delivery', async () => {
+test('an admitted send reports final reply-read failures without erasing admission', async () => {
   const mod = await load();
   let posted = false;
   mod.setApiRunner(async (args) => {
@@ -755,7 +841,7 @@ test('a delivered send reports final reply-read failures without erasing deliver
   const { ctx, added } = host();
   await mod.default.setup(ctx);
   const out = JSON.parse((await added.find((t) => t.name === 'talk_send').execute({ session: 'ses_a', text: 'hi', wait: 1 }, CALLER)).content);
-  assert.equal(out.delivered, true);
+  assert.equal(out.admitted, true);
   assert.equal(out.replyReadError.code, 'backend_error');
   assert.equal(out.messages, undefined);
 });

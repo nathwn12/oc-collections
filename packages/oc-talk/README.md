@@ -17,7 +17,7 @@ Add the plugin to `~/.config/opencode/opencode.jsonc` and restart OpenCode:
 { "plugins": ["oc-talk"] }
 ```
 
-The plugin reads the harness service state and needs no other config. A default install registers exactly two tools: `talk_send` and `talk_inbox`.
+The plugin reads the harness service state and needs no other config: `$XDG_STATE_HOME/opencode/service.json` when set, otherwise `~/.local/state/opencode/service.json` (`OC_TALK_STATE_FILE` overrides both). A default install registers exactly two tools: `talk_send` and `talk_inbox`.
 
 ## Use it
 
@@ -25,17 +25,17 @@ Send a message, then read the session:
 
 ```text
 talk_send { "session": "build lane", "text": "Run the tests and report failures." }
-→ { "id": "msg_0f3c…", "sessionID": "ses_9a1…", "from": { "sessionID": "ses_caller", "title": "dispatcher" }, "replyTo": "ses_caller", "delivered": true }
+→ { "id": "msg_0f3c…", "sessionID": "ses_9a1…", "from": { "sessionID": "ses_caller", "title": "dispatcher" }, "replyTo": "ses_caller", "admitted": true }
 
 talk_inbox { "session": "ses_caller" }
 → { "sessionID": "ses_caller", "messages": [ … ] }
 ```
 
-The message enters the peer as synthetic session input: it schedules the peer, is filed in its inbox as `type: synthetic`, and never renders as a user turn. The text carries an envelope with the sender id, sender title and reply target; the same fields ride in `metadata.ocTalk`. Metadata is not guaranteed to reach the model, so the envelope lives in the text.
+The message enters the peer as synthetic session input: it is filed in its inbox as `type: synthetic` and never renders as a user turn. Admission is not delivery — the host wakes the peer separately and skips delivery when a revert is staged — so the tool reports `admitted: true` and never `delivered: true`. The text carries an envelope with the sender id, sender title and reply target; the same fields ride in `metadata.ocTalk`. Metadata is not guaranteed to reach the model, so the envelope lives in the text.
 
 ## Tools
 
-- `talk_send` — deliver one message by `session` (id `ses_...` or unique title; never `session_id`). It admits `POST /api/session/{id}/synthetic`, reports `{id, sessionID, title, from, replyTo, delivered, delivery, deliveryReason}` — including the resolved `sessionID` — and accepts an optional `wait` that polls until that session idles, not a fixed delay, returning only messages newer than the send. Queue delivery was removed: `delivery: "steer"` is the only accepted value and `delivery: "queue"` is a typed `bad_request`. A leading `[steer]` or `STEER:` is stripped.
+- `talk_send` — admit one message by `session` (id `ses_...` or unique case-insensitive title substring; never `session_id`; titles containing `%` or `_` are refused as host-search wildcards). It posts `POST /api/session/{id}/synthetic`, reports `{id, sessionID, title, from, replyTo, admitted, delivery, deliveryReason}` — including the resolved `sessionID` — and accepts an optional `wait` that polls until that session idles, not a fixed delay, returning only messages newer than the send. Queue delivery was removed: `delivery: "steer"` is the only accepted value and `delivery: "queue"` is a typed `bad_request`. A leading `[steer]` or `STEER:` is stripped.
 - `talk_inbox` — read any session's messages as `{id, role, text, tools, time}`, newest first, default 20, including synthetic peer mail. `session` (never `session_id`) defaults to the calling session; `since` keeps only newer messages, `type` filters, `wait` blocks until the session idles again, and opaque `cursor` tokens from a previous read are reused rather than reconstructed. Unknown or ambiguous titles return the candidate list as data, never a guess.
 The messaging tools work across sessions, subagents and agents: a reply is a real synthetic message back to the sender. The optional board pair is documented below; it is not part of the default surface.
 
