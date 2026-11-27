@@ -34,13 +34,20 @@ test("refresh keeps a parked state parked", async () => {
   expect(updates(ctx, "b")[0].title).toBe("parked: new scope");
 });
 
-test("closed is final: a refresh never reopens a closed title", async () => {
-  const ctx = createFakeCtx();
-  ctx.seed("c", stamped("closed: old scope", "closed"));
-  const { outcome } = await run(ctx, "c", "New Scope");
-  expect(outcome).not.toBe("refreshed");
-  expect(updates(ctx, "c").length).toBe(0);
-  expect(ctx.record("c").title).toBe("closed: old scope");
+test("closed is final only while the host archive flag is set", async () => {
+  const archived = createFakeCtx();
+  archived.seed("c", { ...stamped("closed: old scope", "closed"), archived: true });
+  expect((await run(archived, "c", "New Scope")).outcome).not.toBe("refreshed");
+  expect(updates(archived, "c").length).toBe(0);
+  expect(archived.record("c").title).toBe("closed: old scope");
+
+  // An unarchived title that still reads closed is stale derived state: the
+  // scope may be refreshed and the state stays closed, never reopened.
+  const unarchived = createFakeCtx();
+  unarchived.seed("c2", stamped("closed: old scope", "closed"));
+  expect((await run(unarchived, "c2", "New Scope")).outcome).toBe("refreshed");
+  expect(updates(unarchived, "c2")[0].title).toBe("closed: new scope");
+  expect(updates(unarchived, "c2")[0].metadata["oc-title"].state).toBe("closed");
 });
 
 test("an archived record is never refreshed even if metadata says active", async () => {

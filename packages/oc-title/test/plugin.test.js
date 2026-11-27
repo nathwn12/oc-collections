@@ -131,7 +131,7 @@ test("an unmapped event repairs a session the plugin never stamped", async () =>
   expect(lastUpdateFor(ctx, "c2")?.metadata?.["oc-title"]?.state).toBe("parked");
 });
 
-test("a catch-up confirms a closed title instead of reopening it", async () => {
+test("a catch-up on an unarchived closed title derives live state", async () => {
   const ctx = createFakeCtx();
   mount(ctx);
   await ctx.waitFor(() => ctx.listCalls.length > 0);
@@ -141,12 +141,12 @@ test("a catch-up confirms a closed title instead of reopening it", async () => {
   await ctx.waitFor(() => ctx.updates.length === 1);
   await ctx.flush();
   await ctx.cleanup();
-  expect(lastFor(ctx, "c3")).toBeUndefined();
-  expect(ctx.record("c3").title).toBe("closed: done thing");
-  expect(ctx.record("c3").metadata["oc-title"].state).toBe("closed");
+  // The title prefix was stale: no host archive flag means no closed session.
+  expect(lastFor(ctx, "c3")).toBe("parked: done thing");
+  expect(ctx.record("c3").metadata["oc-title"].state).toBe("parked");
 });
 
-test("a mapped lifecycle event does not reopen a closed title", async () => {
+test("a mapped lifecycle event updates a stale closed title once the host unarchives it", async () => {
   const ctx = createFakeCtx();
   ctx.seed("c5", { title: "closed: done thing" });
   mount(ctx);
@@ -155,14 +155,14 @@ test("a mapped lifecycle event does not reopen a closed title", async () => {
   await ctx.waitFor(() => ctx.consumed >= 1);
   await ctx.flush();
   await ctx.cleanup();
-  expect(ctx.record("c5").title).toBe("closed: done thing");
-  expect(ctx.record("c5").metadata["oc-title"].state).toBe("closed");
+  expect(ctx.record("c5").title).toBe("active: done thing");
+  expect(ctx.record("c5").metadata["oc-title"].state).toBe("active");
 });
 
-test("a mapped lifecycle event does not reopen a closed child with a bare title", async () => {
+test("an archived child stays closed while an unarchived one follows lifecycle events", async () => {
   const ctx = createFakeCtx();
-  // Children carry bare titles: closed must be read from the metadata state or
-  // the archived flag, never from a state prefix the title does not have.
+  // Children carry bare titles: only the archived flag can keep one closed.
+  // Metadata saying "closed" on c7 is stale once the host archive flag is gone.
   ctx.seed("c6", { title: "done thing", parentID: "p1", archived: true, metadata: { "oc-title": { state: "closed", at: 1 } } });
   ctx.seed("c7", { title: "other thing", parentID: "p1", metadata: { "oc-title": { state: "closed", at: 1 } } });
   mount(ctx);
@@ -176,8 +176,39 @@ test("a mapped lifecycle event does not reopen a closed child with a bare title"
   expect(ctx.record("c6").title).toBe("done thing");
   expect(ctx.record("c6").metadata["oc-title"].state).toBe("closed");
   expect(ctx.record("c7").title).toBe("other thing");
-  expect(ctx.record("c7").metadata["oc-title"].state).toBe("closed");
-  expect(ctx.updates.length).toBe(0);
+  expect(ctx.record("c7").metadata["oc-title"].state).toBe("active");
+  expect(ctx.updates.length).toBe(1);
+});
+
+test("session.unarchived reopens a title left closed before the host unarchived it", async () => {
+  const ctx = createFakeCtx();
+  // Stale derived signals: the title and our metadata still say closed, but the
+  // host archive flag is gone. The unarchived event must win.
+  ctx.seed("u1", { title: "closed: old scope", metadata: { "oc-title": { state: "closed", at: 1 } } });
+  mount(ctx);
+  await ctx.flush();
+  ctx.updates.length = 0;
+  ctx.push(event("session.unarchived", { id: "u1", seq: 2 }));
+  await ctx.waitFor(() => ctx.consumed >= 1);
+  await ctx.flush();
+  await ctx.cleanup();
+  expect(lastFor(ctx, "u1")).toBe("active: old scope");
+  expect(lastUpdateFor(ctx, "u1").metadata["oc-title"].state).toBe("active");
+});
+
+test("a host-regenerated title with different casing is not read as an owner rename", async () => {
+  const ctx = createFakeCtx();
+  // Same body, host-capitalized; oc-title's own stamp is the baseline, not case.
+  ctx.seed("u2", { title: "active: My Scope", time: { busy: 10, idle: 5 }, metadata: { "oc-title": { state: "active", at: 1, body: "my scope" } } });
+  mount(ctx);
+  await ctx.flush();
+  ctx.updates.length = 0;
+  ctx.push(event("session.idle", { id: "u2", seq: 2 }));
+  await ctx.waitFor(() => ctx.consumed >= 1);
+  await ctx.flush();
+  await ctx.cleanup();
+  expect(lastFor(ctx, "u2")).toBe("parked: my scope");
+  expect(lastUpdateFor(ctx, "u2").metadata["oc-title"].body).toBe("my scope");
 });
 
 test("a created event that beats its own record still writes", async () => {
@@ -332,7 +363,9 @@ test("existing metadata survives alongside oc-title", async () => {
 
 test("a manual rename is not normalized on the next lifecycle write", async () => {
   const ctx = createFakeCtx();
-  ctx.seed("mr1", { title: "active: My Custom Name", time: { busy: 10, idle: 5 }, metadata: { "oc-title": { state: "active", at: 1 } } });
+  // The rename baseline is the last body oc-title stamped: this body differs
+  // from it, so the owner's text wins even though it is already lowercase.
+  ctx.seed("mr1", { title: "active: owner renamed", time: { busy: 10, idle: 5 }, metadata: { "oc-title": { state: "active", at: 1, body: "my custom name" } } });
   mount(ctx);
   await ctx.flush();
   ctx.updates.length = 0;
@@ -341,7 +374,7 @@ test("a manual rename is not normalized on the next lifecycle write", async () =
   await ctx.flush();
   await ctx.cleanup();
   expect(ctx.updates.length).toBe(0);
-  expect(ctx.record("mr1").title).toBe("active: My Custom Name");
+  expect(ctx.record("mr1").title).toBe("active: owner renamed");
 });
 
 test("a stamped lowercase title still follows lifecycle events", async () => {

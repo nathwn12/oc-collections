@@ -8,6 +8,9 @@ export const STATE_FOR = { // The seven lifecycle events and their target states
   "session.execution.interrupted": "parked",
   "session.idle": "parked",
   "session.archived": "closed",
+  // Unarchive returns the session to live work; a stale closed title or our
+  // own closed metadata is derived state and must not outlive the host flag.
+  "session.unarchived": "active",
 };
 
 // sessionIDOf: pull a usable session id from an event, tolerating wrapped shapes.

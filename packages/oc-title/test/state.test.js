@@ -11,6 +11,7 @@ test("STATE_FOR maps every session event to its state", () => {
   expect(valueFor("session.execution.interrupted")).toBe("parked");
   expect(valueFor("session.idle")).toBe("parked");
   expect(valueFor("session.archived")).toBe("closed");
+  expect(valueFor("session.unarchived")).toBe("active");
 });
 
 test("sessionIDOf reads data.sessionID", () => {

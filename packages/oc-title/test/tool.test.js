@@ -72,7 +72,7 @@ test("a tool-only session can still be refreshed with an explicit scope", async 
 
 test("a closed session is never refreshed through the tool", async () => {
   const ctx = createFakeCtx();
-  ctx.seed("s4", stamped("closed: old scope", "closed"));
+  ctx.seed("s4", { ...stamped("closed: old scope", "closed"), archived: true });
   const tool = mount(ctx);
   const out = payload(await call(tool, { scope: "New Scope" }, "s4"));
   await ctx.flush();

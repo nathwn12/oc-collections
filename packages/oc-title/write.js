@@ -1,6 +1,6 @@
 // The only ctx-touching module: serialized, guarded title writes.
 
-import { normalizeTitle, stateOf, bodyOf, STATES } from "./title.js";
+import { normalizeTitle, cleanBody, stateOf, bodyOf, STATES } from "./title.js";
 import { isChild, isArchived, deriveState } from "./state.js";
 
 export const counters = { events: 0, writes: 0, skips: 0, failures: 0 }; // Shared health counters.
@@ -43,12 +43,12 @@ export function createWriter(ctx, { options = {}, trace = () => {} } = {}) {
       const rec = await readRecord(id);
       if (!rec) return skip(id, "no matching record");
       if (typeof rec.title !== "string") return skip(id, "no title");
-      // A closed title is final for every event, mapped or unmapped: the
-      // lifecycle map may not reopen a session the title has already closed.
-      // Children carry bare titles, so closed must also be read from the
-      // oc-title metadata state and from the archived flag - the same three
-      // signals applyRefresh uses to keep a closed session final.
-      const closed = stateOf(rec.title) === "closed" || rec.metadata?.["oc-title"]?.state === "closed" || isArchived(rec);
+      // The host archived flag is the only authoritative closed signal. A
+      // title prefix or our metadata can remain "closed" after the host emits
+      // session.unarchived; treating either as final would pin a live session
+      // closed forever. An archived record, by contrast, is final for every
+      // event, mapped or unmapped.
+      const closed = isArchived(rec);
       // A session the plugin has never stamped gets one pass from whatever event
       // reaches it, so a missed session.created repairs itself. A catch-up may
       // confirm a closed title, never reopen it.
@@ -62,11 +62,16 @@ export function createWriter(ctx, { options = {}, trace = () => {} } = {}) {
         target = "closed";
       }
       const child = isChild(rec);
-      const effective = isArchived(rec) ? "closed" : target;
+      const effective = closed ? "closed" : target;
       const next = normalizeTitle(rec.title, child ? null : effective, options);
       const old = rec.metadata && typeof rec.metadata === "object" ? rec.metadata : {};
-      if (old["oc-title"] && typeof old["oc-title"] === "object" && bodyOf(rec.title) !== bodyOf(rec.title).toLowerCase()) return skip(id, "manual rename");
-      const metadata = { ...old, "oc-title": { state: effective, at: Date.now() } };
+      const stamp = old["oc-title"];
+      // An owner rename is a body that differs from the last body we stamped,
+      // compared case-insensitively: a host-regenerated title with different
+      // casing is the same scope, not an edit to preserve.
+      if (stamp && typeof stamp === "object" && typeof stamp.body === "string" && cleanBody(rec.title).toLowerCase() !== stamp.body) return skip(id, "manual rename");
+      const body = normalizeTitle(rec.title, null, options);
+      const metadata = { ...old, "oc-title": { state: effective, at: Date.now(), body } };
       const titleChanged = rec.title !== next;
       if (!titleChanged && old["oc-title"]?.state === effective) return skip(id, "unchanged");
       await ctx.session.update({ sessionID: id, metadata, ...(titleChanged && { title: next }) });
@@ -106,13 +111,14 @@ export function createWriter(ctx, { options = {}, trace = () => {} } = {}) {
       if (!meta || typeof meta !== "object") return skip(id, "not stamped");
       const state = meta.state;
       if (!STATES.includes(state)) return skip(id, "unknown state");
-      // Closed is final whether the record is archived or the title/metadata
-      // already reads closed: a refresh never reopens a session.
-      if (state === "closed" || stateOf(rec.title) === "closed" || isArchived(rec)) return skip(id, "closed is final");
+      // Only the host's archived flag makes closed final: an unarchived title
+      // that still reads closed is stale, and a refresh may update its scope.
+      if (isArchived(rec)) return skip(id, "closed is final");
       const effective = state; // Keep the state: a parked session stays parked.
       const next = normalizeTitle(scope, isChild(rec) ? null : effective, options);
       if (rec.title === next) return skip(id, "unchanged");
-      const metadata = { ...old, "oc-title": { state: effective, at: Date.now() } };
+      const body = normalizeTitle(scope, null, options);
+      const metadata = { ...old, "oc-title": { state: effective, at: Date.now(), body } };
       await ctx.session.update({ sessionID: id, title: next, metadata });
       counters.writes++;
       trace("refresh " + id + ": " + next);

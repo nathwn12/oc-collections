@@ -4,8 +4,8 @@ Sets an OpenCode session title from the session's lifecycle, so the list reads a
 
 - Parent sessions read `active: text`, `parked: text` or `closed: text`.
 - Child sessions read the lowercased text alone, with no state prefix.
-- The state is also written to session metadata as `oc-title: { state, at }`, so the title is never the only copy.
-- Closed is final: an archived session is never reopened by a late idle.
+- The state is also written to session metadata as `oc-title: { state, at, body }`, where `body` is the last lowercased scope oc-title stamped; it is the baseline for detecting an owner rename.
+- Closed is final only while the host archive flag is set. `session.unarchived` returns a stale `closed: ...` title to live state; a late idle cannot reopen an archived session.
 - A tool call is never invented: a record without a string title is left alone.
 
 ## Scope refresh
@@ -14,7 +14,7 @@ In a long session the state stays right while the scope text goes stale. The
 `oc_title_refresh` tool rewrites only that scope, from the session's latest user
 request (or an explicit `scope` argument). It updates a title oc-title already
 stamped, keeps the current state (parked stays parked), keeps a child's bare title,
-keeps other metadata, applies the same cap, and never reopens a closed session.
+keeps other metadata, applies the same cap, and never reopens an archived session.
 An empty, tool-only or unstamped session produces no write. The refresh shares the
 writer's per-session chain, so it cannot race a lifecycle event.
 Synthetic, steered or tool-only sessions have no user request to read: pass the
@@ -23,7 +23,7 @@ or summary.
 
 ## Events
 
-Any other session.* event is a catch-up: it stamps only a session that has no `oc-title` metadata yet, and it never reopens a title that already reads closed.
+`session.archived` closes; `session.unarchived` returns the session to active work. Any other session.* event is a catch-up: it stamps only a session that has no `oc-title` metadata yet. A stale `closed:` prefix or closed metadata is not final once the host archive flag is gone; an archived record stays closed.
 A created event that beats its own record is retried for about a second instead of dropping the write. Busyness is read from the busy and idle timestamps: an older busy stamp is idle, and the last run's outcome never means closed. Body caps count code points so an emoji is never split into a lone surrogate.
 
 ## Shape
