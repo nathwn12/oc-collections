@@ -4,6 +4,13 @@
   "description": "Session titles carry their state: active, parked or closed.",
   "license": "MIT",
   "author": "nathwn12",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nathwn12/oc-collections.git",
+    "directory": "packages/oc-title"
+  },
+  "homepage": "https://github.com/nathwn12/oc-collections/tree/main/packages/oc-title",
+  "bugs": "https://github.com/nathwn12/oc-collections/issues",
   "type": "module",
   "main": "./index.js",
   "exports": {
