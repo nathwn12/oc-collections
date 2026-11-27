@@ -1137,8 +1137,10 @@ const FIXTURE_PACKAGES = [
   { dir: "janua", name: "@nathwn12/janua", scoped: true },
   { dir: "oc-flight-deck", name: "oc-flight-deck", scoped: false },
   { dir: "oc-harness-setup", name: "oc-harness-setup", scoped: false },
+  { dir: "oc-phone-link", name: "oc-phone-link", scoped: false },
   { dir: "oc-plugin-view", name: "oc-plugin-view", scoped: false },
   { dir: "oc-talk", name: "oc-talk", scoped: false },
+  { dir: "oc-title", name: "oc-title", scoped: false },
   { dir: "rea-shim", name: "rea-shim", scoped: false },
 ]
 const FIXTURE_LOCK = {

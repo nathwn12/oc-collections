@@ -1,0 +1,22 @@
+{
+  "name": "oc-phone-link",
+  "version": "2.2.0",
+  "description": "Drive OpenCode from an Android phone on the same Wi-Fi: in-server beacon, pinned TLS, one PIN, no tray, no QR.",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "files": [
+    "index.js",
+    "beacon.mjs",
+    "whitelist.json",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "test": "node --test beacon.test.mjs"
+  },
+  "peerDependencies": {
+    "@opencode/plugin": "*"
+  }
+}

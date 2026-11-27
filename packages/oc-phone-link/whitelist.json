@@ -1,0 +1,33 @@
+{
+  "cert": {
+    "sha256": "1bab8740dc9c7364ac37016d778f39ad56894d0836a14ccf7b8cf82ffa089af6",
+    "md5": "c5db10035ac6a3d99302b64fa01232bf"
+  },
+  "releases": [
+    {
+      "version": "2.2.0",
+      "sha256": "65210da2853ada04b3f03dcd7833a316fa5ac8b7545aa8502e6ca416652daa6e",
+      "md5": "d27ed752dd79c903783fe7019ab96964"
+    },
+    {
+      "version": "2.1.0",
+      "sha256": "91f9dbc81886bb735c815bad65f1199846553a5cde36470f6a59c7cb2c99d5dc",
+      "md5": "7af2257700e57679a9c39947ce3eb164"
+    },
+    {
+      "version": "2.0.11",
+      "sha256": "fbdeb9e871e64f6f941f7d224dfe9f86a2c27441c6570c158280ae538a293858",
+      "md5": "ce1229156d4afc681246bbab28d5bc41"
+    },
+    {
+      "version": "2.0.10",
+      "sha256": "9c1b36b1c4b93dc2d3e8a424ab33ae4a71d2fe9baa33bee44d32fc06ec18da6d",
+      "md5": "ee141e91dcd3617cb7dea53422ccc569"
+    },
+    {
+      "version": "2.0.9",
+      "sha256": "1fbc2a55540496633222417c992ffa89a0b5599a51f9a643be43f14b8f25f73b",
+      "md5": "4590715bafb8c67caf8922463c3c224a"
+    }
+  ]
+}

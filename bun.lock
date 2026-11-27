@@ -64,6 +64,13 @@
         "oc-harness-setup": "bin/cli.js",
       },
     },
+    "packages/oc-phone-link": {
+      "name": "oc-phone-link",
+      "version": "2.2.0",
+      "peerDependencies": {
+        "@opencode/plugin": "*",
+      },
+    },
     "packages/oc-plugin-view": {
       "name": "oc-plugin-view",
       "version": "0.2.0",
@@ -706,6 +713,8 @@
     "oc-flight-deck": ["oc-flight-deck@workspace:packages/oc-flight-deck"],
 
     "oc-harness-setup": ["oc-harness-setup@workspace:packages/oc-harness-setup"],
+
+    "oc-phone-link": ["oc-phone-link@workspace:packages/oc-phone-link"],
 
     "oc-plugin-view": ["oc-plugin-view@workspace:packages/oc-plugin-view"],
 

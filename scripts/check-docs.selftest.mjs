@@ -56,8 +56,8 @@ try {
     console.log("FAIL: the real tree did not pass");
     fail++;
   }
-  if (!/front-doors=8\b/.test(summary)) {
-    console.log("FAIL: the real tree did not check all eight front doors");
+  if (!/front-doors=9\b/.test(summary)) {
+    console.log("FAIL: the real tree did not check all nine front doors");
     fail++;
   }
 
@@ -225,7 +225,7 @@ try {
     ["packages/oc-bifrost", "@nathwn12/oc-bifrost"],
     ["packages/oc-flight-deck", "oc-flight-deck"],
     ["packages/oc-harness-setup", "oc-harness-setup"],
-    ["packages/oc-plugin-view", "oc-plugin-view"],
+    ["packages/oc-phone-link", "oc-phone-link"],["packages/oc-plugin-view", "oc-plugin-view"],
     ["packages/oc-talk", "oc-talk"],
     ["packages/oc-title", "oc-title"],
     ["packages/rea-shim", "rea-shim"],
@@ -236,7 +236,7 @@ try {
   const expectedKey = JSON.stringify(expectedDoors.sort());
   console.log(`front-door coverage: exit=${listedRun.status}; entries=${Array.isArray(listed) ? listed.length : "unparseable"}`);
   if (listedKey !== expectedKey) {
-    console.log(`FAIL: front doors must be the eight released packages; got ${listedKey ?? "none"}`);
+    console.log(`FAIL: front doors must be the nine released packages; got ${listedKey ?? "none"}`);
     fail++;
   }
 } finally {
