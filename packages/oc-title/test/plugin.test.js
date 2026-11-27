@@ -330,6 +330,33 @@ test("existing metadata survives alongside oc-title", async () => {
   expect(update?.metadata?.["oc-title"]?.state).toBe("parked");
 });
 
+test("a manual rename is not normalized on the next lifecycle write", async () => {
+  const ctx = createFakeCtx();
+  ctx.seed("mr1", { title: "active: My Custom Name", time: { busy: 10, idle: 5 }, metadata: { "oc-title": { state: "active", at: 1 } } });
+  mount(ctx);
+  await ctx.flush();
+  ctx.updates.length = 0;
+  ctx.push(event("session.idle", { id: "mr1", seq: 2 }));
+  await ctx.waitFor(() => ctx.consumed >= 1);
+  await ctx.flush();
+  await ctx.cleanup();
+  expect(ctx.updates.length).toBe(0);
+  expect(ctx.record("mr1").title).toBe("active: My Custom Name");
+});
+
+test("a stamped lowercase title still follows lifecycle events", async () => {
+  const ctx = createFakeCtx();
+  ctx.seed("mr2", { title: "active: my scope", time: { busy: 10, idle: 5 }, metadata: { "oc-title": { state: "active", at: 1 } } });
+  mount(ctx);
+  await ctx.flush();
+  ctx.updates.length = 0;
+  ctx.push(event("session.idle", { id: "mr2", seq: 2 }));
+  await ctx.waitFor(() => ctx.consumed >= 1);
+  await ctx.flush();
+  await ctx.cleanup();
+  expect(lastFor(ctx, "mr2")).toBe("parked: my scope");
+});
+
 test("wrapped get and list responses are handled", async () => {
   const ctx = createFakeCtx({}, { wrapGet: true, wrapList: true });
   ctx.seed("s14", { title: "active: Wrapped", time: { busy: 10, idle: 5 } });

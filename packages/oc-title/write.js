@@ -1,6 +1,6 @@
 // The only ctx-touching module: serialized, guarded title writes.
 
-import { normalizeTitle, stateOf, STATES } from "./title.js";
+import { normalizeTitle, stateOf, bodyOf, STATES } from "./title.js";
 import { isChild, isArchived, deriveState } from "./state.js";
 
 export const counters = { events: 0, writes: 0, skips: 0, failures: 0 }; // Shared health counters.
@@ -65,6 +65,7 @@ export function createWriter(ctx, { options = {}, trace = () => {} } = {}) {
       const effective = isArchived(rec) ? "closed" : target;
       const next = normalizeTitle(rec.title, child ? null : effective, options);
       const old = rec.metadata && typeof rec.metadata === "object" ? rec.metadata : {};
+      if (old["oc-title"] && typeof old["oc-title"] === "object" && bodyOf(rec.title) !== bodyOf(rec.title).toLowerCase()) return skip(id, "manual rename");
       const metadata = { ...old, "oc-title": { state: effective, at: Date.now() } };
       const titleChanged = rec.title !== next;
       if (!titleChanged && old["oc-title"]?.state === effective) return skip(id, "unchanged");
