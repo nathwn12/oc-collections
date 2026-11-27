@@ -604,26 +604,35 @@ function selfPort() {
 }
 
 let optsPort = 0;
-let portCache = { at: 0, port: 0, ttl: 0 };
+let portCache = { at: 0, port: 0, ttl: 0, source: "unresolved" };
 function port() {
   if (portCache.port && Date.now() - portCache.at < portCache.ttl) return portCache.port;
   let p = 0;
-  let source = "default";
-  if (Number.isFinite(optsPort) && optsPort > 0) { p = optsPort; source = "ctx"; }
+  // Only the first two sources are configured values. Everything below is a
+  // guess and says so in its label and in the public/health reports.
+  let source = "fallback:opencode default";
+  if (Number.isFinite(optsPort) && optsPort > 0) { p = optsPort; source = "ctx.options.upstreamPort"; }
   else if (Number(process.env.OC_PHONE_LINK_UPSTREAM || 0) > 0) {
-    p = Number(process.env.OC_PHONE_LINK_UPSTREAM); source = "env";
+    p = Number(process.env.OC_PHONE_LINK_UPSTREAM); source = "env:OC_PHONE_LINK_UPSTREAM";
   } else {
     const sp = selfPort();
-    if (sp) { p = sp; source = "selfPort"; }
+    if (sp) { p = sp; source = "fallback:selfPort"; }
     else {
       const s = run(["service", "status"]);
       const m = s.out.match(/:(\d+)\s*$/m);
-      if (m) { p = Number(m[1]); source = "opencode service status"; }
+      if (m) { p = Number(m[1]); source = "fallback:opencode service status"; }
     }
   }
-  portCache = { at: Date.now(), port: p || OPENCODE_PORT, ttl: p ? 30000 : 2000 };
+  portCache = { at: Date.now(), port: p || OPENCODE_PORT, ttl: p ? 30000 : 2000, source };
   log("upstream port", portCache.port, "source", source);
   return portCache.port;
+}
+
+// The source that produced the current port, so a caller can tell a configured
+// value from a fallback guess. Reading it resolves the cache first.
+function portSource() {
+  port();
+  return portCache.source;
 }
 
 function publicInfo() {
@@ -637,6 +646,7 @@ function publicInfo() {
     url: "https://" + primary + ":" + PROXY_PORT,
     agentUrl: "https://" + primary + ":" + HTTPS_PORT,
     port: port(),
+    portSource: portSource(),
     hosts: addrs.map((a) => a.address),
     fingerprint: tls.fingerprint,
     ts: Date.now(),
@@ -955,7 +965,7 @@ async function handleAgent(req, res, opts) {
     }
     if (req.method === "OPTIONS") { res.writeHead(204, cors(req)); res.end(); return; }
     if (url.pathname === "/health") return upstreamState((upstream) => {
-      try { json(req, res, 200, { ok: true, agent: VERSION, upstream: upstream, port: port() }); }
+      try { json(req, res, 200, { ok: true, agent: VERSION, upstream: upstream, port: port(), portSource: portSource() }); }
       catch (e) { log("health error", e.message); }
     });
     if (url.pathname === "/auth" && req.method === "GET") {
@@ -1431,10 +1441,11 @@ export const __test = {
   shortFingerprint,
   selfPort,
   port,
+  portSource,
   password,
   deriveStats: () => ({ active: deriveActive, peak: derivePeak, queued: deriveQueue.length, total: deriveTotal }),
   resetDeriveStats: () => { derivePeak = deriveActive; deriveTotal = 0; },
-  setUpstreamPort: (p) => { portCache = { at: Date.now(), port: p, ttl: 60000 }; },
+  setUpstreamPort: (p, source = "test") => { portCache = { at: Date.now(), port: p, ttl: 60000, source }; },
   cookieAttrs: KEY_COOKIE_ATTRS,
   ownerCookieAttrs: OWNER_COOKIE_ATTRS,
   constants: {

@@ -542,3 +542,33 @@ describe("socket integration", { concurrency: false }, () => {
     assert.match(readFileSync(join(DIR, "tls", "cert.pem"), "utf8"), /BEGIN CERTIFICATE/);
   });
 });
+
+test("portFrom reads the V2 options, then the env override, not ctx.port/server", async () => {
+  const { portFrom } = await import("./index.js");
+  const saved = process.env.OC_PHONE_LINK_UPSTREAM;
+  try {
+    delete process.env.OC_PHONE_LINK_UPSTREAM;
+    assert.equal(portFrom({ options: { upstreamPort: 34567 } }), 34567);
+    assert.equal(portFrom({ options: { upstreamPort: "34568" } }), 34568);
+    assert.equal(portFrom({ options: { upstreamPort: "http://127.0.0.1:34570" } }), 34570);
+    // Those two members do not exist on a V2 plugin context: never trust them.
+    assert.equal(portFrom({ port: 11111, server: { port: 22222, url: "http://127.0.0.1:33333" } }), 0);
+    process.env.OC_PHONE_LINK_UPSTREAM = "34569";
+    assert.equal(portFrom({}), 34569, "the env override works with no options");
+    assert.equal(portFrom({ options: { upstreamPort: 34567 } }), 34567, "explicit options win over env");
+    assert.equal(portFrom({ options: { upstreamPort: 0 } }), 34569, "an empty option falls through to env");
+  } finally {
+    if (saved === undefined) delete process.env.OC_PHONE_LINK_UPSTREAM;
+    else process.env.OC_PHONE_LINK_UPSTREAM = saved;
+  }
+});
+
+test("an unconfigured upstream port is labeled a fallback, never a found port", () => {
+  const src = readFileSync(new URL("./beacon.mjs", import.meta.url), "utf8");
+  assert.match(src, /fallback:selfPort/, "a netstat guess must be labeled a fallback");
+  assert.match(src, /fallback:opencode default/, "the hardcoded 28894 must be labeled a fallback");
+  assert.match(src, /portSource/, "the resolved source must be observable by a caller");
+  const readme = readFileSync(new URL("./README.md", import.meta.url), "utf8");
+  assert.match(readme, /upstreamPort/, "the config surface must name the V2 option");
+  assert.match(readme, /fallback/i, "the README must call the unconfigured port a guess");
+});

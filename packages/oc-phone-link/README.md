@@ -30,7 +30,7 @@ The PC page also lists paired devices with issue date, last use and last IP, and
 
 ## Use it
 
-Once paired, the phone sends its requests to the beacon on port 41340, which checks the device key and forwards to OpenCode on its own port (28894 by default). The beacon also keeps a loopback port on 41339 for the PC itself and an exposed port on 41341 for setup actions, which it refuses when the request did not come from the local machine.
+Once paired, the phone sends its requests to the beacon on port 41340, which checks the device key and forwards to OpenCode on the configured upstream port. Set it in the plugin options as `upstreamPort` or with `OC_PHONE_LINK_UPSTREAM`. With neither set, the beacon guesses from its own listeners or the OpenCode service status and finally uses 28894; those results are labeled `fallback:*` in `/info`, `/health` and the log, because none of them was configured by the owner. The beacon also keeps a loopback port on 41339 for the PC itself and an exposed port on 41341 for setup actions, which it refuses when the request did not come from the local machine.
 
 The phone drives the same server session the PC does. Nothing is uploaded anywhere: discovery, pairing and proxying all stay on your network.
 
@@ -45,14 +45,18 @@ The phone drives the same server session the PC does. Nothing is uploaded anywhe
 
 ## Configuration
 
-The beacon reads these environment variables and nothing else:
+The plugin reads this V2 option (preferred):
+
+- `upstreamPort` - the OpenCode port, e.g. `{ "oc-phone-link": { "upstreamPort": 28894 } }` in the plugin config.
+
+The beacon reads these environment variables as the next source:
 
 - `OC_PHONE_LINK_PORT_BASE` - shift the fixed port block (41337 to 41341) by an offset, for when a port is taken.
 - `OC_PHONE_LINK_BIND_HOST` - address to bind, default all interfaces.
 - `OC_PHONE_LINK_DATA_DIR` - where state, TLS material and the agent log live.
 - `OC_PHONE_LINK_NO_UDP` - set to 1 to disable UDP discovery and pair by address instead.
 - `OC_PHONE_LINK_PASSWORD` (or `OPENCODE_SERVER_PASSWORD`) - upstream password the proxy presents when OpenCode asks for one.
-- `OC_PHONE_LINK_UPSTREAM` - upstream port override when OpenCode is not on 28894.
+- `OC_PHONE_LINK_UPSTREAM` - upstream port override when no `upstreamPort` option is set. Without either, the port is a labeled fallback, not a configured value.
 - `OC_PHONE_LINK_TRANSPORT` - set to `tunnel` to use the tunnel transport instead of the local network.
 
 ## Development

@@ -3,21 +3,27 @@ import { startBeacon } from "./beacon.mjs";
 
 let stop = null;
 
+// A V2 plugin context exposes options, not port or server members. The
+// upstream port comes from the explicit option first, then the documented env
+// override; anything else is left to the beacon, which must label its guess a
+// fallback.
 function portFrom(ctx) {
-  const raw = ctx && (ctx.port ?? ctx.server?.port ?? ctx.server?.url);
-  if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) return raw;
-  if (typeof raw === "string" && raw.trim() !== "") {
-    const n = Number(raw);
-    if (Number.isFinite(n) && n > 0) return n;
+  const options = ctx && typeof ctx.options === "object" && ctx.options ? ctx.options : {};
+  for (const raw of [options.upstreamPort, process.env.OC_PHONE_LINK_UPSTREAM]) {
+    if (typeof raw === "number" && Number.isFinite(raw) && raw > 0 && raw <= 65535) return Math.trunc(raw);
+    if (typeof raw !== "string" || !raw.trim()) continue;
+    const n = Number(raw.trim());
+    if (Number.isFinite(n) && n > 0 && n <= 65535) return Math.trunc(n);
     try {
       const u = new URL(raw);
       const p = Number(u.port);
-      if (Number.isFinite(p) && p > 0) return p;
+      if (Number.isFinite(p) && p > 0 && p <= 65535) return p;
     } catch {}
   }
   return 0;
 }
 
+export { portFrom };
 export default Plugin.define({
   id: "oc-phone-link",
   setup(ctx) {

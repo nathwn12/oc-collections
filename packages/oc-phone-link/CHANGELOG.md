@@ -6,6 +6,9 @@ release digests, not the server version.
 
 ## [Unreleased]
 
+- The V2 plugin context has no `port` or `server` members. `portFrom` now reads `ctx.options.upstreamPort` first, then `OC_PHONE_LINK_UPSTREAM`, and leaves the port unconfigured when neither is present.
+- Unconfigured port discovery (self-inspection, service status, hardcoded 28894) is labeled `fallback:*` in the log, `/info` (`portSource`) and `/health`. The README names the option, the env override and the fallback policy.
+
 ## 2.0.11
 
 - A targeted `revoke(id)` fails closed. Keys with no device association,
