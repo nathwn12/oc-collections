@@ -20,7 +20,9 @@ Add the entry to the `plugins` array in your `opencode.jsonc`, then restart Open
 { "plugins": ["oc-flight-deck"] }
 ```
 
-## Use it
+## First use
+
+Open a session and check that the telemetry panel appears beside it.
 
 The rail draws up to 22 named fields in the order you choose; `MAX_LINES` (24) caps fixed lines plus live rows together. Among the fields:
 

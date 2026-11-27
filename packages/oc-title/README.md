@@ -2,6 +2,18 @@
 
 Sets an OpenCode session title from the session's lifecycle, so the list reads as a board.
 
+## Install
+
+Add `oc-title` to the `plugins` array in `opencode.jsonc` and restart OpenCode:
+
+```json
+{ "plugins": ["oc-title"] }
+```
+
+## First use
+
+Open a session after the restart. Its title follows the session lifecycle:
+
 - Parent sessions read `active: text`, `parked: text` or `closed: text`.
 - Child sessions read the lowercased text alone, with no state prefix.
 - The state is also written to session metadata as `oc-title: { state, at }`, so the title is never the only copy.
@@ -30,7 +42,7 @@ A created event that beats its own record is retried for about a second instead 
 
 `index.js` is wiring. `state.js` holds the event map. `refresh.js` reads a user-message scope. `title.js` holds the pure title rules. `write.js` is the only module that touches the context, and it owns per-session ordering. Tests sit in `test/`.
 
-## Run
+## Development
 
 ```sh
 bun test .

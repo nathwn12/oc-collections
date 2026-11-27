@@ -27,7 +27,7 @@ Add one entry to the `plugins` array in your `opencode.jsonc` and restart OpenCo
 }
 ```
 
-## Use it
+## First use
 
 Name the plugins you want in the `plugins` option. Accepts four sources: a GitHub snapshot, a registry package, a local path, and the bundled offline `preset:rtk`. A cold `github:` cache refuses until you set `trustRemote`, then pins the snapshot by commit and digest. Registry packages, local paths and `preset:rtk` need no remote trust.
 
