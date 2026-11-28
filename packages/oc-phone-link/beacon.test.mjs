@@ -14,7 +14,28 @@ import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 
 const DIR = mkdtempSync(join(tmpdir(), "ocpl-test-"));
-const BASE = 49500;
+// Windows can reserve 49500-49504 in an excluded port range: netstat reports
+// the ports free but listen() fails EACCES. Keep the pinned block when it is
+// usable, and otherwise use one fixed fallback block so back-to-back runs
+// still exercise the same ports and reveal a leaked listener.
+async function blockBindable(base) {
+  const held = [];
+  try {
+    for (let i = 0; i < 5; i += 1) {
+      const s = createNetServer();
+      const ok = await new Promise((resolve) => {
+        s.once("error", () => resolve(false));
+        s.listen(base + i, "127.0.0.1", () => resolve(true));
+      });
+      if (!ok) return false;
+      held.push(s);
+    }
+    return true;
+  } finally {
+    for (const s of held) await new Promise((resolve) => { try { s.close(resolve); } catch { resolve(); } });
+  }
+}
+const BASE = (await blockBindable(49500)) ? 49500 : 51200;
 const HTTPS_PORT = BASE + 1;
 const PROXY_PORT = BASE + 3;
 process.env.OC_PHONE_LINK_DATA_DIR = DIR;
@@ -367,7 +388,7 @@ describe("socket integration", { concurrency: false }, () => {
       assert.equal(after.status, 200);
       assert.equal(JSON.parse(after.body).upstream, "down");
       console.log("L7 502 ms: " + times.join(", "));
-    } finally { stop(); }
+    } finally { stop(); await close(upstream); }
   });
 
   test("L7 hung upstream (no response headers) 502s on the connect timeout", async () => {
