@@ -74,7 +74,7 @@ Use the package name (`"@nathwn12/oc-bifrost"`): it resolves through npm and hon
 ## 2. Mount the legacy plugin — one of four paths
 
 | # | Path | Use when |
-|---|---|---|
+| --- | --- | --- |
 | 1 | `github:` (advertised / default) | the plugin's source lives in a GitHub repo — online fetch |
 | 2 | `preset:rtk` (offline fallback, optional) | no network — GitHub unreachable, or an air-gapped host |
 | 3 | local file (fallback) | the plugin is a file on disk |
@@ -205,7 +205,7 @@ is parsed and validated.
 
 **A V1 plugin left in `.opencode/plugins/` is hard-rejected by V2 before the bridge can see it:**
 
-```
+```text
 Plugin must export a default definition with an id and an effect or setup function
 ```
 

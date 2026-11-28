@@ -5,7 +5,7 @@ Third-party code redistributed with oc-bifrost. **Nothing vendored is modified e
 ## `rtk.ts`
 
 | Field | Value |
-|---|---|
+| --- | --- |
 | Upstream | [`rtk-ai/rtk`](https://github.com/rtk-ai/rtk) |
 | Upstream path | `hooks/opencode/rtk.ts` |
 | Version | `v0.50.0` |

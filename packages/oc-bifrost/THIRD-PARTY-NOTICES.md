@@ -6,8 +6,8 @@ component, verbatim.
 ## RTK — `vendor/rtk.ts`
 
 | | |
-|---|---|
-| Upstream | https://github.com/rtk-ai/rtk |
+| --- | --- |
+| Upstream | <https://github.com/rtk-ai/rtk> |
 | Copyright | the RTK authors (`rtk-ai`) |
 | Version | `v0.50.0` |
 | License | **Apache License 2.0** — full text at [`vendor/rtk-LICENSE`](vendor/rtk-LICENSE) |

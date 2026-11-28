@@ -5,7 +5,7 @@ A tool is native only when this file lists it: installed, named, and reachable b
 ## Registered
 
 | Tool | Purpose | Who uses it |
-|---|---|---|
+| --- | --- | --- |
 | `git` | version control, diffs, history | any shell-bearing seat |
 | `node` | run JavaScript, parse JSON, drive npm tooling | `code-agent`, `host-agent`, `verify-agent` |
 | `python` | scripts the owner requests, one-off data work | `code-agent`, `host-agent` |

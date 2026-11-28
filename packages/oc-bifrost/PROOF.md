@@ -3,7 +3,7 @@
 Verified end-to-end on an **isolated OpenCode V2 host**. Nothing in the operator's global OpenCode directory was read, written, or reconfigured.
 
 | Field | Value |
-|---|---|
+| --- | --- |
 | Date | 2026-09-28 |
 | Host | OpenCode **2.0.18** (Windows, `opencode.exe`) |
 | oc-bifrost | Three builds — **0.1.0** (Proofs 1–4), **0.2.0** (Proof 5) and **1.1.0** (Proof 6); see each proof |
@@ -29,7 +29,7 @@ $env:OPENCODE_DISABLE_PROJECT_CONFIG = "1"
 
 Confirmed in-product:
 
-```
+```text
 $ opencode debug paths
 config     C:\Users\you\AppData\Local\Temp\opencode\bifrost-sandbox\config
 ```
@@ -42,14 +42,14 @@ Verified build: `oc-bifrost@0.1.0` (`main @ 9561606`).
 
 A V1 plugin registered `tool.execute.before` and appended a marker to every shell command. The host's own log shows the **rewritten** command being spawned:
 
-```
+```text
 message="spawning process" command="pwsh.EXE"
   args=["-NoLogo","-NoProfile","-NonInteractive","-Command","echo hello && echo BIFROST_BRIDGED"]
 ```
 
 The marker the agent never wrote was appended by the bridged V1 hook and appears in the command's real output:
 
-```
+```text
 BIFROST_BRIDGED
 ```
 
@@ -82,14 +82,14 @@ Configured in the sandbox only, via `.claude/settings.json`:
 
 Result — the side effect the plugin's own V1 `tool.execute.before` hook produced:
 
-```
+```text
 marker file: PRESENT
   PreToolUse from real npm V1 plugin
 ```
 
 Host log, same run:
 
-```
+```text
 msg="loading plugin" id=.../plugins/oc-bifrost entrypoint=file:///.../oc-bifrost/index.js
 ```
 
@@ -114,7 +114,7 @@ Not isolated. The operator's own `~/.config/opencode`, bridge installed as the p
 > the route Proof 5 exercises. This record is kept as the historical live-config proof.
 
 | Field | Value |
-|---|---|
+| --- | --- |
 | Date | 2026-09-28 |
 | Host | OpenCode **2.0.18** (Windows) |
 | Bridge | `@nathwn12/oc-bifrost` (npm) |
@@ -125,20 +125,20 @@ Run: a fresh headless host against the real config, told to run exactly `git sta
 
 Load — the bridge is picked up:
 
-```
+```text
 level=INFO msg="loading plugin" id=@nathwn12/oc-bifrost
 ```
 
 Execution — **the host's own spawn log shows the rewritten command**:
 
-```
+```text
 message="spawning process" command="pwsh.EXE"
   args=["-NoLogo","-NoProfile","-NonInteractive","-Command","rtk git status --porcelain"]
 ```
 
 The tool-call record still carries the pre-rewrite input (`git status --porcelain`); the process that actually ran was `rtk git status --porcelain`. Independent confirmation from rtk's own tracker:
 
-```
+```text
 $ rtk gain
 Total commands:    1
  1.  rtk git status --porc...      1
@@ -165,7 +165,7 @@ Method — no network, no published version required:
 4. A headless host with `OPENCODE_CONFIG_DIR` pointed at that sandbox config
 
 | Field | Value |
-|---|---|
+| --- | --- |
 | Date | 2026-09-28 |
 | Host | OpenCode **2.0.18** (Windows) |
 | Artifact | `nathwn12-oc-bifrost-0.2.0.tgz` |
@@ -174,14 +174,14 @@ Method — no network, no published version required:
 
 Load:
 
-```
+```text
 msg="loading plugin" id=.../shim/oc-bifrost
   entrypoint=file:///.../shim/oc-bifrost/index.js
 ```
 
 Execution — the host's own spawn log:
 
-```
+```text
 message="spawning process" args=["-NoLogo","-NoProfile","-NonInteractive",
   "-Command","rtk git status --porcelain"]
 ```
@@ -206,10 +206,9 @@ correctly at every resolver we tested (`Bun.resolveSync`, `require.resolve`, `Ho
 own call), so the drop happens in the host's absolute-directory branch, not in this package.
 Use a directory shim or the npm package name; both are proven.
 
-
 A configured local plugin entry **must be a directory** in the tested host, not a file:
 
-```
+```text
 level=WARN message="configured plugin path must be a directory" target=.../dist/index.js
 ```
 
@@ -223,7 +222,7 @@ Verified build: `@nathwn12/oc-bifrost@1.1.0` — the **packed tarball**
 `chore/release-1-1-0 @ 54a1191`.
 
 | Field | Value |
-|---|---|
+| --- | --- |
 | Date | 2026-09-29 |
 | Host | OpenCode **2.0.18** (Windows) |
 | Artifact | `nathwn12-oc-bifrost-1.1.0.tgz` (sha256 above); `testflight .` exit 0 |
@@ -236,18 +235,18 @@ this run had to make (below). The config mounted exactly two local fixtures: a V
 **V1 lane — the mutation reaches real execution.** The agent asked for `echo hello`; the host's own
 spawn log shows what ran:
 
-```
+```text
 message="spawning process" command="...pwsh.EXE"
   args=[ ... ,"-Command","echo hello && echo BIFROST_BRIDGED_V1"]
 ```
 
-```
+```text
 BIFROST_BRIDGED_V1
 ```
 
 **V2 lane — the definition's `setup` ran with the live host context:**
 
-```
+```text
 V2_SETUP_RAN ctx_keys=agent,aisdk,app,command,event,experimental,generate,integration,
 location,mcp,model,options,permission,plugin,provider,reference,rpc,session,shell,
 skill,storage,tool,vcs,websearch,worktree
@@ -256,7 +255,7 @@ skill,storage,tool,vcs,websearch,worktree
 **The durable sink.** With `OC_BIFROST_REPORT` pointed inside the sandbox, `report.log` carried
 both mount reports:
 
-```
+```text
 [oc-bifrost] .../config/v1-plugin.mjs
   full        tool.execute.before - mutable event.input write-back
   mounted     v1:v1-plugin - V1 default export
@@ -290,13 +289,13 @@ both mount reports:
 The one thing Proof 6 above left open — a **real-world** dual-export plugin, fetched by source.
 Same sandbox shape, one config entry:
 
-```
+```text
 "github:obra/superpowers@v6.4.2#.opencode/plugins/superpowers.js"   (trustRemote: true)
 ```
 
 The bridge's own report, from the durable sink written inside the sandbox:
 
-```
+```text
 [oc-bifrost] github:obra/superpowers@v6.4.2#.opencode/plugins/superpowers.js
   mounted     v2:superpowers - V2 setup invoked with the host context
   mounted     github:obra/superpowers - fetched github:obra/superpowers@v6.4.2#.opencode/plugins/superpowers.js at commit 8ca22dba9a94f28898bbce59f2537ff4d87c747d (sha256 c979fe5a9fd6., 17617 bytes; trust-on-first-use); executes with the host process's full user rights
@@ -470,12 +469,12 @@ Evidence: `%TEMP%\opencode\bifrost-evidence\model-announcer\` and
 ### The ten flights
 
 | # | Plugin (pin) | Route / hooks | Decidable | Verdict |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | 1 | **obra/superpowers** `8ca22dba…` `.opencode/plugins/superpowers.js` | V2 pass-through: `setup` (ctx.skill.transform + session.hook) | model enumerates skills; **all 15 names from the materialized snapshot** (`using-superpowers` among them); snapshot 229 files / 1.97 MB in the mount note | ✅ **full pass — overturns the mount-only verdict of Proofs 6–7**: the snapshot route delivers `../../skills`, so the setup's self-check finds its directory and registers every skill |
 | 2 | **d3vv3/opencode-ascii** `e42bb23f…` `dist/index.js` | V1 named export; `tool.execute.before` (full) + `experimental.text.complete` (refused) | "write note.txt with: hello — world" → `note.txt` = `hello - world`, **0 non-ASCII bytes**; refusal line in the report | ✅ pass |
 | 3 | **ramarivera/opencode-model-announcer** `7b7129c0…` `src/plugin.ts` | V1 named export; `experimental.chat.messages.transform` (now 🟢 full) | answer quotes `CURRENT_MODEL_ANNOUNCEMENT` / provider+model | ✅ **pass on the drain fix (`d68b68a`)** — run-1 crashed as first recorded; run-2 quoted the injected text verbatim: `[SYSTEM: CURRENT_MODEL_ANNOUNCEMENT - You are opencode-go/deepseek-v4-flash. …]`. See "The drain fix" above |
 | 4 | **gotgenes/opencode-agent-identity** `6ed87ad9…` `src/agent-self-identity.ts` | V1 named export; `experimental.chat.messages.transform` (now 🟢 full) + `system.transform` (partial) | "Which agent are you?" names the agent | ✅ **pass on the drain fix (`d68b68a`)** — run-1 crashed as first recorded; run-2 answered "I'm the **build** agent" (the sandbox has no `agents/` dir, so only the bridged system line could supply the name). See "The drain fix" above |
-| 5 | **joostvanwollingen/opencode-personality** `9caf80ff…` `src/index.ts` | V1 default export; `system.transform`, 2-tool V1 map, `event` (partial) + `command.execute.before` (refused) | bun probe (1.4.2) reproduced the import failure; **provisioned** (only dep junctioned) → persona `FlightTestPersona` reached the model ("…always ends replies with the word BANANA… BANANA") | ⚠️ **refused as fetched** (`Cannot find package '@opencode-ai/plugin'` — prerequisite, not the bridge) → ✅ **provisioned pass** |
+| 5 | **joostvanwollingen/opencode-personality** `9caf80ffc750e64017fc533d72345b8da75f8982` `src/index.ts` | V1 default export; `system.transform`, 2-tool V1 map, `event` (partial) + `command.execute.before` (refused) | bun probe (1.4.2) reproduced the import failure; **provisioned** (only dep junctioned) → persona `FlightTestPersona` reached the model ("…always ends replies with the word BANANA… BANANA") | ⚠️ **refused as fetched** (`Cannot find package '@opencode-ai/plugin'` — prerequisite, not the bridge) → ✅ **provisioned pass** |
 | 6 | **boxpositron/envsitter-guard** `17e37f2f…` | import failure | mount report names the failure; session stays healthy ("Hello!") | ❌ documented refusal — `Cannot find package '@opencode-ai/plugin'` |
 | 7 | **lgladysz/opencode-ignore** `7ca42ef5…` | import failure | same | ❌ documented refusal — `Cannot find package 'ignore'` |
 | 8 | **synthetic V1 `chat.message` sanitizer** (the real log-sanitizer repo+user are deleted from GitHub — this fixture reproduces its exact V1 shape, clearly labeled) | V1 module; `chat.message` (partial→**write-back fixed in this PR**) | JWT-shaped token in the prompt → `[redacted:jwt]` in **the persisted session store** and in `token.txt` (the model saw only the redaction) | ✅ **pass on the fixed build** (`nathwn12-oc-bifrost-1.1.0.tgz` packed from this branch, sha256 `A8C9FABE…`; the ready-made 1.2.0 pack cannot carry the fix by definition) |
@@ -548,7 +547,7 @@ Three facade rows and one event row were added or sharpened by this change:
 `~/.cache/opencode/oc-bifrost/report.log` records the tracker mounting through the bridge — a fresh
 snapshot fetch, then cache loads on later starts:
 
-```
+```text
 [oc-bifrost:github:eserete/opencode-token-tracker@main#token-tracker.js] partial bridge for "event" — V2 event names/payloads differ from V1
 [oc-bifrost] github:eserete/opencode-token-tracker@main#token-tracker.js
   mounted     v1:TokenTracker — V1 named export (TokenTrackerPlugin)
@@ -648,10 +647,10 @@ not the bridge's job.
 ### The verdicts — 1 full · 5 partial · 3 refused · 1 provisioned
 
 | # | Plugin (pinned spec) | Verdict | Decidable evidence |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | 1 | romain325/opencode-hooks-plugin `55d5cfa1…` `src/index.ts` | 🟢 **full** | PreToolUse returned `updatedInput`; host spawn log shows the mutated `echo BIFROST_HOOK_REWRITTEN` executed (asked: `echo ORIGINAL_COMMAND`); Pre/PostToolUse markers ordered around real execution |
 | 2 | VincentHardouin/opencode-snip `1cc9b020…` `src/index.ts` | 🟡 **partial** | mounts with a `full` row, but gates on `input.tool === "bash"` vs V2 `shell`; `git status --porcelain` ran unrewritten |
-| 3 | tlinhart/opencode-system-prompt-logger `66999afe…` `index.ts` | 🔴 **refused** | `no V1 factory... export found` — factory named `SystemPromptLogger`, missed by the `/Plugin$/` heuristic |
+| 3 | tlinhart/opencode-system-prompt-logger `66999afef0e515d085c120f606bf5516c4bb8f12` `index.ts` | 🔴 **refused** | `no V1 factory... export found` — factory named `SystemPromptLogger`, missed by the `/Plugin$/` heuristic |
 | 4 | simonwjackson/opencode-direnv `f257fa7f…` `src/index.ts` | 🔴 **refused** | same discovery skip (`DirenvLoader`); `$env:DIRENV_FLIGHT2` unset proves it never ran |
 | 5 | arttttt/opencode-pr-signature `44a44b3f…` `src/entry/legacy.ts` | 🟡 **partial** | mounted, both hooks registered, but the commit ran **unsigned** (`git-log.txt` empty body) — `SHELL_TOOL = "bash"` gate again |
 | 6 | Zaradacht/opencode-host-notify-bridge `7f841fa6…` `index.js` `{"enabled":true}` | 🟡 **partial** | V1-module route mounted; local listener on `127.0.0.1:8765` captured **zero** POSTs — no `session.idle` in the 2.0.18 plugin feed |

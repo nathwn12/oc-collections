@@ -111,7 +111,7 @@ function httpCall(port, path, body, headers) {
     const r = httpRequest({ host: "127.0.0.1", port, path,
       method: payload ? "POST" : "GET",
       headers: { ...(payload ? { "content-type": "application/json", "content-length": payload.length } : {}),
-        ...(headers || {}) } }, (res) => {
+        ...headers } }, (res) => {
       let text = "";
       res.on("data", (c) => { text += c; });
       res.on("end", () => resolve({ status: res.statusCode, text }));
@@ -137,7 +137,7 @@ function upgradeGet(port, path, headers) {
   });
 }
 const listen = (srv, port) => new Promise((r) => srv.listen(port, "127.0.0.1", r));
-const close = (srv) => new Promise((r) => { srv.closeAllConnections && srv.closeAllConnections(); srv.close(r); });
+const close = (srv) => new Promise((r) => { if (srv.closeAllConnections) srv.closeAllConnections(); srv.close(r); });
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 beforeEach(seed);

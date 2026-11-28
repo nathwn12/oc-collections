@@ -59,6 +59,7 @@ Gate changes made for this import (`.github/workflows/check.yml`):
 What moved: the source repo's tracked tree, except `.github/**` (repo-level workflows) and `bun.lock` (the root lockfile is the only lockfile; dependencies now install from the monorepo root). `dist/` is imported and is **tracked by policy and committed**: the package's guardrail requires a committed build for its git-install route and its `check:dist` gate, and its own `.gitignore` re-includes `dist/` (`!dist/`), which defeats the monorepo root's `dist/` ignore for this package only. In the import working tree the files were still untracked — `git ls-files --others --exclude-standard` listed them — and the courier's commit then put them in the index; they are tracked now, and nothing in the tree is untracked. A fresh `npm run compile` reproduces the source repo's committed build bytes exactly (sha256 verified).
 
 Changed during the move:
+
 - `AGENTS.md` — the quick start now names `packages/oc-flight-deck` (and `-w oc-flight-deck`) with dependencies from the root `npm install`; the old `bun install` line would have created a second lockfile.
 
 Not carried over: `.github/workflows/{check,ci,release}.yml` — repo-level; GitHub only runs workflows from the monorepo root. The release workflow's npm trusted-publisher setup names the old repo and workflow filename, so publishing from the monorepo was not wired at import time (now covered by the release lane below).
@@ -77,6 +78,7 @@ Not carried over: `.github/workflows/{check,ci,release}.yml` — repo-level; Git
 What moved: the source repo's tracked tree, except `.github/**` (repo-level workflows) and `package-lock.json` (the root lockfile is the only lockfile). There is no build step (pure Node ESM, stdlib only) and no `dist/`, so there is no dist-less pack trap; the tarball is source-complete and the package's own `check` is `npm pack --dry-run`.
 
 Changed during the move:
+
 - `CONTRIBUTING.md` — the quick start now names the monorepo commands (`npm test -w oc-harness-setup`, `npm run check -w oc-harness-setup`) instead of cloning and installing the package repo.
 
 Not carried over: `.github/workflows/{ci,release}.yml` — repo-level; GitHub only runs workflows from the monorepo root. The release workflow's npm trusted-publisher setup names the old repo and workflow filename, so publishing from the monorepo was not wired at import time (now covered by the release lane below).
@@ -95,6 +97,7 @@ Not carried over: `.github/workflows/{ci,release}.yml` — repo-level; GitHub on
 What moved: the source repo's tracked tree, except `.github/**` (repo-level workflow) and `bun.lock` (the root lockfile is the only lockfile). The source's ignored runtime session artifacts are not in the tracked tree and were not imported. There is no build step: the package ships TypeScript sources and its entry is `index.ts`, so there is no dist-less pack trap.
 
 Changed during the move:
+
 - `package.json` — `private` set from `false` to `true`. The package is not on the npm registry (404), so publishing it by accident is now impossible. **Owner call, since ruled:** the 2026-10-22 ruling excludes it as private and keeps it source-only (see the release lane); the version is unchanged.
 
 Not carried over: `.github/workflows/ci.yml` — repo-level; GitHub only runs workflows from the monorepo root.
@@ -152,6 +155,7 @@ What moved: the tag tree, split by role. `crates/gladius/` is the repo root minu
 Tag, not `main`: the tag is the release the npm package was published from. `main` is two commits ahead with newer release-CI gates; that is deliberate upstream work and was not imported.
 
 Kept unchanged on purpose:
+
 - `npm/engine-manifest.json` — `runtime.source` still points at `https://github.com/nathwn12/gladius/releases/download/v0.4.2`. Engine binaries (server plus the pinned Chromium) still come from that repo's release assets, not from this monorepo; moving them is an owner decision.
 - The tag manifest's `runtime.archive.sha256` and `runtime.server.sha256` are the `RELEASE_WORKFLOW_FILLS_THIS` placeholders (the original release workflow fills them when packing). The launcher check accepts either the placeholder or 64 hex.
 - The `preinstall` global-install guard is unchanged.
@@ -174,6 +178,7 @@ What moved: the tag tree, split by role. `crates/puppet/` is the repo root minus
 Tag, not `main`: the tag is the release the npm package was published from. `main` is two commits ahead with newer release-CI gates; that is deliberate upstream work and was not imported.
 
 Kept unchanged on purpose:
+
 - `npm/engine-manifest.json` — `runtime.source` still points at `https://github.com/nathwn12/puppet/releases/download/v4.5.3`. The server binary still comes from that repo's release assets, not from this monorepo; moving it is an owner decision.
 - The tag manifest's `runtime.archive.sha256` and `runtime.server.sha256` are the `RELEASE_WORKFLOW_FILLS_THIS` placeholders (the original release workflow fills them when packing). The launcher check accepts either the placeholder or 64 hex.
 - The `preinstall` and `postinstall` global-install guards are unchanged.

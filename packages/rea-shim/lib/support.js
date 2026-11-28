@@ -210,7 +210,7 @@ function openResponse(url, options = {}, redirects = 0) {
       headers: {
         'user-agent': `${USER_AGENT}/${process.pid}`,
         accept: '*/*',
-        ...(options.headers || {}),
+        ...options.headers,
       },
     }, (response) => {
       const status = response.statusCode || 0;

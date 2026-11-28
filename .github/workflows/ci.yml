@@ -1,32 +1,25 @@
-# The gate. Four jobs on three lanes: `static` runs the no-install checks on
-# Windows (index files, structural + selftest, vocabulary, docs + selftest);
-# `plan` derives the per-package check matrix from the shared plan;
-# `check` runs one leg per workspace on Windows through the scoped wrapper
+# The gate. Five jobs on four lanes: `static` runs the no-install checks on
+# Windows; `docs` carries the folded docs-report checks on Ubuntu (lychee
+# downloads a Linux binary, so it cannot run on the Windows runner); `plan`
+# derives the per-package check matrix from the shared plan; `check` runs one
+# leg per workspace on Windows through the scoped wrapper
 # (`node scripts/workspace-run.mjs check --package <name>`), so a red package
 # fails its own leg instead of the whole monorepo gate; `posix` runs janua's
 # own tests on Ubuntu, where its POSIX pipe path executes instead of skipping.
-# `static` and `check` run in parallel: the fast lane fails in about a second
-# on a missing file, the matrix proves each package installs and checks green.
 #
 # `npm run check` stays the documented root gate: scripts/check-docs.mjs, then
 # its selftest, then scripts/workspace-run.mjs check, which runs each
 # workspace's own `check` exactly as named in scripts/workspace-plan.mjs
 # (fail-closed: a workspace missing from the plan is an error, never a skip).
-# CI runs the same commands per package rather than the raw fan-out, so the
-# local gate (`npm run check`) and the remote gate prove the same steps: a
-# tree that is green locally has no other step to meet remotely.
 #
 # The matrix legs set OC_CHECK_CACHE=0 on purpose: the content cache exists to
 # make a local re-run cheap, but a gate that skips is not a gate. Every leg
-# proves its package from a clean install.
+# proves its package from a clean install; only the bun *download* cache is
+# shared between runs.
 #
-# The previous gate ran on ubuntu-latest and only proved four root files were
-# tracked. janua is cross-platform: the Windows jobs keep the full gate, and
-# the `posix` job proves the POSIX branch that a Windows run cannot reach.
-#
-# A docs-only change (*.md, docs/, LICEN[CS]E) keeps the required check green and runs no build.
-# The `plan` job stays as it is: `check` builds its matrix from `plan`'s output, so
-# an empty plan would turn a docs-only pull request red instead of green.
+# Scope comes from the GitHub API, never from a full checkout of untrusted PR
+# code. Every job checks out fetch-depth: 1. A docs-only change keeps the
+# required check (`static`) green and skips the build lanes.
 name: ci
 
 on:
@@ -35,14 +28,23 @@ on:
   pull_request:
   workflow_dispatch:
 
-# A new push cancels its own queued runs on that branch instead of stacking
-# them behind older ones: the newest commit is the only one worth gating.
+# Cancel older PR runs on the same ref instead of stacking them. A run on the
+# default branch always finishes: the run that gates it is the one that reports.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name != 'push' }}
 
 permissions:
   contents: read
+  # The scope steps list PR files through gh; a read token is enough.
+  pull-requests: read
+
+env:
+  REPO: ${{ github.repository }}
+  EVENT: ${{ github.event_name }}
+  PR_NUMBER: ${{ github.event.pull_request.number }}
+  BEFORE: ${{ github.event.before }}
+  AFTER: ${{ github.event.after }}
 
 jobs:
   static:
@@ -51,33 +53,34 @@ jobs:
     # need only the tree. Fails in about a second on a missing file.
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          # Full history: the scope step below diffs against the base branch with
-          # `...`, which needs a merge base (and, on a push, the `before` commit).
-          fetch-depth: 0
+          fetch-depth: 1
+          persist-credentials: false
 
       - name: Detect a docs-only change
         id: scope
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           docs='^(.*\.md|docs/.*|LICEN[CS]E(\.md)?)$'
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            git fetch --no-tags origin "${{ github.base_ref }}"
-            changed=$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")
-          elif [ "${{ github.event_name }}" = "push" ] && [ -n "${{ github.event.before }}" ]; then
-            changed=$(git diff --name-only "${{ github.event.before }}" HEAD || true)
+          if [ "$EVENT" = "pull_request" ]; then
+            changed=$(gh api "repos/$REPO/pulls/$PR_NUMBER/files" --paginate --jq '.[].filename')
+          elif [ "$EVENT" = "push" ] && [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            changed=$(gh api "repos/$REPO/compare/$BEFORE...$AFTER" --paginate --jq '.files[].filename')
           else
-            changed=$(git ls-files)
+            changed=""
           fi
+          # An empty list (dispatch, all-zero before, or an API failure) is
+          # fail-closed: run the gate rather than silently skipping it.
           if [ -n "$changed" ] && ! printf '%s\n' "$changed" | grep -qvE "$docs"; then
             echo "code=false" >> "$GITHUB_OUTPUT"
           else
             echo "code=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: actions/setup-node@v7
-        if: steps.scope.outputs.code == 'true'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 22
 
@@ -89,9 +92,6 @@ jobs:
 
       - name: Index structure (offline)
         if: steps.scope.outputs.code == 'true'
-        # The structural half needs no registry: it checks the table names
-        # against the repo's package inventory. The self-test proves it can go
-        # red without network.
         shell: pwsh
         run: |
           pwsh -NoProfile -File scripts/check-index.ps1 --structural
@@ -99,13 +99,10 @@ jobs:
 
       - name: No internal vocabulary in the index's own files
         if: steps.scope.outputs.code == 'true'
-        # One definition, shared with `npm run check`: the patterns, the excluded
-        # path and the "a grep error is never clean" rule live in the script.
         run: node scripts/check-vocabulary.mjs
 
       - name: Documentation truth (offline)
         if: steps.scope.outputs.code == 'true'
-        # Path claims in maintainer docs, plus the checker's own red/green proof.
         shell: pwsh
         run: |
           node scripts/check-docs.mjs
@@ -115,6 +112,29 @@ jobs:
         if: always()
         run: |
           echo "scope: ${{ steps.scope.outputs.code == 'true' && 'code changed - the full gate ran' || 'docs-only - build skipped, the check stays green' }}"
+
+  # Folded in from docs-report.yml, which branch protection does not require.
+  # Kept on ubuntu-latest: lychee's action unpacks an x86_64-linux binary.
+  docs:
+    # docs-report.yml was pull_request-only; keep push runs lean.
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 22
+      - name: docs gate (report-only)
+        run: node docs-check.mjs --report
+      - name: link check (offline, report-only)
+        uses: lycheeverse/lychee-action@f796c8b7d468feb9b8c0a46da3fac0af6874d374 # v2.2.0
+        with:
+          args: --no-progress --offline '**/*.md'
+          fail: false
 
   # One leg per workspace, fanned out from the shared plan. A leg proves only
   # its own package (`--package`), with the content cache off: a gate that
@@ -127,9 +147,12 @@ jobs:
     outputs:
       matrix: ${{ steps.set.outputs.matrix }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 22
 
@@ -156,24 +179,24 @@ jobs:
       matrix:
         package: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          # Full history: the scope step below diffs against the base branch with
-          # `...`, which needs a merge base (and, on a push, the `before` commit).
-          fetch-depth: 0
+          fetch-depth: 1
+          persist-credentials: false
 
       - name: Detect a docs-only change
         id: scope
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           docs='^(.*\.md|docs/.*|LICEN[CS]E(\.md)?)$'
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            git fetch --no-tags origin "${{ github.base_ref }}"
-            changed=$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")
-          elif [ "${{ github.event_name }}" = "push" ] && [ -n "${{ github.event.before }}" ]; then
-            changed=$(git diff --name-only "${{ github.event.before }}" HEAD || true)
+          if [ "$EVENT" = "pull_request" ]; then
+            changed=$(gh api "repos/$REPO/pulls/$PR_NUMBER/files" --paginate --jq '.[].filename')
+          elif [ "$EVENT" = "push" ] && [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            changed=$(gh api "repos/$REPO/compare/$BEFORE...$AFTER" --paginate --jq '.files[].filename')
           else
-            changed=$(git ls-files)
+            changed=""
           fi
           if [ -n "$changed" ] && ! printf '%s\n' "$changed" | grep -qvE "$docs"; then
             echo "code=false" >> "$GITHUB_OUTPUT"
@@ -181,7 +204,7 @@ jobs:
             echo "code=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         if: steps.scope.outputs.code == 'true'
         with:
           node-version: 22
@@ -189,16 +212,26 @@ jobs:
       # bun is the package manager and a gate dependency for every leg: the
       # workspace scripts invoke `bun run`, and oc-flight-deck's check is
       # `bun run typecheck && bun test`. Pinned to the version the root
-      # manifest's `packageManager` names.
-      - uses: oven-sh/setup-bun@v2
+      # manifest's `packageManager` names (bun@1.4.4).
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         if: steps.scope.outputs.code == 'true'
         with:
           bun-version: 1.4.4
 
+      # The key prefix differs from release.yml's `-bun-` cache, which holds
+      # node_modules; these two archives must never be restored into each
+      # other's paths.
+      - name: Cache bun downloads
+        if: steps.scope.outputs.code == 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-install-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-install-
+
       - name: Toolchain versions
         if: steps.scope.outputs.code == 'true'
-        # Logged, never asserted: when a leg goes red, the first question is
-        # what it ran on, and the answer is in the log, not in a guess.
         run: |
           node --version
           npm --version
@@ -206,16 +239,14 @@ jobs:
 
       - name: Install workspaces
         if: steps.scope.outputs.code == 'true'
-        # The root manifest declares no dependencies, and each workspace's
-        # check resolves its bins through the hoisted root node_modules
-        # that `bun install` builds from bun.lock.
         run: bun install --frozen-lockfile
 
       - name: Check ${{ matrix.package }}
         if: steps.scope.outputs.code == 'true'
         env:
           OC_CHECK_CACHE: 0
-        run: node scripts/workspace-run.mjs check --package "${{ matrix.package }}"
+          PACKAGE: ${{ matrix.package }}
+        run: node scripts/workspace-run.mjs check --package "$env:PACKAGE"
 
       - name: Scope
         if: always()
@@ -223,35 +254,34 @@ jobs:
           echo "scope: ${{ steps.scope.outputs.code == 'true' && 'code changed - the full gate ran' || 'docs-only - build skipped, the check stays green' }}"
 
   # janua's pipe path has POSIX-only branches: a detached child leading its own
-  # process group, and negative-pid group kills. The Windows matrix legs skip the
-  # descendant test, so this job runs the pipe test where that branch executes.
-  # The upgrade tests run here too: they reach the POSIX branch of the npm command
-  # line and the home/pointer/launcher rules, and use an injected installer, so
-  # they need no registry. The rest of janua's suite is left to the Windows gate:
-  # its pre-existing PTY tests assume Windows and are outside this job's scope.
+  # process group, and negative-pid group kills. The Windows matrix legs skip
+  # the descendant test, so this job runs the pipe test where that branch
+  # executes. The upgrade tests run here too: they reach the POSIX branch of
+  # the npm command line and the home/pointer/launcher rules, and use an
+  # injected installer, so they need no registry.
   posix:
     if: github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          # Full history: the scope step below diffs against the base branch with
-          # `...`, which needs a merge base (and, on a push, the `before` commit).
-          fetch-depth: 0
+          fetch-depth: 1
+          persist-credentials: false
 
       - name: Detect a docs-only change
         id: scope
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           docs='^(.*\.md|docs/.*|LICEN[CS]E(\.md)?)$'
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            git fetch --no-tags origin "${{ github.base_ref }}"
-            changed=$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")
-          elif [ "${{ github.event_name }}" = "push" ] && [ -n "${{ github.event.before }}" ]; then
-            changed=$(git diff --name-only "${{ github.event.before }}" HEAD || true)
+          if [ "$EVENT" = "pull_request" ]; then
+            changed=$(gh api "repos/$REPO/pulls/$PR_NUMBER/files" --paginate --jq '.[].filename')
+          elif [ "$EVENT" = "push" ] && [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            changed=$(gh api "repos/$REPO/compare/$BEFORE...$AFTER" --paginate --jq '.files[].filename')
           else
-            changed=$(git ls-files)
+            changed=""
           fi
           if [ -n "$changed" ] && ! printf '%s\n' "$changed" | grep -qvE "$docs"; then
             echo "code=false" >> "$GITHUB_OUTPUT"
@@ -259,18 +289,25 @@ jobs:
             echo "code=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         if: steps.scope.outputs.code == 'true'
         with:
           node-version: 22
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         if: steps.scope.outputs.code == 'true'
         with:
           bun-version: 1.4.4
 
-      # bun installs the whole workspace; this job still runs only janua's
-      # POSIX pipe path, which a Windows run cannot reach.
+      - name: Cache bun downloads
+        if: steps.scope.outputs.code == 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-install-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-install-
+
       - name: Install dependencies
         if: steps.scope.outputs.code == 'true'
         run: bun install --frozen-lockfile

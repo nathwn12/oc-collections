@@ -1,4 +1,5 @@
 # Phases — the context move at a boundary
+
 - Decide the move at a phase boundary, never mid-phase. A phase ends when the work stops being the same work.
 - Mid-phase: continue, or split the leftover to a lane. Never compact mid-phase: it loses the thread.
 - Four moves: **Continue** (stay, no switch), **Clear** (empty window, start from nothing), **Subagent** (its own window, a report comes back), **Compact** (compress, seed a fresh session).

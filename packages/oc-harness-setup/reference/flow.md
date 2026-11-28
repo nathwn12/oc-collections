@@ -5,7 +5,7 @@
 ## Seat routing — the only copy
 
 | seat | seam | fires when | owns | not this (→ seat) | check |
-|---|---|---|---|---|---|
+| --- | --- | --- | --- | --- | --- |
 | `code-agent` | permission (sole product-repo writer) | product-repo code, doc or packaging change | changed paths | harness change (→ `harness-agent`) | repo check exit cited |
 | `verify-agent` | independence (verdict never from the author) | verdict or outward-text gate needed | findings + pass/fail | authorship of the work (→ owning seat) | cited output on pre-merge ref |
 | `research-agent` | capability (sole open-web reach) | external fact needed | cited synthesis | local-only check (→ `host-agent`) | URL + date cited |
@@ -26,14 +26,17 @@ A brief goes to exactly one owning seat; the narrower seam wins on overlap; a se
 A trigger with no seat is a gap: report it, never improvise a seat mid-pass. A seat fired outside its trigger is a defect: name the trigger it should have had.
 
 ## When a new seat is earned
+
 - A chokepoint — one reach is the queue — earns a seat: one trigger, reach, artifact, check.
 - Slowness gets a cheaper model and a cleaner seam first; friction gets a mechanism first.
 - Confusion means fix this table or name one writer; rot means `memory-agent` re-verifies; overlap means merge lanes. Never add a seat for these.
 
 ## Deferred
+
 - `deferred` = a required seat's evidence was forbidden or postponed by the owner: record `UNVERIFIED (owner-deferred): <claim> — resume: <condition>`. It never blocks `done`; `parked` stays only on the owner's explicit order.
 - Ceremony follows the autonomy rule in `AGENTS.md`: reversible work proceeds at full speed; only irreversible acts gate.
 
 ## Lane overlap
+
 - Snapshot live lanes first (`GET /api/session/active`); classify from metadata only, never source or secrets. Disjoint scopes proceed immediately.
 - Overlapping scopes: the older lane continues, the newer parks before it writes, and the disposition is recorded. No two writers on one artifact.

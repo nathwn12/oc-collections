@@ -22,7 +22,9 @@ Tests sit in test/.
 
 ## Run
 
-    bun test .
+```bash
+bun test .
+```
 
 Set OC_FIX_TRACE=1 to log each guard decision, including every clamp and the
 mark attached to its returned result (the fallback when a host drops metadata).

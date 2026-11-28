@@ -2,8 +2,10 @@ name: lock-refresh
 
 # Regenerate JavaScript lockfiles when a manifest or lockfile changes on a
 # same-repository pull request, then push the refreshed lock back to the PR head.
-# Hard guards: never run install scripts, never resolve Cargo.lock, never write
+# Hard guards: never run install scripts, never run cargo update, never write
 # on fork PRs or dependabot PRs, never push to the default branch, never force.
+# Cargo.lock is reconciled with unlocked cargo metadata so cargo adds only what
+# the manifest requires; a dependency that does not resolve still fails the job.
 
 on:
   pull_request:
@@ -36,7 +38,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out PR head
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
@@ -62,6 +64,18 @@ jobs:
           if [ -n "$(find . -type f \( -name bun.lock -o -name bun.lockb \) -not -path '*/node_modules/*' -print -quit)" ]; then echo "bun=true" >> "$GITHUB_OUTPUT"; else echo "bun=false" >> "$GITHUB_OUTPUT"; fi
           if [ -n "$(find . -type f -name pnpm-lock.yaml -not -path '*/node_modules/*' -print -quit)" ]; then echo "pnpm=true" >> "$GITHUB_OUTPUT"; else echo "pnpm=false" >> "$GITHUB_OUTPUT"; fi
           if [ -n "$(find . -type f -name package-lock.json -not -path '*/node_modules/*' -print -quit)" ]; then echo "npm=true" >> "$GITHUB_OUTPUT"; else echo "npm=false" >> "$GITHUB_OUTPUT"; fi
+          if [ -n "$(find . -type f -name Cargo.toml -not -path '*/node_modules/*' -not -path '*/target/*' -print -quit)" ]; then echo "cargo=true" >> "$GITHUB_OUTPUT"; else echo "cargo=false" >> "$GITHUB_OUTPUT"; fi
+          toolchain_file=""
+          if [ -f rust-toolchain.toml ]; then
+            toolchain_file="rust-toolchain.toml"
+          else
+            toolchain_file="$(find . -type f -name rust-toolchain.toml -not -path '*/node_modules/*' -not -path '*/target/*' -print -quit)"
+          fi
+          toolchain=""
+          if [ -n "$toolchain_file" ]; then
+            toolchain="$(sed -n 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$toolchain_file" | head -n 1)"
+          fi
+          echo "rust_toolchain=$toolchain" >> "$GITHUB_OUTPUT"
 
       - name: Attach to PR head branch
         if: steps.lockinfo.outputs.safe == 'true'
@@ -74,19 +88,36 @@ jobs:
 
       - name: Set up Bun
         if: steps.lockinfo.outputs.safe == 'true' && steps.lockinfo.outputs.bun == 'true'
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
 
       - name: Set up Node
         if: steps.lockinfo.outputs.safe == 'true' && (steps.lockinfo.outputs.pnpm == 'true' || steps.lockinfo.outputs.npm == 'true')
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '20'
 
       - name: Set up pnpm
         if: steps.lockinfo.outputs.safe == 'true' && steps.lockinfo.outputs.pnpm == 'true'
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 9
+
+      - name: Set up Rust toolchain
+        if: steps.lockinfo.outputs.safe == 'true' && steps.lockinfo.outputs.cargo == 'true'
+        shell: bash
+        env:
+          RUST_TOOLCHAIN: ${{ steps.lockinfo.outputs.rust_toolchain }}
+        run: |
+          set -euo pipefail
+          if [ -n "$RUST_TOOLCHAIN" ]; then
+            echo "lock-refresh: installing pinned toolchain $RUST_TOOLCHAIN"
+            rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+            rustup default "$RUST_TOOLCHAIN"
+          else
+            echo "lock-refresh: no rust-toolchain.toml; using stable"
+            rustup toolchain install stable --profile minimal
+            rustup default stable
+          fi
 
       - name: Refresh lockfiles (no install scripts)
         if: steps.lockinfo.outputs.safe == 'true'
@@ -95,6 +126,7 @@ jobs:
           HAS_BUN: ${{ steps.lockinfo.outputs.bun }}
           HAS_PNPM: ${{ steps.lockinfo.outputs.pnpm }}
           HAS_NPM: ${{ steps.lockinfo.outputs.npm }}
+          HAS_CARGO: ${{ steps.lockinfo.outputs.cargo }}
         run: |
           set -euo pipefail
           if [ "$HAS_BUN" = 'true' ]; then
@@ -118,7 +150,13 @@ jobs:
               ( cd "$dir" && npm install --package-lock-only --ignore-scripts )
             done < <(find . -type f -name package-lock.json -not -path '*/node_modules/*' -print)
           fi
-          echo "lock-refresh: Cargo.lock is never auto-resolved (manual only)"
+          if [ "$HAS_CARGO" = 'true' ]; then
+            while IFS= read -r manifest; do
+              dir="$(dirname "$manifest")"
+              echo "lock-refresh: cargo metadata (unlocked, no cargo update) in $dir"
+              ( cd "$dir" && cargo metadata --format-version 1 --quiet > /dev/null )
+            done < <(find . -type f -name Cargo.toml -not -path '*/node_modules/*' -not -path '*/target/*' -print)
+          fi
 
       - name: Commit and push refreshed lockfiles
         if: steps.lockinfo.outputs.safe == 'true'
@@ -127,8 +165,8 @@ jobs:
           HEAD_REF: ${{ steps.lockinfo.outputs.head_ref }}
         run: |
           set -euo pipefail
-          # Stage only JavaScript lockfiles. Cargo.lock is deliberately excluded.
-          mapfile -d '' locks < <(find . -type f \( -name bun.lock -o -name bun.lockb -o -name pnpm-lock.yaml -o -name package-lock.json \) -not -path '*/node_modules/*' -print0)
+          # Stage only lockfiles: JS locks plus Cargo.lock. No manifests, no source.
+          mapfile -d '' locks < <(find . -type f \( -name bun.lock -o -name bun.lockb -o -name pnpm-lock.yaml -o -name package-lock.json -o -name Cargo.lock \) -not -path '*/node_modules/*' -not -path '*/target/*' -print0)
           if [ "${#locks[@]}" -gt 0 ]; then
             git add -A -- "${locks[@]}"
           fi

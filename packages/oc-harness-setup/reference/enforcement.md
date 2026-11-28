@@ -1,4 +1,5 @@
 # Enforcement detail
+
 Read when a hard deny, network reach, or an enforced-versus-instructed boundary matters.
 
 - `policies` `tool.use` denies are hard: `*.env`, `*.env.*`, `*secrets*`, on read and on edit. They override ask and allow, and they are the only boundary in this pack a mechanism holds.

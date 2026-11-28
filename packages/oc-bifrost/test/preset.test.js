@@ -50,17 +50,10 @@ test("preset: a successful probe reports the detected version", async () => {
     const result = command.includes("--version")
       ? { stdout: "rtk 0.23.4\n", stderr: "", exitCode: 0 }
       : { stdout: "", stderr: "", exitCode: 0 }
-    return {
-      quiet() {
-        return this
-      },
-      nothrow() {
-        return this
-      },
-      then(resolve, reject) {
-        return Promise.resolve(result).then(resolve, reject)
-      },
-    }
+    const shell = Promise.resolve(result)
+    shell.quiet = () => shell
+    shell.nothrow = () => shell
+    return shell
   }
   const check = await checkPrerequisite(PRESETS.rtk, shell)
   assert.equal(check.ok, true)

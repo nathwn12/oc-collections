@@ -8,6 +8,7 @@ description: Use when a task looks genuinely small and reversible — check the 
 Take the shortest safe route on a genuinely small task; skip ceremony, keep proof.
 
 **When to load**
+
 - "what is the shortest safe route"
 - "quickly / be quick / fast / no ceremony"
 
@@ -26,11 +27,13 @@ Take the shortest safe route on a genuinely small task; skip ceremony, keep proo
 13. Done when the artifact exists, the check is cited, and nothing is left running. The fresh verdict still stands: a seat that did not write the work returns pass or fail, however small the task. Only the ceremony is waived.
 
 **Never**
+
 - Never ship a title-only stub to fit the budget.
 - Never skip proof because the change looks trivial.
 - Never use this posture for an irreversible or outward act.
 - Never improvise past a missing decision; stop instead.
 
 **Examples**
+
 - <example>Good: one-typo fix ships inline with the verify command cited. Bad: dispatching a worker for a typo.</example>
 - <example>Good: three-file request exits fast posture and takes the normal route. Bad: stubbing two files to stay fast.</example>
