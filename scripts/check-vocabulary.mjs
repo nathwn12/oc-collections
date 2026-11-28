@@ -24,7 +24,7 @@ const ROOT = path.resolve(import.meta.dirname, "..")
 
 const PATTERNS = [
   { label: "internal name", re: "fl[e]et|l[i]feline|m[a]sthead" },
-  { label: "internal history", re: "mod[u]le host|supers[e]d|unpubl[i]sh|noth[i]ng mounts" },
+  { label: "internal history", re: "mod[u]le host|supers[e]d|unpubl[i]sh|no[t]hing mounts" },
 ]
 
 function main() {
@@ -44,7 +44,15 @@ function main() {
       process.exitCode = 1
       return
     }
-    const hits = (result.stdout ?? "").trimEnd()
+    const raw = (result.stdout ?? "").trimEnd()
+    if (!raw) continue
+    // A `uses:` pointer to the public gate workflow is infrastructure, not
+    // retired vocabulary used as prose. Drop only those hit lines; the bracketed
+    // class keeps the repo name out of this file's own text.
+    const hits = raw
+      .split("\n")
+      .filter((line) => !/uses:\s*nathwn12\/nstack-fl[e]et\//i.test(line))
+      .join("\n")
     if (!hits) continue
     console.error(`${label} found in this repo's own files:`)
     console.error(hits)
