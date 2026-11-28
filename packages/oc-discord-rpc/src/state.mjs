@@ -95,7 +95,7 @@ export function splitModel(value) {
 
 /** @returns {ReducerState} */
 export function createState() {
-  return { sessions: new Map(), currentID: undefined, revision: 0 };
+  return { sessions: new Map(), currentID: undefined, lastModel: undefined, revision: 0 };
 }
 
 // Payloads arrive wrapped in data, sometimes once more in data.info. Reading
@@ -120,14 +120,43 @@ function stampOf(now) {
   return typeof now === 'number' && Number.isFinite(now) ? now : 0;
 }
 
+// The last model (with its provider and effort) is sticky. A current session
+// with no model does not blank the card; a session that reports a model always
+// wins over the remembered one. Effort belongs to the model it came with, so a
+// model change without a variant clears the old reasoning level.
+function modelParts(row) {
+  if (!row || !row.model) return undefined;
+  return { model: row.model, effort: row.effort, ref: row.modelRef };
+}
+
+function displayedParts(state) {
+  const id = state?.currentID;
+  const row = id && state.sessions instanceof Map ? state.sessions.get(id) : undefined;
+  return modelParts(row) ?? state?.lastModel;
+}
+
+// If the current session turns out to be a child, fall back to another
+// non-child session that is still present, preferring one that has a model.
+// Child sessions never own the card; this is the missing recovery, not a
+// relaxation of the exclusion.
+function preferredCurrent(sessions, excludeID) {
+  let bestID;
+  let bestScore = -Infinity;
+  for (const [key, row] of sessions) {
+    if (key === excludeID || !row || row.parentID) continue;
+    const score = (row.model ? 1000000 : 0) + row.lastSeen;
+    if (score > bestScore) { bestScore = score; bestID = key; }
+  }
+  return bestID;
+}
+
 // The revision tracks only what reaches the card. A rename, a tool call or a
 // busy transition changes a record but not the picture, so it must not spend
 // the rate-limit budget.
 function cardKey(state) {
-  const id = state?.currentID;
-  const row = id && state.sessions instanceof Map ? state.sessions.get(id) : undefined;
-  const ref = row?.modelRef;
-  return [row?.model, row?.effort, ref ? JSON.stringify(ref) : undefined];
+  const parts = displayedParts(state);
+  const ref = parts?.ref;
+  return [parts?.model, parts?.effort, ref ? JSON.stringify(ref) : undefined];
 }
 
 // A created record that names a model is knowledge; a default the host never
@@ -180,7 +209,7 @@ export function applyEvent(state, event, now) {
   // An event with no usable id, or not from the session lifecycle, carries no
   // presence signal. Return a fresh state so callers can never mutate by alias.
   if (!id || !type.startsWith('session.')) {
-    return { sessions, currentID: previous.currentID, revision: previous.revision };
+    return { sessions, currentID: previous.currentID, lastModel: previous.lastModel, revision: previous.revision };
   }
 
   const existing = sessions.get(id);
@@ -191,13 +220,20 @@ export function applyEvent(state, event, now) {
   const next = { ...(existing ?? blankRecord(id, seen)), lastSeen: seen };
   let currentID = previous.currentID;
 
-  // The newest non-child event owns the card. A child never does: sub-agents
-  // are work inside a turn, not a turn the user is watching. If a session turns
-  // out to be a child after it was already current, drop the claim.
+  // A child never owns the card. If the current session turns out to be a
+  // child, recover another non-child session instead of blanking the card.
   if (parentID) {
-    if (currentID === id) currentID = undefined;
+    if (currentID === id) currentID = preferredCurrent(sessions, id);
   } else {
-    currentID = id;
+    // A brand-new, model-less session must not evict a current session that
+    // has something to show. Existing sessions still own their own activity,
+    // and a new session with a model or a distinct title is worth showing.
+    const modelValue = fieldOf(data, 'model');
+    const hasModel = modelValue !== undefined && modelValue !== null
+      && Boolean(splitModel(modelValue).model);
+    const title = textOf(fieldOf(data, 'title'));
+    const titleDiffers = title !== undefined && title !== next.title;
+    if (!existing || hasModel || titleDiffers || !currentID) currentID = id;
   }
 
   switch (type) {
@@ -252,10 +288,13 @@ export function applyEvent(state, event, now) {
     if (victimID !== undefined) sessions.delete(victimID);
   }
 
+  // Remember whatever the card is showing now, so a later model-less event
+  // cannot strip both text lines from the card.
+  const lastModel = modelParts(sessions.get(currentID)) ?? previous.lastModel;
   const before = cardKey(previous);
-  const after = cardKey({ sessions, currentID });
+  const after = cardKey({ sessions, currentID, lastModel });
   const changed = before[0] !== after[0] || before[1] !== after[1] || before[2] !== after[2];
-  return { sessions, currentID, revision: changed ? previous.revision + 1 : previous.revision };
+  return { sessions, currentID, lastModel, revision: changed ? previous.revision + 1 : previous.revision };
 }
 
 /**
@@ -269,13 +308,14 @@ export function applyEvent(state, event, now) {
 export function selectSnapshot(state, options) {
   const id = state?.currentID;
   const row = id && state.sessions instanceof Map ? state.sessions.get(id) : undefined;
+  const parts = modelParts(row) ?? state?.lastModel;
   return {
     appName: options?.appName,
-    model: row?.model,
-    modelID: row?.modelRef?.modelID,
-    modelProviderID: row?.modelRef?.providerID,
-    effort: row?.effort,
-    modelRef: row?.modelRef,
+    model: parts?.model,
+    modelID: parts?.ref?.modelID,
+    modelProviderID: parts?.ref?.providerID,
+    effort: parts?.effort,
+    modelRef: parts?.ref,
     modelName: options?.modelName,
     openedAt: options?.openedAt,
     revision: revisionOf(state),

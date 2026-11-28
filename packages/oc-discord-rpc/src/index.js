@@ -15,6 +15,13 @@ const BACKOFF_START_MS = 1000;
 const BACKOFF_MAX_MS = 30000;
 const DEFAULT_SWEEP_TIMEOUT_MS = 2000;
 const DEFAULT_CATALOG_TIMEOUT_MS = 2000;
+const DEFAULT_CATALOG_TTL_MS = 60 * 60 * 1000;
+const DEFAULT_CATALOG_COOLDOWN_MS = 60 * 1000;
+// Retry the seed sweep at these gaps, then every five minutes, with a hard cap
+// so a host that never opens a session stops cleanly.
+const SWEEP_RETRY_DELAYS_MS = [2000, 5000, 15000, 60000];
+const SWEEP_RETRY_CAP = 12;
+const DEFAULT_HOLD_GRACE_MS = 5000;
 
 // The official OpenCode mark, pinned to an immutable commit so the URL cannot
 // move under a user who never configured an image. Discord's media proxy
@@ -31,6 +38,9 @@ let schedule = (fn, ms) => setTimeout(fn, ms);
 let cancel = (id) => clearTimeout(id);
 let sweepTimeoutMs = DEFAULT_SWEEP_TIMEOUT_MS;
 let catalogTimeoutMs = DEFAULT_CATALOG_TIMEOUT_MS;
+let catalogTtlMs = DEFAULT_CATALOG_TTL_MS;
+let catalogCooldownMs = DEFAULT_CATALOG_COOLDOWN_MS;
+let holdGraceMs = DEFAULT_HOLD_GRACE_MS;
 
 /** @param {(opts: object) => object} fn */
 export function __setClientFactory(fn) {
@@ -49,6 +59,23 @@ export function __setSweepTimeout(ms) {
 /** @param {number|undefined} ms */
 export function __setCatalogTimeout(ms) {
   catalogTimeoutMs = typeof ms === 'number' && Number.isFinite(ms) && ms >= 0 ? ms : DEFAULT_CATALOG_TIMEOUT_MS;
+}
+
+/** @param {number|undefined} ms */
+export function __setCatalogTTL(ms) {
+  catalogTtlMs = typeof ms === 'number' && Number.isFinite(ms) && ms >= 0 ? ms : DEFAULT_CATALOG_TTL_MS;
+}
+
+/** @param {number|undefined} ms */
+export function __setCatalogCooldown(ms) {
+  catalogCooldownMs = typeof ms === 'number' && Number.isFinite(ms) && ms >= 0 ? ms : DEFAULT_CATALOG_COOLDOWN_MS;
+}
+
+// A field that disappears is held briefly so a transient cannot flap the card.
+// The seam keeps the grace instant in tests.
+/** @param {number|undefined} ms */
+export function __setHoldGrace(ms) {
+  holdGraceMs = typeof ms === 'number' && Number.isFinite(ms) && ms >= 0 ? ms : DEFAULT_HOLD_GRACE_MS;
 }
 
 /** @param {{now?: () => number, setTimeout?: Function, clearTimeout?: Function}} [options] */
@@ -191,12 +218,20 @@ export default {
       let sentRevision = -1; // forces one card at boot, before any selection
       let gate = 0;
       let timer = null;
-      // providerID/id -> human model name. '' is a reserved miss, so the
-      // catalogue is called once per model even when a burst of events lands.
-      const nameCache = new Map();
-      // A late catalogue name joins the state revision: the next send then
-      // carries the human name instead of being stuck on the fallback.
+      // One catalogue snapshot per provider, not one cache slot per model.
+      // Failed or empty fetches never become snapshots; the attempt stamps only
+      // stop a burst of misses from hammering the host RPC.
+      const catalogs = new Map();
+      const catalogAttempts = new Map();
+      const fetching = new Set();
+      // A fresh snapshot joins the state revision so the next send replaces a
+      // fallback name with the catalogue's human name.
       let nameRevision = 0;
+      // The card currently on screen. A reduced card is never published
+      // instantly: it waits out a short grace in case the field comes back.
+      let lastSentActivity = null;
+      let held = null;
+      let holdTimer = null;
 
       function cancelTimer() {
         if (timer === undefined || timer === null) return;
@@ -221,58 +256,108 @@ export default {
         }
       }
 
-      function nameKey(ref, model) {
-        const provider = textOf(ref?.providerID);
-        const id = textOf(ref?.id) ?? textOf(ref?.modelID) ?? model;
-        return (provider ? provider + '/' : '') + (id || '');
+      // A downgrade removes something the owner could see. Missing buttons,
+      // details and state are all the same class of symptom: hold the card.
+      function downgradeOf(previous, current) {
+        if (!previous || !current) return '';
+        if (previous.details && !current.details) return 'details line missing';
+        if (previous.state && !current.state) return 'state line missing';
+        if (previous.buttons && !current.buttons) return 'buttons missing';
+        return '';
       }
 
-      // Resolve the model's display name from ctx.model.list, matching modelID
-      // before id within the session's providerID when one is known. The lookup
-      // is bounded exactly like the sweep and guarded so a host that changes or
-      // hangs its API cannot stall the card. Returns '' for the prettifier.
-      function lookupName(ref, model) {
-        const key = nameKey(ref, model);
+      function cancelHold() {
+        if (holdTimer === null) return;
+        try { cancel(holdTimer); } catch (err) { fail(trace, 'hold timer cancel', err); }
+        holdTimer = null;
+        held = null;
+      }
+
+      // The grace has elapsed: publish the reduced card as settled truth.
+      function publishHeld() {
+        holdTimer = null;
+        if (!held || controller.signal.aborted) { held = null; return; }
+        const { activity, revision } = held;
+        held = null;
+        trace('publish downgrade after grace');
+        const before = gate;
+        settle(client.setActivity(activity));
+        gate = gateAfterAction('send', before, gate, clock());
+        sentRevision = revision;
+        lastSentActivity = activity;
+      }
+
+      function findName(snapshot, ref, model) {
+        const catalogID = textOf(ref?.id) ?? textOf(ref?.modelID) ?? model;
+        if (!catalogID) return undefined;
+        const rows = Array.isArray(snapshot?.rows) ? snapshot.rows : [];
         const provider = textOf(ref?.providerID);
-        const catalogID = textOf(ref?.id) ?? textOf(ref?.modelID);
-        if (!catalogID || !ctx.model || typeof ctx.model.list !== 'function') {
-          nameCache.set(key, '');
-          return '';
+        const scoped = provider ? rows.filter((row) => {
+          const rowProvider = textOf(row && row.providerID);
+          return !rowProvider || rowProvider === provider;
+        }) : rows;
+        const wantedModelID = textOf(ref?.modelID) ?? catalogID;
+        const wantedID = textOf(ref?.id) ?? catalogID;
+        const byModelID = scoped.find((row) => textOf(row?.modelID) === wantedModelID);
+        const byID = scoped.find((row) => textOf(row?.id) === wantedID);
+        return textOf((byModelID ?? byID)?.name);
+      }
+
+      // Resolve a human name from one bounded ctx.model.list(providerID) call.
+      // A miss or a failed RPC is NOT cached as an answer: until a real snapshot
+      // arrives the prettifier renders the id, which is still readable.
+      function lookupName(ref, model) {
+        if (!ctx.model || typeof ctx.model.list !== 'function') return undefined;
+        const provider = textOf(ref?.providerID) ?? '';
+        const snapshot = catalogs.get(provider);
+        const name = findName(snapshot, ref, model);
+
+        const nowMs = clock();
+        const fetchedAt = snapshot && snapshot.fetchedAt;
+        const attemptedAt = catalogAttempts.get(provider);
+        const age = Number.isFinite(fetchedAt) ? nowMs - fetchedAt : Infinity;
+        const sinceAttempt = Number.isFinite(attemptedAt) ? nowMs - attemptedAt : Infinity;
+        const expired = age >= catalogTtlMs;
+        const cooledMiss = age >= catalogCooldownMs && sinceAttempt >= catalogCooldownMs;
+        // Expiry wins even on a hit: an old snapshot must refresh, not keep
+        // serving a name forever. A miss only refreshes after the cooldown.
+        if (!expired) {
+          if (name) return name;
+          if (!cooledMiss) return undefined;
         }
-        nameCache.set(key, ''); // reserve before the RPC: one call per model
+        if (fetching.has(provider)) return name;
+
+        fetching.add(provider);
         void (async () => {
-          let name = '';
+          let rows;
           try {
             let listed;
             const completed = await bounded(async () => {
               listed = await (provider ? ctx.model.list(provider) : ctx.model.list());
             }, catalogTimeoutMs);
-            if (!completed) {
-              trace('model catalogue timed out after ' + catalogTimeoutMs + 'ms; using a readable fallback');
-            } else {
-              const rows = Array.isArray(listed) ? listed
-                : Array.isArray(listed && listed.data) ? listed.data
-                : Array.isArray(listed && listed.items) ? listed.items : [];
-              const scoped = provider ? rows.filter((row) => {
-                const rowProvider = textOf(row && row.providerID);
-                return !rowProvider || rowProvider === provider;
-              }) : rows;
-              const wantedModelID = textOf(ref?.modelID) ?? catalogID;
-              const wantedID = textOf(ref?.id) ?? catalogID;
-              const byModelID = scoped.find((row) => textOf(row?.modelID) === wantedModelID);
-              const byID = scoped.find((row) => textOf(row?.id) === wantedID);
-              name = textOf((byModelID ?? byID)?.name) ?? '';
-            }
+            if (!completed) throw new Error('timed out after ' + catalogTimeoutMs + 'ms');
+            rows = Array.isArray(listed) ? listed
+              : Array.isArray(listed && listed.data) ? listed.data
+              : Array.isArray(listed && listed.items) ? listed.items : [];
+            if (!rows.length) throw new Error('empty catalogue response');
           } catch (err) {
-            fail(trace, 'model catalogue', err);
+            // Never store a failure as an answer. An older snapshot, if any,
+            // stays in place; the attempt stamp only prevents a retry storm.
+            catalogAttempts.set(provider, clock());
+            trace('catalogue refresh failed: ' + (err && err.message ? err.message : String(err)));
+            return;
+          } finally {
+            fetching.delete(provider);
           }
-          if (name && !controller.signal.aborted) {
-            nameCache.set(key, name);
+          catalogs.set(provider, { rows, fetchedAt: clock() });
+          catalogAttempts.set(provider, clock());
+          trace('catalogue fetched ' + rows.length + ' rows for ' + (provider || 'all providers'));
+          if (!controller.signal.aborted) {
             nameRevision++;
             pump();
           }
         })();
-        return '';
+        return undefined;
       }
 
       // One plan per revision bump. A wait arms exactly one timer; a send never
@@ -283,15 +368,36 @@ export default {
           const nowMs = clock();
           const pre = selectSnapshot(state, snapshotOptions);
           let modelName;
-          if (pre.model) {
-            const key = nameKey(pre.modelRef, pre.model);
-            modelName = nameCache.get(key);
-            if (modelName === undefined) modelName = lookupName(pre.modelRef, pre.model);
-          }
+          if (pre.model) modelName = lookupName(pre.modelRef, pre.model);
           const snapshot = selectSnapshot(state, { ...snapshotOptions, modelName: modelName || undefined });
           const built = buildActivity(snapshot, activityOptions);
           const desired = built.activity !== null && built.activity !== undefined;
           const revision = revisionOf(state) + '#' + nameRevision;
+          // A clear is never held; it goes out at once. A reduced card is held
+          // instead of published: the previous payload stays on screen while
+          // the field may still come back. A newer plan supersedes the hold.
+          if (!desired) {
+            cancelHold();
+          } else {
+            const missing = downgradeOf(lastSentActivity, built.activity);
+            if (missing) {
+              cancelHold();
+              held = { activity: built.activity, revision };
+              trace('hold downgrade: ' + missing);
+              try {
+                holdTimer = schedule(() => { holdTimer = null; publishHeld(); }, holdGraceMs);
+              } catch (err) {
+                fail(trace, 'hold timer arm', err);
+                publishHeld();
+              }
+              return;
+            }
+            if (held) {
+              trace('hold released: field returned');
+              cancelHold();
+            }
+          }
+
           const decision = planAction({
             desired,
             revision,
@@ -306,10 +412,12 @@ export default {
             settle(client.setActivity(built.activity));
             gate = gateAfterAction('send', before, gate, nowMs);
             sentRevision = revision;
+            lastSentActivity = built.activity;
           } else if (decision.action === 'clear') {
             settle(client.clearActivity());
             gate = 0;
             sentRevision = revision;
+            lastSentActivity = null;
           } else if (decision.action === 'wait') {
             armTimer(decision.waitMs);
           }
@@ -318,13 +426,66 @@ export default {
         }
       }
 
+      // A seed sweep that finds nothing is retried on a bounded schedule. One
+      // timer at most, one sweep in flight, and a live model event cancels the
+      // whole schedule. Every retry uses the same bounded sweep below.
+      let sweepRetryTimer = null;
+      let sweepAttempt = 0;
+      let sweepRunning = false;
+
+      function cancelSweepRetries() {
+        if (sweepRetryTimer === null) return;
+        try { cancel(sweepRetryTimer); } catch (err) { fail(trace, 'sweep retry cancel', err); }
+        sweepRetryTimer = null;
+      }
+
+      function hasModel() {
+        return Boolean(selectSnapshot(state, snapshotOptions).model);
+      }
+
+      function armSweepRetry() {
+        if (controller.signal.aborted || sweepRetryTimer !== null || sweepRunning || hasModel()) return;
+        if (sweepAttempt >= SWEEP_RETRY_CAP) {
+          trace('sweep retries exhausted');
+          return;
+        }
+        const ms = sweepAttempt < SWEEP_RETRY_DELAYS_MS.length
+          ? SWEEP_RETRY_DELAYS_MS[sweepAttempt] : 300000;
+        sweepAttempt++;
+        try {
+          sweepRetryTimer = schedule(() => {
+            sweepRetryTimer = null;
+            if (!controller.signal.aborted) void runSweepRetry();
+          }, ms);
+        } catch (err) { fail(trace, 'sweep retry arm', err); }
+      }
+
+      async function runSweepRetry() {
+        if (sweepRunning || controller.signal.aborted) return;
+        sweepRunning = true;
+        let seeded;
+        try {
+          seeded = await sweep();
+        } finally {
+          sweepRunning = false;
+        }
+        if (controller.signal.aborted) return;
+        if (seeded) {
+          cancelSweepRetries();
+          trace('sweep retry ' + sweepAttempt + ' seeded ' + seeded);
+          pump();
+        } else {
+          armSweepRetry();
+        }
+      }
+
       // The host boots plugins into a session that is already open, so its
       // session.created fired before we subscribed. One sweep at setup recovers
       // that model; a live event still wins afterwards. Same discipline as
       // oc-title: isolated, shape-tolerant, and wholly inside try/catch so a
       // host that changes its API cannot break setup.
-      async function sweep() {
-        if (!ctx.session || typeof ctx.session.list !== 'function') return;
+      async function sweep(scoped = true) {
+        if (!ctx.session || typeof ctx.session.list !== 'function') return null;
         try {
           // An RPC that never settles must not hold plugin activation open: the
           // host awaits setup, so the sweep is bounded and only an optimisation.
@@ -333,7 +494,7 @@ export default {
             // Only the directory comes from the context. With none there is no
             // scope to ask for, so keep the original unqualified call.
             const query = {};
-            if (directory) {
+            if (directory && scoped) {
               query.directory = directory;
               query.order = 'desc';
               query.limit = 50;
@@ -342,18 +503,20 @@ export default {
           }, sweepTimeoutMs);
           if (!completed) {
             trace('session sweep timed out after ' + sweepTimeoutMs + 'ms; continuing without a seed');
-            return;
+            return null;
           }
           const rows = Array.isArray(listed) ? listed
             : Array.isArray(listed && listed.data) ? listed.data
             : Array.isArray(listed && listed.items) ? listed.items : [];
-          const wanted = normalizeDirectory(directory);
+          const wanted = scoped ? normalizeDirectory(directory) : undefined;
           let newest;
           let newestAt = -Infinity;
           for (const row of rows) {
             if (!row || typeof row !== 'object') continue;
             const id = textOf(row.id) ?? textOf(row.sessionID);
             if (!id) continue;
+            // Only a row that actually carries a model can seed the card.
+            if (row.model === undefined || row.model === null) continue;
             const rowDirectory = normalizeDirectory(row.location && row.location.directory);
             if (wanted && rowDirectory && wanted !== rowDirectory) continue;
 
@@ -364,10 +527,16 @@ export default {
               : typeof time.created === 'number' ? time.created : 0;
             if (at > newestAt) { newestAt = at; newest = { row, id }; }
           }
-          if (!newest) return;
-          if (newest.row.model !== undefined && newest.row.model !== null) {
-            trace('sweep seeded model from ' + newest.id);
+          if (!newest) {
+            // The directory is a preference, not a filter that may empty the
+            // result: one unfiltered pass before concluding there is no model.
+            if (scoped && directory && wanted) {
+              trace('session sweep found no scoped model; retrying unfiltered');
+              return sweep(false);
+            }
+            return null;
           }
+          trace('sweep seeded model from ' + newest.id);
           state = applyEvent(state, {
             type: 'session.created',
             data: {
@@ -377,14 +546,17 @@ export default {
               model: newest.row.model,
             },
           }, clock());
+          return newest.id;
         } catch (err) {
           fail(trace, 'session sweep', err);
+          return null;
         }
       }
 
-      await sweep();
+      const initialSeed = await sweep();
       try { client.start(); } catch (err) { fail(trace, 'client start', err); }
       pump();
+      if (!initialSeed) armSweepRetry();
 
       void (async () => { // Restart the subscription on end or error until aborted.
         let delay = BACKOFF_START_MS;
@@ -396,6 +568,7 @@ export default {
               delay = BACKOFF_START_MS;
               try {
                 state = applyEvent(state, event, clock());
+                if (hasModel()) cancelSweepRetries();
                 pump();
               } catch (err) {
                 fail(trace, 'event', err);
@@ -415,6 +588,8 @@ export default {
       return async () => { // Abort, cancel, clear, then stop with a deadline.
         try { controller.abort(); } catch (err) { fail(trace, 'abort', err); }
         cancelTimer();
+        cancelSweepRetries();
+        cancelHold();
         try { settle(client.clearActivity()); } catch (err) { fail(trace, 'clear', err); }
         try { await bounded(() => client.stop(), CLEANUP_TIMEOUT_MS); }
         catch (err) { fail(trace, 'stop', err); }

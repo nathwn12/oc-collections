@@ -451,15 +451,24 @@ test('the catalogue display name wins on details and reasoning keeps its own lin
   await cleanup();
 });
 
-test('the catalogue is called once per model, not once per event', async () => {
-  const model = { id: 'deepseek-v4.1-flash', providerID: 'opencode-go', variant: 'high' };
+test('one provider snapshot serves every model with a single RPC', async () => {
+  const rows = [
+    { id: 'm1', modelID: 'm1', providerID: 'opencode-go', name: 'Model One' },
+    { id: 'm2', modelID: 'm2', providerID: 'opencode-go', name: 'Model Two' },
+  ];
   let calls = 0;
-  const events = [created('s1', { model }), selected('s1', model), selected('s1', model)];
-  const { cleanup } = await boot(events, {}, undefined, 'OpenCode', {
-    model: { list: async () => { calls++; return []; } },
+  const p = pushable();
+  const { rec, cleanup } = await boot([], {}, undefined, 'OpenCode', {
+    model: { list: async () => { calls++; return rows; } },
+    event: { subscribe: p.subscribe },
   });
-  await tick();
-  assert.equal(calls, 1);
+  p.push(created('s1', { model: { id: 'm1', providerID: 'opencode-go' } }));
+  await tick(); await tick(); await tick();
+  assert.equal(rec.sends().at(-1).details, 'Coding with Model One');
+  p.push(selected('s1', { id: 'm2', providerID: 'opencode-go', variant: 'high' }));
+  await tick(); await tick(); await tick();
+  assert.equal(rec.sends().at(-1).details, 'Coding with Model Two');
+  assert.equal(calls, 1, 'one catalogue snapshot, not one RPC per model');
   await cleanup();
 });
 
@@ -536,5 +545,389 @@ test('the {data} session list shape seeds the model', async () => {
     },
   });
   assert.equal(rec.sends()[0].details, 'Coding with Data Model');
+  await cleanup();
+});
+
+// A subscribe generator that accepts events pushed by the test, so a second
+// pump can be forced after a failed or stale catalogue fetch.
+function pushable() {
+  const queue = [];
+  let wake;
+  const subscribe = ({ signal }) => (async function* () {
+    while (!signal.aborted) {
+      if (queue.length) { yield queue.shift(); continue; }
+      await new Promise((resolve) => {
+        wake = resolve;
+        signal.addEventListener('abort', resolve, { once: true });
+      });
+    }
+  })();
+  return {
+    subscribe,
+    push(event) {
+      queue.push(event);
+      if (wake) { const w = wake; wake = undefined; w(); }
+    },
+  };
+}
+
+async function bootSeams(seams, subscribe, options = {}, extraCtx = {}) {
+  const mod = await load();
+  if ('catalogTimeout' in seams) mod.__setCatalogTimeout(seams.catalogTimeout);
+  if ('catalogTTL' in seams) mod.__setCatalogTTL(seams.catalogTTL);
+  if ('catalogCooldown' in seams) mod.__setCatalogCooldown(seams.catalogCooldown);
+  if ('sweepTimeout' in seams) mod.__setSweepTimeout(seams.sweepTimeout);
+  if ('holdGrace' in seams) mod.__setHoldGrace(seams.holdGrace);
+  const clock = fakeClock(1000);
+  const rec = recorder();
+  mod.__setClock({ now: clock.now, setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout });
+  mod.__setClientFactory(() => rec.client);
+  const ctx = {
+    options: { appId: '123456', trace: true, minIntervalMs: 0, ...options },
+    app: { name: 'OpenCode', version: '1.0' },
+    event: { subscribe },
+    ...extraCtx,
+  };
+  const cleanup = await mod.default.setup(ctx);
+  await tick();
+  return { mod, clock, rec, cleanup, ctx };
+}
+
+test('a failed catalogue fetch does not poison the name: a later fetch resolves it', async (t) => {
+  const p = pushable();
+  let calls = 0;
+  const row = {
+    id: 'deepseek-v4.1-flash', modelID: 'deepseek-v4.1-flash', providerID: 'opencode-go',
+    name: 'DeepSeek V4.1 Flash 1017',
+  };
+  const { mod, rec, cleanup } = await bootSeams({ catalogCooldown: 0 }, p.subscribe, {}, {
+    model: { list: async () => { calls++; if (calls === 1) throw new Error('network down'); return [row]; } },
+  });
+  t.after(() => mod.__setCatalogCooldown(undefined));
+  p.push(created('s1', { model: { id: 'deepseek-v4.1-flash', providerID: 'opencode-go', variant: 'high' } }));
+  await tick(); await tick(); await tick();
+  assert.equal(rec.sends().at(-1).details, 'Coding with DeepSeek V4.1 Flash');
+  p.push(selected('s1', { id: 'deepseek-v4.1-flash', providerID: 'opencode-go', variant: 'max' }));
+  await tick(); await tick(); await tick();
+  assert.equal(calls, 2, 'the failure was not cached as the answer');
+  assert.equal(rec.sends().at(-1).details, 'Coding with DeepSeek V4.1 Flash 1017');
+  await cleanup();
+});
+
+test('TTL expiry triggers exactly one refresh', async (t) => {
+  const p = pushable();
+  let calls = 0;
+  const row = { id: 'm', modelID: 'm', providerID: 'opencode-go', name: 'Model M' };
+  const { mod, clock, rec, cleanup } = await bootSeams({ catalogTTL: 10 }, p.subscribe, {}, {
+    model: { list: async () => { calls++; return [row]; } },
+  });
+  t.after(() => mod.__setCatalogTTL(undefined));
+  const choice = (variant) => selected('s1', { id: 'm', providerID: 'opencode-go', variant });
+  p.push(choice('high'));
+  await tick(); await tick();
+  assert.equal(calls, 1);
+  clock.advance(11);
+  p.push(choice('max'));
+  await tick(); await tick();
+  assert.equal(calls, 2, 'the expired snapshot refreshed once');
+  p.push(choice('minimal'));
+  await tick(); await tick();
+  assert.equal(calls, 2, 'no second refresh inside the new TTL');
+  await cleanup();
+});
+
+test('the miss cooldown prevents a refresh storm', async (t) => {
+  const p = pushable();
+  let calls = 0;
+  const rows = [{ id: 'known', modelID: 'known', providerID: 'opencode-go', name: 'Known Model' }];
+  const { mod, clock, cleanup } = await bootSeams({ catalogCooldown: 1000 }, p.subscribe, {}, {
+    model: { list: async () => { calls++; return rows; } },
+  });
+  t.after(() => mod.__setCatalogCooldown(undefined));
+  p.push(created('s1', { model: { id: 'known', providerID: 'opencode-go' } }));
+  await tick(); await tick();
+  assert.equal(calls, 1);
+  clock.advance(1001);
+  for (let i = 0; i < 5; i++) p.push(selected('s1', { id: 'unknown-' + i, providerID: 'opencode-go' }));
+  await tick(); await tick(); await tick();
+  assert.equal(calls, 2, 'five misses caused one refresh, not five');
+  await cleanup();
+});
+
+test('the sweep retries an empty boot and stops once a model is seeded', async (t) => {
+  let calls = 0;
+  const model = { id: 'deepseek-v4.1-flash', providerID: 'opencode-go', variant: 'high' };
+  const logs = [];
+  const original = console.log;
+  console.log = (...args) => logs.push(args.join(' '));
+  t.after(() => { console.log = original; });
+  const booted = await boot([], {}, undefined, 'OpenCode', {
+    session: { list: async () => { calls++; return calls === 1 ? [] : [{ id: 'ses_late', model, time: { updated: 5 } }]; } },
+  });
+  const { clock, rec, cleanup } = booted;
+  assert.equal(rec.sends()[0].details, undefined, 'the boot card had no model');
+  clock.advance(2000);
+  await tick(); await tick(); await tick();
+  assert.equal(calls, 2);
+  assert.equal(rec.sends().at(-1).details, 'Coding with DeepSeek V4.1 Flash');
+  assert.ok(logs.some((line) => line.includes('sweep retry 1 seeded ses_late')));
+  clock.advance(400000);
+  await tick();
+  assert.equal(calls, 2, 'no retries after success');
+  await cleanup();
+});
+
+test('sweep retries stop at the cap with no timer left armed', async (t) => {
+  let calls = 0;
+  const logs = [];
+  const original = console.log;
+  console.log = (...args) => logs.push(args.join(' '));
+  t.after(() => { console.log = original; });
+  const booted = await boot([], {}, undefined, 'OpenCode', {
+    session: { list: async () => { calls++; return []; } },
+  });
+  const { clock, cleanup } = booted;
+  assert.equal(clock.pending(), 1, 'exactly one retry timer');
+  for (const ms of [2000, 5000, 15000, 60000, 300000, 300000, 300000, 300000, 300000, 300000, 300000, 300000]) {
+    clock.advance(ms);
+    await tick(); await tick();
+  }
+  assert.equal(calls, 13, 'one setup sweep plus twelve retries');
+  assert.equal(clock.pending(), 0, 'nothing armed after the cap');
+  assert.ok(logs.some((line) => line.includes('sweep retries exhausted')));
+  await cleanup();
+});
+
+test('a live model event cancels pending sweep retries', async () => {
+  let calls = 0;
+  const { clock, rec, cleanup } = await boot([selected('s1', 'live-model')], {}, undefined, 'OpenCode', {
+    session: { list: async () => { calls++; return []; } },
+  });
+  assert.equal(rec.sends().at(-1).details, 'Coding with Live Model');
+  clock.advance(400000);
+  await tick();
+  assert.equal(calls, 1, 'no retry after a live model event');
+  await cleanup();
+});
+
+test('cleanup leaves no sweep retry timer armed', async () => {
+  const { clock, cleanup } = await boot([], {}, undefined, 'OpenCode', {
+    session: { list: async () => [] },
+  });
+  assert.equal(clock.pending(), 1);
+  await cleanup();
+  assert.equal(clock.pending(), 0);
+});
+
+test('a scoped sweep with no model retries unfiltered before giving up', async () => {
+  const queries = [];
+  const rows = [{ id: 'ses_unscoped', model: 'unscoped-model', location: { directory: 'D:/elsewhere' }, time: { updated: 5 } }];
+  const { rec, cleanup } = await boot([], {}, undefined, 'OpenCode', {
+    location: { directory: 'C:/Users/nathan' },
+    session: { list: async (query) => { queries.push(query); return queries.length === 1 ? [] : rows; } },
+  });
+  assert.deepEqual(queries[0], { directory: 'C:/Users/nathan', order: 'desc', limit: 50 });
+  assert.deepEqual(queries[1], {});
+  assert.equal(rec.sends()[0].details, 'Coding with Unscoped Model');
+  await cleanup();
+});
+
+// --- Sticky model: a transient cannot strip both card lines -----------------
+
+test('a card with a model survives a burst of model-less session.created events', async (t) => {
+  const p = pushable();
+  t.after(() => { console.log = originalLog; });
+  const originalLog = console.log;
+  console.log = () => {};
+  const { rec, cleanup } = await boot([], {}, undefined, 'OpenCode', { event: { subscribe: p.subscribe } });
+  p.push(created('s1', { model: { id: 'deepseek-v4.1-flash', providerID: 'opencode-go', variant: 'high' } }));
+  await tick(); await tick(); await tick();
+  const shown = rec.sends().at(-1);
+  assert.equal(shown.details, 'Coding with DeepSeek V4.1 Flash');
+  assert.equal(shown.state, 'Reasoning High');
+  for (let i = 0; i < 6; i++) p.push(created('fresh-' + i));
+  await tick(); await tick(); await tick();
+  const after = rec.sends().at(-1);
+  assert.equal(after.details, 'Coding with DeepSeek V4.1 Flash');
+  assert.equal(after.state, 'Reasoning High');
+  await cleanup();
+});
+
+test('a session revealed as a child falls back to the previous non-child, not a blank card', async (t) => {
+  const p = pushable();
+  const originalLog = console.log;
+  console.log = () => {};
+  t.after(() => { console.log = originalLog; });
+  const { rec, cleanup } = await boot([], {}, undefined, 'OpenCode', { event: { subscribe: p.subscribe } });
+  p.push(created('s0', { model: { id: 'main-model', providerID: 'opencode-go', variant: 'high' } }));
+  await tick(); await tick();
+  p.push(created('s1', { title: 'other', model: { id: 'second-model', providerID: 'opencode-go', variant: 'low' } }));
+  await tick(); await tick();
+  assert.equal(rec.sends().at(-1).details, 'Coding with Second Model');
+  p.push(created('s1', {
+    parentID: 's0', model: { id: 'child-model', providerID: 'opencode-go', variant: 'max' },
+  }));
+  await tick(); await tick(); await tick();
+  const after = rec.sends().at(-1);
+  assert.equal(after.details, 'Coding with Main Model');
+  assert.equal(after.state, 'Reasoning High');
+  assert.doesNotMatch(JSON.stringify(after), /child-model/);
+  await cleanup();
+});
+
+test('a session reporting a different model wins over the remembered one', async (t) => {
+  const p = pushable();
+  const originalLog = console.log;
+  console.log = () => {};
+  t.after(() => { console.log = originalLog; });
+  const { rec, cleanup } = await boot([], {}, undefined, 'OpenCode', { event: { subscribe: p.subscribe } });
+  p.push(created('s0', { model: { id: 'first-model', providerID: 'opencode-go', variant: 'high' } }));
+  await tick(); await tick();
+  p.push(created('s1', { model: { id: 'second-model', providerID: 'opencode-go', variant: 'high' } }));
+  await tick(); await tick();
+  assert.equal(rec.sends().at(-1).details, 'Coding with Second Model');
+  await cleanup();
+});
+
+test('a model change without a variant clears the previous effort', () => {
+  let st = applyEvent(createState(), created('s1', {
+    model: { id: 'm1', providerID: 'opencode-go', variant: 'high' },
+  }), 1);
+  assert.equal(selectSnapshot(st).effort, 'high');
+  st = applyEvent(st, selected('s1', { id: 'm2', providerID: 'opencode-go' }), 2);
+  assert.equal(selectSnapshot(st).model, 'm2');
+  assert.equal(selectSnapshot(st).effort, undefined);
+});
+
+test('a genuinely empty state still produces the bare card', () => {
+  const snapshot = selectSnapshot(createState(), { appName: 'OpenCode', openedAt: 1 });
+  assert.equal(snapshot.model, undefined);
+  assert.equal(snapshot.effort, undefined);
+  const { activity } = buildActivity(snapshot, { appName: 'OpenCode' });
+  assert.equal('details' in activity, false);
+  assert.equal('state' in activity, false);
+});
+
+// --- Downgrade suppression: no reduced card on screen ----------------------
+
+test('a reduced card is held and the previous payload stays current', async (t) => {
+  const p = pushable();
+  const { clock, rec, cleanup } = await bootSeams({ holdGrace: 5000 }, p.subscribe);
+  p.push(created('s1', { model: { id: 'm1', providerID: 'opencode-go', variant: 'high' } }));
+  await tick(); await tick();
+  assert.equal(rec.sends().length, 2, 'boot card plus the full model card');
+  assert.equal(rec.sends().at(-1).state, 'Reasoning High');
+  p.push(selected('s1', { id: 'm2', providerID: 'opencode-go' }));
+  await tick(); await tick(); await tick();
+  assert.equal(rec.sends().length, 2, 'the reduced card was not published');
+  assert.equal(rec.sends().at(-1).state, 'Reasoning High');
+  assert.equal(clock.pending(), 1, 'one grace timer');
+  await cleanup();
+});
+
+test('the hold publishes the reduced card once the grace elapses', async (t) => {
+  const p = pushable();
+  const logs = [];
+  const original = console.log;
+  console.log = (...args) => logs.push(args.join(' '));
+  t.after(() => { console.log = original; mod.__setHoldGrace(undefined); });
+  const { mod, clock, rec, cleanup } = await bootSeams({ holdGrace: 5000 }, p.subscribe);
+  p.push(created('s1', { model: { id: 'm1', providerID: 'opencode-go', variant: 'high' } }));
+  await tick(); await tick();
+  p.push(selected('s1', { id: 'm2', providerID: 'opencode-go' }));
+  await tick(); await tick();
+  assert.equal(rec.sends().length, 2);
+  clock.advance(5000);
+  await tick(); await tick();
+  assert.equal(rec.sends().length, 3);
+  assert.equal(rec.sends().at(-1).details, 'Coding with M2');
+  assert.equal('state' in rec.sends().at(-1), false);
+  assert.ok(logs.some((line) => line.includes('publish downgrade after grace')));
+  await cleanup();
+});
+
+test('a field returning inside the grace cancels the hold with only one new send', async (t) => {
+  const p = pushable();
+  const { mod, clock, rec, cleanup } = await bootSeams({ holdGrace: 5000 }, p.subscribe);
+  t.after(() => mod.__setHoldGrace(undefined));
+  p.push(created('s1', { model: { id: 'm1', providerID: 'opencode-go', variant: 'high' } }));
+  await tick(); await tick();
+  p.push(selected('s1', { id: 'm2', providerID: 'opencode-go' }));
+  await tick(); await tick();
+  assert.equal(clock.pending(), 1);
+  p.push(selected('s1', { id: 'm2', providerID: 'opencode-go', variant: 'high' }));
+  await tick(); await tick(); await tick();
+  assert.equal(rec.sends().length, 3, 'hold released, one full card sent');
+  assert.equal(rec.sends().at(-1).state, 'Reasoning High');
+  assert.equal(clock.pending(), 0, 'no hold timer left');
+  await cleanup();
+});
+
+test('an upgrade during a hold publishes immediately', async (t) => {
+  const p = pushable();
+  const { mod, rec, cleanup } = await bootSeams({ holdGrace: 5000 }, p.subscribe);
+  t.after(() => mod.__setHoldGrace(undefined));
+  p.push(created('s1', { model: { id: 'm1', providerID: 'opencode-go', variant: 'high' } }));
+  await tick(); await tick();
+  p.push(selected('s1', { id: 'm2', providerID: 'opencode-go' }));
+  await tick(); await tick();
+  assert.equal(rec.sends().length, 2);
+  p.push(selected('s1', { id: 'm2', providerID: 'opencode-go', variant: 'xhigh' }));
+  await tick(); await tick(); await tick();
+  assert.equal(rec.sends().length, 3);
+  assert.equal(rec.sends().at(-1).state, 'Reasoning XHigh');
+  await cleanup();
+});
+
+test('clear during a hold goes out immediately with no grace', async (t) => {
+  const p = pushable();
+  const { mod, clock, rec, cleanup } = await bootSeams({ holdGrace: 5000 }, p.subscribe);
+  t.after(() => mod.__setHoldGrace(undefined));
+  p.push(created('s1', { model: { id: 'm1', providerID: 'opencode-go', variant: 'high' } }));
+  await tick(); await tick();
+  p.push(selected('s1', { id: 'm2', providerID: 'opencode-go' }));
+  await tick(); await tick();
+  assert.equal(clock.pending(), 1);
+  await cleanup();
+  assert.equal(rec.names().at(-2), 'clearActivity');
+  assert.equal(rec.names().at(-1), 'stop');
+  assert.equal(clock.pending(), 0, 'no grace timer survived cleanup');
+});
+
+test('cleanup during a hold leaves nothing armed and publishes nothing further', async (t) => {
+  const p = pushable();
+  const { mod, clock, rec, cleanup } = await bootSeams({ holdGrace: 5000 }, p.subscribe);
+  t.after(() => mod.__setHoldGrace(undefined));
+  p.push(created('s1', { model: { id: 'm1', providerID: 'opencode-go', variant: 'high' } }));
+  await tick(); await tick();
+  p.push(selected('s1', { id: 'm2', providerID: 'opencode-go' }));
+  await tick(); await tick();
+  const sent = rec.sends().length;
+  await cleanup();
+  clock.advance(6000);
+  await tick(); await tick();
+  assert.equal(rec.sends().length, sent);
+  assert.equal(clock.pending(), 0);
+});
+
+test('the interval gate still applies to an upgrade that follows a cancelled hold', async (t) => {
+  const p = pushable();
+  const { mod, clock, rec, cleanup } = await bootSeams(
+    { holdGrace: 5000 }, p.subscribe, { minIntervalMs: 5000 },
+  );
+  t.after(() => mod.__setHoldGrace(undefined));
+  p.push(created('s1', { model: { id: 'm1', providerID: 'opencode-go', variant: 'high' } }));
+  await tick(); await tick();
+  p.push(selected('s1', { id: 'm2', providerID: 'opencode-go' }));
+  await tick(); await tick();
+  assert.equal(rec.sends().length, 1);
+  p.push(selected('s1', { id: 'm2', providerID: 'opencode-go', variant: 'high' }));
+  await tick(); await tick(); await tick();
+  assert.equal(rec.sends().length, 1, 'the gate holds the upgrade');
+  assert.equal(clock.pending(), 1, 'only the gate timer remains');
+  clock.advance(5000);
+  await tick(); await tick();
+  assert.equal(rec.sends().length, 2);
+  assert.equal(clock.pending(), 0);
   await cleanup();
 });

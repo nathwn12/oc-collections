@@ -47,6 +47,8 @@ Playing OpenCode                             activity.name, from appName
 
 `assets.large_text` is `<providerID> \u00b7 <version>`, for example `opencode-go · 2.4.2`, where the version comes from `ctx.app.version`. It is omitted when neither part is known.
 
+The last shown model and reasoning level are sticky: a session event with no model cannot strip either line, a new model-less session cannot evict a current session that has one, and a current session revealed as a child falls back to the previous non-child. A genuine model change with no variant clears the old effort. A card that would remove a visible field (`details`, `state` or buttons) is held for five seconds instead of being published at once; if the field does not return, that settled card is published after the grace. Upgrades and clears are never held.
+
 The clock is `timestamps.start`, set when OpenCode opens, and it counts up perpetually, idle or not. There is no end timestamp and no mode or option that moves the anchor: the timer is the length of time OpenCode has been open. That is the owner's choice: Discord advances the timer on its own from `timestamps.start`, so keeping it running costs no updates.
 
 ## Privacy
