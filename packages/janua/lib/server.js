@@ -7,6 +7,8 @@
 // and never escapes into the JSON-RPC transport.
 
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import { loadSkills } from '@modelcontextprotocol/server/ext/skills/node';
 import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { SessionManager } from './sessions.js';
@@ -115,11 +117,11 @@ const LIST_OUTPUT = z.object({
   nextOffset: z.number().nullable().describe('Offset of the next page, or null on the last one.'),
 });
 
-export function createServer(options = {}) {
+export async function createServer(options = {}) {
   const manager = options.manager ?? new SessionManager();
   const server = new McpServer(
     { name: 'janua', version },
-    { instructions: INSTRUCTIONS },
+    { instructions: INSTRUCTIONS, capabilities: { resources: {} } },
   );
 
   server.registerTool(
@@ -292,5 +294,9 @@ export function createServer(options = {}) {
     wrap(async ({ limit, offset }) => manager.list({ limit, offset })),
   );
 
-  return { server, manager };
+  const skillsDir = fileURLToPath(new URL('../skills/', import.meta.url));
+  const skills = await loadSkills(skillsDir);
+  skills.attach(server);
+
+  return { server, manager, skills };
 }

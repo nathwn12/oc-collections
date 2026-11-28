@@ -245,7 +245,7 @@ async function startMcp() {
     import('@modelcontextprotocol/server/stdio'),
     import('./server.js'),
   ]);
-  const { server, manager } = createServer();
+  const { server, manager } = await createServer();
 
   let closing = false;
   async function shutdown(code = 0) {
