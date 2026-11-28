@@ -19,7 +19,7 @@ No model pins ship. Every seat inherits the session model until the user binds o
 - Alternatively, a `Model (<provider>/<id>)` line plus `| n | `<id>` |` rows resolves the same way.
 - Example (fenced block is illustrative only; angle-bracket placeholders are not parsed as catalog entries):
 
-```
+```text
 - `<provider>/<cheap-model>` — bulk tier
 - `<provider>/<verdict-model>` — verdict tier
 ```

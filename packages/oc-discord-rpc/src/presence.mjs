@@ -49,10 +49,10 @@ function snapshotOf(snapshot) {
 // An extension is a mark, a variation selector, a skin-tone modifier or a ZWJ.
 // These belong to the base before them: cutting between the two produces
 // either a lone accent or a half emoji, which is what "mojibake" means here.
-const EXTENSION = /[\p{M}\u{1f3fb}-\u{1f3ff}\uFE0F\u200D]/u;
+const EXTENSION = /[\p{M}\u{1f3fb}-\u{1f3ff}]/u;
 
 function extendsCluster(point, previous) {
-  return Boolean(previous) && (previous.endsWith('\u200d') || EXTENSION.test(point));
+  return Boolean(previous) && (previous.endsWith('\u200d') || EXTENSION.test(point) || point === '\uFE0F' || point === '\u200D');
 }
 
 // truncate: count code points, never UTF-16 units, so an emoji at the boundary

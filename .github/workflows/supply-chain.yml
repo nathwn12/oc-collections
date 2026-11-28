@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   audit:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     # Least privilege for reporting: v2.0.0 opens issues on cron and check runs
     # on dispatch, with no report-only input. Workflow default stays read-only.
     permissions:
@@ -23,8 +23,10 @@ jobs:
       issues: write    # schedule -> advisory issue
       checks: write    # workflow_dispatch -> check run
     steps:
-      - uses: actions/checkout@v7
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: "1.4.4"
       - run: bun install --frozen-lockfile --ignore-scripts

@@ -1,4 +1,5 @@
 # Harness: who writes what, what ships, how it versions
+
 - Let `harness-agent` write harness content, `host-agent` sweep scratch, and `memory-agent` write memory; the outward act stays with the owner.
 - Split the seats by object: `harness-agent` changes what the harness is, `host-agent` removes what it left behind — content versus residue.
 - Route every harness change to `harness-agent`; route every scratch file to `host-agent`.

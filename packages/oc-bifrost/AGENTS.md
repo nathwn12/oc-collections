@@ -42,7 +42,7 @@ npm run test        # node test runner over test/*.test.js
 ## Layout
 
 | Path | Job |
-|---|---|
+| --- | --- |
 | `src/index.ts` | Plugin entry; loads and mounts each entry |
 | `src/discover.ts` | Recognises V1 factory / V1 module / V2 definition |
 | `src/hooks.ts` | V1 hook → V2 registration translation |

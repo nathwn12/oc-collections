@@ -11,7 +11,7 @@ Read `INSTALL.md` in the oc-bifrost repo and execute it. Summary of the contract
 
 V2 hard-rejects V1 plugin modules:
 
-```
+```text
 Plugin must export a default definition with an id and an effect or setup function
 ```
 

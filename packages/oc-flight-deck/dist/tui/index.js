@@ -4708,6 +4708,7 @@ function createTpsReader(context, live, scope = DEFAULT_TPS_SCOPE, realtime) {
 
 // src/tui/index.tsx
 import { jsx, jsxs } from "@opentui/solid/jsx-runtime";
+var observe = (..._reads) => {};
 var tui_default = Plugin.define({
   id: "oc-flight-deck",
   setup(context) {
@@ -4923,9 +4924,7 @@ var tui_default = Plugin.define({
         render: ({ sessionID }) => {
           watchedSession = sessionID;
           bridge?.follow(sessionID);
-          ticker?.frame;
-          bridge?.status;
-          goBridge?.usage;
+          observe(ticker?.frame, bridge?.status, goBridge?.usage);
           const source = snapshot(sessionID);
           const lines = railLines(config, source);
           if (lines.length === 0)
@@ -4941,10 +4940,10 @@ var tui_default = Plugin.define({
       releases.push(context.ui.slot({
         prepend: "sidebar.footer",
         render: () => {
-          ticker?.frame;
+          const frame = ticker?.frame;
           const goUsage = goBridge?.usage;
           const goReason = goBridge === undefined ? "no-bridge" : goBridge.reason ?? (goUsage === undefined ? "pending" : undefined);
-          const panel = goPanelEnabled ? goPanelLines(goUsage, Date.now(), goLook.current(), ticker?.frame ?? 0, goReason) : [];
+          const panel = goPanelEnabled ? goPanelLines(goUsage, Date.now(), goLook.current(), frame ?? 0, goReason) : [];
           return /* @__PURE__ */ jsxs("box", {
             flexDirection: "column",
             children: [

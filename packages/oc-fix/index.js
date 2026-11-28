@@ -162,9 +162,9 @@ export default {
           try {
             if (event.status === "completed") {
               const result = event.result || {};
-              event.result = { ...result, metadata: { ...(result.metadata || {}), "oc-fix": stamp } };
+              event.result = { ...result, metadata: { ...result.metadata, "oc-fix": stamp } };
             } else if (event.status === "error" && event.error) {
-              event.error.metadata = { ...(event.error.metadata || {}), "oc-fix": stamp };
+              event.error.metadata = { ...event.error.metadata, "oc-fix": stamp };
             }
           } catch {}
         });

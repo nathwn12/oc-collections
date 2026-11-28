@@ -182,11 +182,14 @@ function makeShellPromise(
 ): ShellPromise {
   // Human-readable form for failure messages only; execution never uses it.
   const command = argv.join(" ")
+  // The chainable modifiers edit this one config; the spawn is deferred below,
+  // so `await shell`x`.quiet().nothrow()` spawns once with the final settings.
+  const current = { ...state }
   const execute = (): Promise<ShellResult> =>
     new Promise((resolve, reject) => {
       const child = spawn(argv[0] as string, argv.slice(1), {
-        cwd: state.cwd,
-        env: { ...process.env, ...(state.env ?? {}) },
+        cwd: current.cwd,
+        env: { ...process.env, ...current.env },
         windowsHide: true,
       })
 
@@ -194,11 +197,11 @@ function makeShellPromise(
       let stderr = ""
       child.stdout?.on("data", (chunk) => {
         stdout += String(chunk)
-        if (!state.quiet) process.stdout.write(String(chunk))
+        if (!current.quiet) process.stdout.write(String(chunk))
       })
       child.stderr?.on("data", (chunk) => {
         stderr += String(chunk)
-        if (!state.quiet) process.stderr.write(String(chunk))
+        if (!current.quiet) process.stderr.write(String(chunk))
       })
       child.on("error", (error) => {
         // Windows cannot exec a `.cmd`/`.bat` launcher without a shell, and
@@ -217,7 +220,7 @@ function makeShellPromise(
       })
       child.on("close", (code) => {
         const exitCode = code ?? 0
-        if (exitCode !== 0 && !state.nothrow) {
+        if (exitCode !== 0 && !current.nothrow) {
           reject(new Error(`Command failed (exit ${exitCode}): ${command}\n${stderr}`))
           return
         }
@@ -225,16 +228,18 @@ function makeShellPromise(
       })
     })
 
-  const promise: ShellPromise = {
-    then: (onFulfilled, onRejected) => execute().then(onFulfilled, onRejected),
-    quiet: () => makeShellPromise(argv, { ...state, quiet: true }),
-    nothrow: () => makeShellPromise(argv, { ...state, nothrow: true }),
-    cwd: (dir: string) => makeShellPromise(argv, { ...state, cwd: dir }),
-    env: (vars) => makeShellPromise(argv, { ...state, env: { ...state.env, ...vars } }),
-    text: () => execute().then((result) => result.stdout.trim()),
-    json: <T,>() => execute().then((result) => JSON.parse(result.stdout) as T),
-  }
-  return promise
+  // A real Promise supplies `then` by inheritance, so awaiting works without
+  // defining a thenable (unicorn/no-thenable forbids that). Starting on the
+  // next microtask leaves the synchronous chain calls time to take effect.
+  const result = Promise.resolve().then(execute)
+  const shell = result as unknown as ShellPromise
+  shell.quiet = () => { current.quiet = true; return shell }
+  shell.nothrow = () => { current.nothrow = true; return shell }
+  shell.cwd = (dir: string) => { current.cwd = dir; return shell }
+  shell.env = (vars) => { current.env = { ...current.env, ...vars }; return shell }
+  shell.text = () => result.then((r) => r.stdout.trim())
+  shell.json = <T,>() => result.then((r) => JSON.parse(r.stdout) as T)
+  return shell
 }
 
 /**

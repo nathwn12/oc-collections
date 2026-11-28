@@ -368,7 +368,8 @@ export async function registerV1Hooks(
   const chatHeaders = asHandler(table["chat.headers"])
   if (chatHeaders) {
     await ctx.session.hook("model.request", async (event) => {
-      const output = { headers: { ...(event.headers ?? {}) } as Record<string, string> }
+      const base = event.headers ?? {}
+      const output = { headers: { ...base } as Record<string, string> }
       await chatHeaders({ sessionID: event.sessionID, model: event.model }, output)
       event.headers = output.headers
     })

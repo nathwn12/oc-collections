@@ -10,7 +10,7 @@ One task takes one playbook. Choose the row that matches the outcome you need, c
 ## Match table
 
 | Task | Playbook |
-|---|---|
+| --- | --- |
 | Answer a question without changing code | playbooks/investigate.md |
 | Fix a failure you have reproduced | playbooks/bug-fix.md |
 | Add new behavior with an agreed design | playbooks/feature.md |

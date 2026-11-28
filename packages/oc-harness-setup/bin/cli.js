@@ -901,7 +901,7 @@ function mergeJsonc(configDir, backupPath, manifest, retiredSkills = new Set(), 
         }
       } else if (k === 'references') {
         // Object union: distro keys + user-only keys.
-        merged.references = { ...(user.references ?? {}), ...(merged.references ?? {}) };
+        merged.references = { ...user.references, ...merged.references };
       } else {
         merged[k] = user[k]; // adopter value wins
       }

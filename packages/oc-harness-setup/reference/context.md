@@ -1,9 +1,11 @@
 # Context detail
+
 Read when the working set, delegation detail, mechanisms, or worked examples matter.
 
 <example>Good: slice names one file plus its check. Good: verify cites command plus output. Bad: two artifacts in one slice.</example>
 
 ## Context budget
+
 - Root ceiling is 200 lines, target 120. Quality outranks brevity: a decision belongs in the root, detail lives behind a pointer. Cut filler, never a rule.
 - Skills stay <500 lines; detail sits behind pointers. Every reference targets 50 lines and hits 80 at worst.
 - State is markdown; load the index first, detail on demand.
@@ -13,6 +15,7 @@ Read when the working set, delegation detail, mechanisms, or worked examples mat
 <example>Good: new network reach earns a seat. Good: a new doc type reuses `code-agent`. Bad: adding a seat for a craft.</example>
 
 ## Lanes
+
 - One write lane per artifact; parallel reads freely.
 - Twenty-four live lanes is the ceiling; past twenty-four, the rest queue. The seam decides whether a split is valid; the ceiling decides how many run.
 - Two seats on one file is a collision, not a review. One writer per artifact, always; a second reader is free.
@@ -23,6 +26,7 @@ Read when the working set, delegation detail, mechanisms, or worked examples mat
 <example>Good: a forty-file sweep returns a summary. Good: two disjoint packages merge behind one `verify-agent`. Bad: two lanes editing one file.</example>
 
 ## Mechanisms
+
 - Need automation? Prefer, in this order: a tool already installed on the machine → a package you add through the package manager → a small extension to OpenCode → a script you write and prove.
 - A loose script is the last resort: allowed only when none of those fit, and it states in its header why they failed.
 - Adding a mechanism is a harness change, not a task step: its own brief, its own proof, never a side effect of finishing something else.

@@ -8,6 +8,7 @@ description: Use when work needs splitting across workers with clean seams — c
 Split work across workers with clean seams; integrate behind one fresh verifier.
 
 **When to load**
+
 - "split this across workers with seams"
 - "fan this out"
 - "run these in parallel"
@@ -58,12 +59,14 @@ Read-only fan-out — research, audits, surveys — is always safe, because read
 31. Done when seams are disjoint, briefs carry all four fields, and the verdict is cited.
 
 **Never**
+
 - Never put two writers on one artifact.
 - Never dispatch without the four-field brief and the return contract.
 - Never merge parallel writes without a fresh verifier at the integration point.
 - Never spend the 15x token cost on work one context does alone.
 
 **Examples**
+
 - <example>Good: two disjoint packages build in parallel, then merge behind one verifier. Bad: two workers editing one file at once.</example>
 - <example>Good: forty-file sweep returns a summary with `file:line` pointers. Bad: pasting forty files into the parent trace.</example>
 - <example>Good: overlapping seams get re-cut before dispatch. Bad: dispatching overlapping briefs hoping the merge sorts it out.</example>

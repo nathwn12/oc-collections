@@ -65,8 +65,7 @@ on:
         default: true
 
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 
 concurrency:
   group: release-${{ github.repository }}
@@ -82,13 +81,14 @@ jobs:
       matrix: ${{ steps.derive.outputs.matrix }}
       count: ${{ steps.derive.outputs.count }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # Full history and tags: the derivation reads each package's highest
           # tag and every commit since it.
           fetch-depth: 0
+          persist-credentials: false
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
 
@@ -150,15 +150,16 @@ jobs:
       max-parallel: 1
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.4
 
@@ -225,7 +226,7 @@ jobs:
       - name: Cache node_modules
         if: ${{ env.REFUSED != '1' && env.SKIP != '1' }}
         id: cache-node
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: node_modules
           key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
@@ -271,17 +272,23 @@ jobs:
         # releases; CI covers the monorepo. Cleanroom is already scoped.
         if: ${{ env.REFUSED != '1' && env.SKIP != '1' }}
         shell: pwsh
-        run: node scripts/workspace-run.mjs build --package "${{ matrix.name }}"
+        env:
+          PACKAGE: ${{ matrix.name }}
+        run: node scripts/workspace-run.mjs build --package "$env:PACKAGE"
 
       - name: test
         if: ${{ env.REFUSED != '1' && env.SKIP != '1' }}
         shell: pwsh
-        run: node scripts/workspace-run.mjs test --package "${{ matrix.name }}"
+        env:
+          PACKAGE: ${{ matrix.name }}
+        run: node scripts/workspace-run.mjs test --package "$env:PACKAGE"
 
       - name: pack-check
         if: ${{ env.REFUSED != '1' && env.SKIP != '1' }}
         shell: pwsh
-        run: node scripts/pack-check.mjs --package "${{ matrix.name }}"
+        env:
+          PACKAGE: ${{ matrix.name }}
+        run: node scripts/pack-check.mjs --package "$env:PACKAGE"
 
       - name: cleanroom
         # The cleanroom half is what proves a packed tarball installs into an
@@ -309,8 +316,10 @@ jobs:
         shell: bash
         env:
           TAG: ${{ matrix.tag }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          gh auth setup-git
           if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" > /dev/null 2>&1; then
             echo "::warning::tag ${TAG} appeared while the gate ran; skipping this package"
             echo "SKIP=1" >> "$GITHUB_ENV"
@@ -325,12 +334,16 @@ jobs:
       - name: Publish (dry run)
         if: ${{ env.REFUSED != '1' && env.SKIP != '1' && inputs.dry_run }}
         shell: pwsh
-        run: npm publish --workspace "${{ matrix.name }}" --access public --dry-run
+        env:
+          PACKAGE: ${{ matrix.name }}
+        run: npm publish --workspace "$env:PACKAGE" --access public --dry-run
 
       - name: Publish (OIDC trusted publishing)
         if: ${{ env.REFUSED != '1' && env.SKIP != '1' && !inputs.dry_run }}
         shell: pwsh
-        run: npm publish --workspace "${{ matrix.name }}" --access public --provenance
+        env:
+          PACKAGE: ${{ matrix.name }}
+        run: npm publish --workspace "$env:PACKAGE" --access public --provenance
 
       - name: Verify the released package on the registry
         # Post-publish only: the registry half cannot pass before the version
@@ -338,13 +351,15 @@ jobs:
         # retry only the not-published shape; every other failure is real.
         if: ${{ env.REFUSED != '1' && env.SKIP != '1' && !inputs.dry_run }}
         shell: pwsh
+        env:
+          NAME: ${{ matrix.name }}
         run: |
           $attempts = 17
           # Observed propagation was 4-7 minutes. Ten attempts (~4 minutes)
           # would still fail at the upper bound, so 17 attempts with 30s waits
           # after the first three cap the wait at about 7m15s.
           $waits = @(10, 15, 20) + @(30) * ($attempts - 4)
-          $name = "${{ matrix.name }}"
+          $name = $env:NAME
           for ($attempt = 1; $attempt -le $attempts; $attempt++) {
             $output = & pwsh -NoProfile -File scripts/check-index.ps1 --registry --package $name 2>&1
             $code = $LASTEXITCODE
@@ -405,7 +420,7 @@ jobs:
 
       - name: Upload the outcome
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: release-result-${{ strategy.job-index }}
           path: ${{ runner.temp }}/release/result.txt
@@ -419,7 +434,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           pattern: release-result-*
           merge-multiple: true

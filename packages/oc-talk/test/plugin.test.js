@@ -30,7 +30,7 @@ const load = () => import(pathToFileURL(ENTRY).href + '?n=' + ++loads);
 
 const DEFAULT_TOOLS = ['talk_send', 'talk_inbox'];
 const TOOLS = ['talk_send', 'talk_inbox', 'talk_board', 'talk_claim'];
-const BOARD_FILE = path.join(os.tmpdir(), 'oc-talk-optin-board.yaml');
+const BOARD_FILE = path.join(os.tmpdir(), 'oc-talk-opt-in-board.yaml');
 
 const DESCRIPTIONS = {
   talk_send:

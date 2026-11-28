@@ -225,7 +225,7 @@ installed, and `janua run -- node -e "process.stdout.write('UPGRADE_OK')"` from 
 back with the marker. Only then is `current.json` replaced, by writing a temp file and renaming it, so
 a failure at any earlier point leaves the old pointer byte-identical. The receipt says what happened:
 
-```
+```text
 janua upgrade: 0.3.1 -> 0.4.0
   home:     <JANUA_HOME>
   staged:   versions/0.4.0

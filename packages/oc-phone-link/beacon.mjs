@@ -663,7 +663,7 @@ function cors(req) {
 }
 
 function json(req, res, code, obj, extra) {
-  res.writeHead(code, { ...cors(req), ...(extra || {}), "Content-Type": "application/json", "Referrer-Policy": "no-referrer" });
+  res.writeHead(code, { ...cors(req), ...extra, "Content-Type": "application/json", "Referrer-Policy": "no-referrer" });
   res.end(JSON.stringify(obj));
 }
 

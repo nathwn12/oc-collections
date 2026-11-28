@@ -16,7 +16,7 @@ Add one artifact at a time with the shipped CLI. The CLI fills a file from `temp
 
 ## Command
 
-```
+```text
 oc-harness-setup evolve <skill|command|agent|playbook> <id> [--title ...] [--description ...] [--body <file|->] [--dry-run] [--force]
 ```
 
@@ -25,7 +25,7 @@ oc-harness-setup evolve <skill|command|agent|playbook> <id> [--title ...] [--des
 ## Flags
 
 | Flag | Effect |
-|---|---|
+| --- | --- |
 | `--title` | Fills `{{title}}`. Defaults to the id. |
 | `--description` | Fills `{{description}}`. Quote values that hold a colon. |
 | `--body` | Fills `{{body}}` from a file, or from `-` for standard input. |

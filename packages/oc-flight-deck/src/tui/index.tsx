@@ -28,6 +28,9 @@ import { createRealtimeTps } from "./realtime-tps.js";
 import { createSessionReads, locationOf } from "./session-reads.js";
 import { createTpsReader } from "./session-tps.js";
 
+/** Reading a host-store getter inside a render subscribes that render to it. */
+const observe = (..._reads: unknown[]): void => {};
+
 // Flight Deck is a read-only instrument panel for the OpenCode V2 CLI/TUI. It
 // shows the open session's agent, model, branch, cost, tokens, and cache hit
 // rate in the sidebar. It uses only the official CLI plugin boundary —
@@ -453,9 +456,7 @@ export default Plugin.define({
             // immediately on change, and the status read below subscribes this
             // render to the bridge's host store, so polls re-run the rail.
             bridge?.follow(sessionID);
-            void ticker?.frame;
-            void bridge?.status;
-            void goBridge?.usage;
+            observe(ticker?.frame, bridge?.status, goBridge?.usage);
 
             const source = snapshot(sessionID);
             const lines = railLines(config, source);
@@ -497,7 +498,7 @@ export default Plugin.define({
             // clock-derived, and the read is what registers the dependency so
             // a poll re-runs this slot. `goBridge` is absent when neither
             // surface asked for it, so both reads are safe to skip.
-            void ticker?.frame;
+            const frame = ticker?.frame;
             const goUsage = goBridge?.usage;
             // A blank panel must name its cause. `goBridge` absent means
             // `startGoBridge` found no usable host store - distinct from a
@@ -509,7 +510,7 @@ export default Plugin.define({
                 ? "no-bridge"
                 : (goBridge.reason ?? (goUsage === undefined ? "pending" : undefined));
             const panel = goPanelEnabled
-              ? goPanelLines(goUsage, Date.now(), goLook.current(), ticker?.frame ?? 0, goReason)
+              ? goPanelLines(goUsage, Date.now(), goLook.current(), frame ?? 0, goReason)
               : [];
             return (
               <box flexDirection="column">
