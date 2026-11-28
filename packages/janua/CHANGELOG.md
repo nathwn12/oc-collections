@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 
+- MCP skills (SEP-2640): serve the package's skills folder via `@modelcontextprotocol/server` `loadSkills`/`attach`, add `skills/terminals/SKILL.md`, and ship `skills/` in the npm package.
 - npm metadata alignment: README wording and keywords refreshed (cosmetic).
 ## [0.5.2] - 2026-11-15
 
