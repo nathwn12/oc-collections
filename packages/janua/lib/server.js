@@ -8,6 +8,7 @@
 
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
+import { SKILLS_GET_METHOD, SKILLS_LIST_METHOD } from '@modelcontextprotocol/server/ext/skills';
 import { loadSkills } from '@modelcontextprotocol/server/ext/skills/node';
 import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
@@ -38,6 +39,48 @@ function wrap(handler) {
       return toolFailure(err);
     }
   };
+}
+
+// The skills extension emits the 2025-era shapes: no resultType discriminator,
+// no cache hint unless a 2026-07-28 revision was negotiated, and a skill name
+// only inside frontmatter. A 2026-07-28 client needs the discriminator, ttlMs
+// and cacheScope on the result and a top-level name on every entry. Wrap the
+// two skills handlers at their registration seam: the SDK's own handlers still
+// do all source validation, and this layer only adds the missing wire fields.
+const SKILL_CACHE = Object.freeze({ ttlMs: 0, cacheScope: 'private' });
+// A pass-through standard-schema params validator. It accepts whatever the
+// original handler goes on to validate with its own (stricter) schema.
+const PASS_THROUGH_PARAMS = Object.freeze({
+  '~standard': Object.freeze({
+    version: 1,
+    vendor: 'janua',
+    validate: (value) => ({ value }),
+  }),
+});
+
+function completeSkillsShape(result) {
+  const out = { ...result, resultType: 'complete', ...SKILL_CACHE };
+  if (Array.isArray(out.skills)) {
+    out.skills = out.skills.map((entry) =>
+      entry && !entry.name && entry.frontmatter?.name
+        ? { ...entry, name: entry.frontmatter.name }
+        : entry);
+  }
+  if (out.skill && !out.skill.name && out.skill.frontmatter?.name) {
+    out.skill = { ...out.skill, name: out.skill.frontmatter.name };
+  }
+  return out;
+}
+
+// shortcut: SDK-internal handler accessor, valid for @modelcontextprotocol/server 2.4.0; re-check when the SDK majors, or once it exposes a public result post-processor.
+function reinforceSkills(server) {
+  const raw = server.server;
+  for (const method of [SKILLS_LIST_METHOD, SKILLS_GET_METHOD]) {
+    const stored = raw._getRequestHandler(method);
+    if (typeof stored !== 'function') continue;
+    raw.setRequestHandler(method, { params: PASS_THROUGH_PARAMS }, (params, ctx) =>
+      Promise.resolve(stored({ params }, ctx)).then(completeSkillsShape));
+  }
 }
 
 // Hints say what a tool does to the world, so a client can decide what to
@@ -297,6 +340,7 @@ export async function createServer(options = {}) {
   const skillsDir = fileURLToPath(new URL('../skills/', import.meta.url));
   const skills = await loadSkills(skillsDir);
   skills.attach(server);
+  reinforceSkills(server);
 
   return { server, manager, skills };
 }

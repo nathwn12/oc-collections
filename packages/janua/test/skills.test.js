@@ -36,6 +36,7 @@ test('MCP skills (SEP-2640): capabilities, list, digest, read, unknown uri', asy
   assert.equal(listed.skills.length, 1, 'one seed skill');
   const skill = listed.skills[0];
   assert.equal(skill.uri, SKILL_URI, 'skill uri');
+  assert.equal(skill.name, 'terminals', 'skills/list entry carries a top-level name');
   assert.equal(skill.frontmatter.name, 'terminals', 'frontmatter name');
   assert.equal(typeof skill.frontmatter.description, 'string', 'frontmatter description');
   assert.ok(skill.frontmatter.description.length >= 1 && skill.frontmatter.description.length <= 1024);
@@ -57,6 +58,10 @@ test('MCP skills (SEP-2640): capabilities, list, digest, read, unknown uri', asy
     returned = Buffer.from(content.blob, 'base64');
   }
   assert.deepEqual(returned, fileBytes, 'resources/read returns SKILL.md bytes');
+
+  const got = await client.request({ method: 'skills/get', params: { uri: SKILL_URI } }, z.any());
+  assert.equal(got.skill.uri, SKILL_URI, 'skills/get returns the requested skill');
+  assert.equal(got.skill.name, 'terminals', 'skills/get skill carries a top-level name');
 
   let caught;
   try {
