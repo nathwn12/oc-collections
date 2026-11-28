@@ -49,6 +49,30 @@ Legs run one at a time, because each one pushes a tag.
 - `dry_run` (default on) runs the whole lane through the pack and a
   `npm publish --dry-run`, and stops before the tag and the publish.
 
+## First publish of a new name
+
+A trusted publisher is configured on a package that already exists, so OIDC
+cannot create a name. The first release of a package the registry has never had
+is a passkey publish, then a trust, in that order:
+
+```bash
+node scripts/npm-passkey.mjs release --workspace <name> --package <name> \
+  --repo nathwn12/oc-collections --file release.yml --version <x.y.z>
+```
+
+`--version` publishes that exact version and restores the manifest afterwards,
+which is how a version whose tag already exists is filled after a failed OIDC
+publish. Before publishing, the script refuses a version the registry already
+serves; before the trust, it refuses a name the registry does not have. After
+the publish it waits until the registry answers for that exact version, because
+the registry is eventually consistent.
+
+`--window` hands the sequence to a separate console window that stays open, so
+the owner can click the passkey there while the caller only reads the log. Pass
+`--log <file>` so both sides write and read the same file. Nothing is typed or
+stored: the second factor is a passkey in the browser, and the window waits for
+the click.
+
 ## Cleanroom install
 
 `node scripts/cleanroom.mjs` packs every workspace tarball with
