@@ -15,6 +15,7 @@ The catalog is grouped **Plugin → MCP → CLI → Repo**. Each package row lin
 | Package | Kind | Version | What it does | Install |
 | --- | --- | --- | --- | --- |
 | oc-bifrost | plugin | `1.7.1` | Runs V1-era OpenCode plugins on OpenCode V2. [README](packages/oc-bifrost/README.md) · [npm](https://www.npmjs.com/package/@nathwn12/oc-bifrost) | Add `@nathwn12/oc-bifrost` to `plugins`. |
+| oc-discord-rpc | plugin | `0.1.0` | Publishes a Discord Rich Presence card with the app name, chosen model and a clock from when OpenCode opened. [README](packages/oc-discord-rpc/README.md) · [npm](https://www.npmjs.com/package/oc-discord-rpc) | Add `oc-discord-rpc` to `plugins`. |
 | oc-flight-deck | plugin | `0.24.0` | Live cost, token, cache and context telemetry in the sidebar. [README](packages/oc-flight-deck/README.md) · [npm](https://www.npmjs.com/package/oc-flight-deck) | Add `oc-flight-deck` to `plugins`. |
 | oc-phone-link | plugin | `2.2.0` | Drives OpenCode from an Android phone on the same Wi-Fi with an in-server beacon, pinned TLS and one PIN. [README](packages/oc-phone-link/README.md) · [npm](https://www.npmjs.com/package/oc-phone-link) | Add `oc-phone-link` to `plugins`. [Android APK](https://github.com/nathwn12/oc-collections/releases/tag/oc-phone-link%402.3.0). |
 | oc-plugin-view | plugin | `0.2.0` | Lists every loaded server plugin in the sidebar. [README](packages/oc-plugin-view/README.md) · [npm](https://www.npmjs.com/package/oc-plugin-view) | `opencode plugin add oc-plugin-view` |

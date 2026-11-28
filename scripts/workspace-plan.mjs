@@ -19,6 +19,7 @@ export const PLAN = {
   check: {
     "janua": [["script", "check"], ["script", "test"], ["pack", "--dry-run"]],
     "oc-bifrost": [["script", "check"]],
+    "oc-discord-rpc": [["script", "check"]],
     "oc-fix": [["script", "test"]],
     "oc-flight-deck": [["script", "check"]],
     "oc-harness-setup": [["script", "test"], ["script", "check"]],
@@ -31,6 +32,7 @@ export const PLAN = {
   build: {
     "janua": [],
     "oc-bifrost": [["script", "compile"]],
+    "oc-discord-rpc": [],
     "oc-fix": [],
     "oc-flight-deck": [["script", "compile"]],
     "oc-harness-setup": [],
@@ -43,6 +45,7 @@ export const PLAN = {
   test: {
     "janua": [["script", "test"]],
     "oc-bifrost": [["script", "test"]],
+    "oc-discord-rpc": [["script", "test"]],
     "oc-fix": [["script", "test"]],
     "oc-flight-deck": [["script", "test"]],
     "oc-harness-setup": [["script", "test"]],
