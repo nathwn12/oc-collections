@@ -1,0 +1,48 @@
+{
+  "name": "oc-discord-rpc",
+  "version": "0.1.0",
+  "description": "An OpenCode plugin that publishes a Discord Rich Presence card for the running turn.",
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "plugin",
+    "discord",
+    "discord-rpc",
+    "rich-presence",
+    "presence"
+  ],
+  "license": "MIT",
+  "author": "nathwn12",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nathwn12/oc-collections.git",
+    "directory": "packages/oc-discord-rpc"
+  },
+  "homepage": "https://github.com/nathwn12/oc-collections/tree/main/packages/oc-discord-rpc",
+  "bugs": "https://github.com/nathwn12/oc-collections/issues",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": {
+      "import": "./src/index.js",
+      "default": "./src/index.js"
+    }
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "check": "node --check src/index.js && node --check src/ipc.mjs && node --check src/presence.mjs && node --check src/state.mjs && node --test \"test/**/*.test.js\"",
+    "test": "node --test \"test/**/*.test.js\"",
+    "prepublishOnly": "node ../../scripts/check-version-cell.mjs . && bun run check"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

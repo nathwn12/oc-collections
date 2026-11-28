@@ -11,6 +11,10 @@ $script:RegistryScope = [ordered]@{
         Scope  = 'released'
         Reason = 'packages/oc-bifrost; published by this repo''s release workflow.'
     }
+    'oc-discord-rpc' = [pscustomobject]@{
+        Scope  = 'released'
+        Reason = 'packages/oc-discord-rpc; published by this repo''s release workflow.'
+    }
     'oc-flight-deck' = [pscustomobject]@{
         Scope  = 'released'
         Reason = 'packages/oc-flight-deck; published by this repo''s release workflow.'

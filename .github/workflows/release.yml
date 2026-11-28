@@ -51,9 +51,9 @@ on:
     inputs:
       package:
         # Empty is the batch lane. A name forces the single-package lane.
-        # Releasable: @nathwn12/oc-bifrost, @nathwn12/janua, oc-flight-deck,
-        # oc-harness-setup, oc-phone-link, oc-plugin-view, oc-talk, oc-title,
-        # rea-shim.
+        # Releasable: @nathwn12/oc-bifrost, @nathwn12/janua, oc-discord-rpc,
+        # oc-flight-deck, oc-harness-setup, oc-phone-link, oc-plugin-view,
+        # oc-talk, oc-title, rea-shim.
         description: Workspace package to release (empty = every package with a pending release)
         required: false
         default: ""
